@@ -67,6 +67,17 @@
 - Certification
 - Purchase
 
+### Columns
+
+| Column | Type | Required | Description |
+|---------|------|----------|-------------|
+| company_id | INTEGER | Yes | 내부 고유 ID (Primary Key) |
+| business_no | TEXT | Yes | 사업자등록번호 (Unique) |
+| company_name | TEXT | Yes | 기업명 |
+| representative_name | TEXT | Yes | 대표자명 |
+| created_at | DATETIME | Yes | 데이터 생성일시 |
+| updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
 ---
 
 ## Certification
