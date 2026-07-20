@@ -105,8 +105,8 @@
 | company_id | INTEGER | Yes | Company 테이블 참조 |
 | policy_id | INTEGER | Yes | Policy 테이블 참조 |
 | certificate_number | TEXT | No | 인증서 번호 |
-| issued_date | DATE | Yes | 인증 시작일 |
-| expired_date | DATE | Yes | 인증 종료일 |
+| valid_from | DATE | Yes | 인증 시작일 |
+| valid_to | DATE | Yes | 인증 종료일 |
 | issuing_agency | TEXT | No | 발급기관 |
 | created_at | DATETIME | Yes | 데이터 생성일시 |
 | updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
@@ -128,6 +128,19 @@
 ### Related Tables
 
 - Company
+
+### Columns
+
+| Column | Type | Required | Description |
+|---------|------|----------|-------------|
+| purchase_id | INTEGER | Yes | 내부 고유 ID (Primary Key) |
+| business_no | TEXT | Yes | 사업자등록번호 |
+| company_id | INTEGER | No | Company 테이블 참조 (매칭 후 저장) |
+| company_name | TEXT | Yes | 공급업체명 |
+| purchase_date | DATE | Yes | 구매일 |
+| amount | NUMERIC | Yes | 구매금액 |
+| created_at | DATETIME | Yes | 데이터 생성일시 |
+| updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
 
 ---
 
