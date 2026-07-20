@@ -97,6 +97,20 @@
 - Company
 - Policy
 
+### Columns
+
+| Column | Type | Required | Description |
+|---------|------|----------|-------------|
+| certification_id | INTEGER | Yes | 내부 고유 ID (Primary Key) |
+| company_id | INTEGER | Yes | Company 테이블 참조 |
+| policy_id | INTEGER | Yes | Policy 테이블 참조 |
+| certificate_number | TEXT | No | 인증서 번호 |
+| issued_date | DATE | Yes | 인증 시작일 |
+| expired_date | DATE | Yes | 인증 종료일 |
+| issuing_agency | TEXT | No | 발급기관 |
+| created_at | DATETIME | Yes | 데이터 생성일시 |
+| updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
 ---
 
 ## Purchase
