@@ -9,3 +9,9 @@ pandas>=2.2,<3.0
 
 # 데이터 검증 및 직렬화 — API 요청/응답, 내부 모델
 pydantic>=2.7,<3.0
+
+# 환경변수 기반 설정 관리 (pydantic-settings 의존)
+pydantic-settings>=2.3,<3.0
+
+# .env 파일 로드
+python-dotenv>=1.0,<2.0
