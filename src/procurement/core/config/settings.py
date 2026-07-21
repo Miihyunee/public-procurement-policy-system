@@ -12,7 +12,8 @@ procurement.core.config.settings
     from procurement.core.config import settings
 
     print(settings.APP_NAME)
-    print(settings.database_path)
+    print(settings.DATABASE_PATH)
+    print(settings.db_file)
 """
 
 from __future__ import annotations
@@ -76,6 +77,10 @@ class Settings(BaseSettings):
         default=_PROJECT_ROOT / "logs",
         description="로그 파일 저장 디렉터리",
     )
+    DATABASE_FILENAME: str = Field(
+        default="procurement.db",
+        description="SQLite 데이터베이스 파일명",
+    )
 
     # ------------------------------------------------------------------
     # Computed fields (읽기 전용 파생 경로)
@@ -85,6 +90,17 @@ class Settings(BaseSettings):
     def project_root(self) -> Path:
         """프로젝트 루트 디렉터리 경로."""
         return _PROJECT_ROOT
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def db_file(self) -> Path:
+        """SQLite 데이터베이스 파일 전체 경로.
+
+        DATABASE_PATH / DATABASE_FILENAME 으로 결정됩니다.
+
+        예: /project/database/procurement.db
+        """
+        return self.DATABASE_PATH / self.DATABASE_FILENAME
 
     @computed_field  # type: ignore[prop-decorator]
     @property

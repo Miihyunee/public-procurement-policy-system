@@ -1,7 +1,16 @@
+# ==============================================================================
+# Public Procurement Policy System — Development Dependencies
+# ==============================================================================
+
+# 런타임 의존성 포함
 -r requirements.txt
 
+# 테스트
 pytest>=8.2,<9.0
 pytest-cov>=5.0,<6.0
+
+# Linter / Formatter
 ruff>=0.4,<1.0
+
+# Static type checker
 mypy>=1.10,<2.0
-pandas-stubs>=2.2,<3.0

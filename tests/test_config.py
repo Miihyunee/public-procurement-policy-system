@@ -41,6 +41,19 @@ class TestDefaultSettings:
     def test_log_path_is_path(self) -> None:
         assert isinstance(settings.LOG_PATH, Path)
 
+    def test_database_filename_default(self) -> None:
+        assert settings.DATABASE_FILENAME == "procurement.db"
+
+    def test_db_file_is_path(self) -> None:
+        assert isinstance(settings.db_file, Path)
+
+    def test_db_file_composed_correctly(self) -> None:
+        """db_file = DATABASE_PATH / DATABASE_FILENAME 인지 확인합니다."""
+        assert settings.db_file == settings.DATABASE_PATH / settings.DATABASE_FILENAME
+
+    def test_db_file_has_correct_suffix(self) -> None:
+        assert settings.db_file.suffix == ".db"
+
 
 class TestEnvironmentOverride:
     """환경변수로 설정값을 변경할 수 있는지 검증합니다."""
@@ -78,6 +91,20 @@ class TestEnvironmentOverride:
         s = Settings()
         assert s.LOG_PATH == tmp_path
 
+    def test_database_filename_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATABASE_FILENAME", "custom.db")
+        s = Settings()
+        assert s.DATABASE_FILENAME == "custom.db"
+
+    def test_db_file_reflects_overrides(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """DATABASE_PATH, DATABASE_FILENAME 변경 시 db_file도 반영되어야 합니다."""
+        monkeypatch.setenv("DATABASE_PATH", str(tmp_path))
+        monkeypatch.setenv("DATABASE_FILENAME", "custom.db")
+        s = Settings()
+        assert s.db_file == tmp_path / "custom.db"
+
 
 class TestEnvExampleFile:
     """.env.example 파일이 존재하고 필수 키를 포함하는지 검증합니다."""
@@ -89,7 +116,9 @@ class TestEnvExampleFile:
     def test_env_example_contains_required_keys(self) -> None:
         env_example = settings.project_root / ".env.example"
         content = env_example.read_text(encoding="utf-8")
-        required_keys = ["APP_NAME", "APP_VERSION", "ENVIRONMENT", "DEBUG",
-                         "DATA_PATH", "DATABASE_PATH", "LOG_PATH"]
+        required_keys = [
+            "APP_NAME", "APP_VERSION", "ENVIRONMENT", "DEBUG",
+            "DATA_PATH", "DATABASE_PATH", "DATABASE_FILENAME", "LOG_PATH",
+        ]
         for key in required_keys:
             assert key in content, f".env.example에 {key} 항목이 없습니다."
