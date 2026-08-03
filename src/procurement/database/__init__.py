@@ -18,12 +18,20 @@ from procurement.database.company_repository import (
     DuplicateBusinessNoError,
 )
 from procurement.database.connection import create_connection, get_connection
+from procurement.database.policy_repository import (
+    DuplicatePolicyCodeError,
+    PolicyRepository,
+    PolicyValidationError,
+)
 
 __all__ = [
     "BaseRepository",
     "CompanyRepository",
     "CompanyValidationError",
     "DuplicateBusinessNoError",
+    "DuplicatePolicyCodeError",
+    "PolicyRepository",
+    "PolicyValidationError",
     "create_connection",
     "get_connection",
 ]
