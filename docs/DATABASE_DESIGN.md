@@ -162,6 +162,10 @@
 
 - policy_id
 
+### Unique Key
+
+- policy_code
+
 ### Related Tables
 
 - Certification
@@ -241,6 +245,8 @@ AuditLog
 
 # Notes
 
-본 문서는 논리적 데이터베이스 설계 문서이다.
+본 문서는 Public Procurement Policy System의 논리적 데이터베이스 설계 문서이다.
 
-컬럼(Column), 데이터 타입(Data Type), 인덱스(Index), 제약조건(Constraint)은 다음 버전(v1.1)에서 정의한다.
+Company, Certification, Purchase, Policy 테이블의 기본 컬럼은 정의되었으며, 구현 시 기준 설계로 사용한다.
+
+인덱스(Index), 외래키(Foreign Key), 상세 제약조건(Constraint) 및 Dataset, AuditLog의 컬럼 정의는 다음 버전(v1.1)에서 보완한다.
