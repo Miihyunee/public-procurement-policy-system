@@ -166,6 +166,18 @@
 
 - Certification
 
+### Columns
+
+| Column | Type | Required | Description |
+|---------|------|----------|-------------|
+| policy_id | INTEGER | Yes | 내부 고유 ID (Primary Key) |
+| policy_code | TEXT | Yes | 정책 코드 (Unique) |
+| policy_name | TEXT | Yes | 정책명 |
+| description | TEXT | No | 정책 설명 |
+| is_active | BOOLEAN | Yes | 사용 여부 |
+| created_at | DATETIME | Yes | 데이터 생성일시 |
+| updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
 ---
 
 ## Dataset
