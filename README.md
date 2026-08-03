@@ -34,24 +34,25 @@ procurement
 
 ## 프로젝트 구조
 
+```text
 public-procurement-policy-system/
 ├── src/
-│ └── procurement/
-│ ├── init.py
-│ ├── main.py # CLI 진입점
-│ ├── core/ # 공통 기능 (Config, Logging, Exceptions 등) (예정)
-│ ├── collectors/ # 정부 Open API 데이터 수집 (예정)
-│ ├── matchers/ # 구매실적 ↔ 기업 데이터 매칭 (예정)
-│ ├── calculators/ # 우선구매 달성률 계산 (예정)
-│ ├── models/ # Pydantic 데이터 모델 (예정)
-│ ├── database/ # SQLite 접근 계층 (예정)
-│ └── api/ # Web UI / REST API (예정)
+│   └── procurement/
+│       ├── __init__.py
+│       ├── __main__.py       # CLI 진입점
+│       ├── core/             # 공통 기능 (Config 등) — 구현 완료
+│       ├── collectors/       # 정부 Open API 데이터 수집 (예정)
+│       ├── matchers/         # 구매실적 ↔ 기업 데이터 매칭 (예정)
+│       ├── calculators/      # 우선구매 달성률 계산 (예정)
+│       ├── models/           # 도메인 데이터 모델 (dataclass) — 구현 중 (Company)
+│       ├── database/         # SQLite 접근 계층 — 구현 완료 (Connection, Repository)
+│       └── api/              # Web UI / REST API (예정)
 ├── tests/
 ├── docs/
 ├── pyproject.toml
 ├── requirements.txt
 └── requirements-dev.txt
-
+```
 
 ## 개발 원칙
 
