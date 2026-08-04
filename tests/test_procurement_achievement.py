@@ -80,31 +80,50 @@ def _add_company(repo: CompanyRepository, business_no: str) -> int:
     return saved.company_id
 
 
-def _add_policy(repo: PolicyRepository, code: str, name: str) -> int:
-    saved = repo.insert(Policy(policy_code=code, policy_name=name))
+def _add_policy(
+    repo: PolicyRepository,
+    code: str,
+    name: str,
+    evaluation_basis: str = "PAYMENT_DATE",
+) -> int:
+    saved = repo.insert(
+        Policy(policy_code=code, policy_name=name, evaluation_basis=evaluation_basis)
+    )
     assert saved.policy_id is not None
     return saved.policy_id
 
 
-def _add_certification(repo: CertificationRepository, company_id: int, policy_id: int) -> None:
+def _add_certification(
+    repo: CertificationRepository,
+    company_id: int,
+    policy_id: int,
+    valid_from: date = date(2026, 1, 1),
+    valid_to: date = date(2026, 12, 31),
+) -> None:
     repo.insert(
         Certification(
             company_id=company_id,
             policy_id=policy_id,
-            valid_from=date(2026, 1, 1),
-            valid_to=date(2026, 12, 31),
+            valid_from=valid_from,
+            valid_to=valid_to,
         )
     )
 
 
-def _add_purchase(repo: PurchaseRepository, amount: str, company_id: int | None = None) -> None:
+def _add_purchase(
+    repo: PurchaseRepository,
+    amount: str,
+    company_id: int | None = None,
+    payment_date: date = date(2026, 3, 15),
+    contract_date: date = date(2026, 3, 1),
+) -> None:
     repo.insert(
         Purchase(
             business_no="0000000000",
             company_id=company_id,
             company_name="공급업체",
-            contract_date=date(2026, 3, 1),
-            payment_date=date(2026, 3, 15),
+            contract_date=contract_date,
+            payment_date=payment_date,
             amount=Decimal(amount),
         )
     )
@@ -566,3 +585,296 @@ class TestPurchaseRepositoryFindAll:
             Decimal("200"),
             Decimal("300"),
         ]
+
+
+class TestBusinessRuleBasisSelection:
+    """evaluation_basis 에 따른 판정 기준일 선택을 검증합니다."""
+
+    def test_payment_date_basis_uses_payment_date(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """PAYMENT_DATE 정책은 지급일을 기준으로 판정합니다."""
+        company_id = _add_company(company_repo, "1000000001")
+        policy_id = _add_policy(policy_repo, "SMALL_BUSINESS", "중소기업", "PAYMENT_DATE")
+        _add_certification(
+            certification_repo, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
+        )
+        # 지급일은 유효기간 내(인정), 계약일은 유효기간 밖 → 지급일 기준이면 인정
+        _add_purchase(
+            purchase_repo,
+            "1000000",
+            company_id=company_id,
+            payment_date=date(2026, 3, 15),
+            contract_date=date(2025, 12, 1),
+        )
+        assert calculator.calculate_policy_purchase(policy_id) == Decimal("1000000")
+
+    def test_payment_date_basis_ignores_contract_date(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """PAYMENT_DATE 정책에서 지급일이 유효기간 밖이면 계약일이 안에 있어도 제외됩니다."""
+        company_id = _add_company(company_repo, "1000000001")
+        policy_id = _add_policy(policy_repo, "SMALL_BUSINESS", "중소기업", "PAYMENT_DATE")
+        _add_certification(
+            certification_repo, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
+        )
+        _add_purchase(
+            purchase_repo,
+            "1000000",
+            company_id=company_id,
+            payment_date=date(2026, 8, 1),  # 유효기간 밖
+            contract_date=date(2026, 3, 1),  # 유효기간 안 (무시되어야 함)
+        )
+        assert calculator.calculate_policy_purchase(policy_id) == Decimal("0")
+
+    def test_contract_date_basis_uses_contract_date(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """CONTRACT_DATE 정책은 계약일을 기준으로 판정합니다."""
+        company_id = _add_company(company_repo, "1000000001")
+        policy_id = _add_policy(policy_repo, "STARTUP", "창업기업", "CONTRACT_DATE")
+        _add_certification(
+            certification_repo, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
+        )
+        # 계약일은 유효기간 내(인정), 지급일은 유효기간 밖 → 계약일 기준이면 인정
+        _add_purchase(
+            purchase_repo,
+            "2000000",
+            company_id=company_id,
+            payment_date=date(2026, 8, 1),
+            contract_date=date(2026, 3, 1),
+        )
+        assert calculator.calculate_policy_purchase(policy_id) == Decimal("2000000")
+
+    def test_contract_date_basis_ignores_payment_date(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """CONTRACT_DATE 정책에서 계약일이 유효기간 밖이면 지급일이 안에 있어도 제외됩니다."""
+        company_id = _add_company(company_repo, "1000000001")
+        policy_id = _add_policy(policy_repo, "STARTUP", "창업기업", "CONTRACT_DATE")
+        _add_certification(
+            certification_repo, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
+        )
+        _add_purchase(
+            purchase_repo,
+            "2000000",
+            company_id=company_id,
+            payment_date=date(2026, 3, 15),  # 유효기간 안 (무시되어야 함)
+            contract_date=date(2025, 12, 1),  # 유효기간 밖
+        )
+        assert calculator.calculate_policy_purchase(policy_id) == Decimal("0")
+
+
+class TestBusinessRuleValidityPeriod:
+    """인증 유효기간 경계 판정(inclusive)을 검증합니다."""
+
+    def _setup(
+        self,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+        payment_date: date,
+        valid_from: date = date(2026, 3, 1),
+        valid_to: date = date(2026, 3, 31),
+    ) -> int:
+        company_id = _add_company(company_repo, "1000000001")
+        policy_id = _add_policy(policy_repo, "SMALL_BUSINESS", "중소기업", "PAYMENT_DATE")
+        _add_certification(certification_repo, company_id, policy_id, valid_from, valid_to)
+        _add_purchase(purchase_repo, "1000000", company_id=company_id, payment_date=payment_date)
+        return policy_id
+
+    def test_start_boundary_included(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """기준일 == valid_from 은 포함(inclusive)됩니다."""
+        policy_id = self._setup(
+            company_repo, policy_repo, certification_repo, purchase_repo, date(2026, 3, 1)
+        )
+        assert calculator.calculate_policy_purchase(policy_id) == Decimal("1000000")
+
+    def test_end_boundary_included(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """기준일 == valid_to 은 포함(inclusive)됩니다."""
+        policy_id = self._setup(
+            company_repo, policy_repo, certification_repo, purchase_repo, date(2026, 3, 31)
+        )
+        assert calculator.calculate_policy_purchase(policy_id) == Decimal("1000000")
+
+    def test_before_start_excluded(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """기준일 < valid_from (하루 전) 은 제외됩니다."""
+        policy_id = self._setup(
+            company_repo, policy_repo, certification_repo, purchase_repo, date(2026, 2, 28)
+        )
+        assert calculator.calculate_policy_purchase(policy_id) == Decimal("0")
+
+    def test_after_end_excluded(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """기준일 > valid_to (하루 후) 은 제외됩니다."""
+        policy_id = self._setup(
+            company_repo, policy_repo, certification_repo, purchase_repo, date(2026, 4, 1)
+        )
+        assert calculator.calculate_policy_purchase(policy_id) == Decimal("0")
+
+    def test_multiple_certifications_any_range_counts(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """같은 정책 인증을 여러 건 보유하면 그중 하나라도 만족하면 인정합니다."""
+        company_id = _add_company(company_repo, "1000000001")
+        policy_id = _add_policy(policy_repo, "SMALL_BUSINESS", "중소기업", "PAYMENT_DATE")
+        _add_certification(
+            certification_repo, company_id, policy_id, date(2026, 1, 1), date(2026, 1, 31)
+        )
+        _add_certification(
+            certification_repo, company_id, policy_id, date(2026, 6, 1), date(2026, 6, 30)
+        )
+        # 지급일 6-15 는 두 번째 인증 기간에 포함
+        _add_purchase(
+            purchase_repo, "1000000", company_id=company_id, payment_date=date(2026, 6, 15)
+        )
+        assert calculator.calculate_policy_purchase(policy_id) == Decimal("1000000")
+
+
+class TestBusinessRuleMixedPolicies:
+    """서로 다른 판정 기준을 가진 여러 정책의 혼합 계산을 검증합니다."""
+
+    def test_mixed_payment_and_contract_policies(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """PAYMENT_DATE 정책과 CONTRACT_DATE 정책이 각자 기준일로 판정됩니다."""
+        small_company = _add_company(company_repo, "1000000001")
+        startup_company = _add_company(company_repo, "1000000002")
+
+        small_policy = _add_policy(policy_repo, "SMALL_BUSINESS", "중소기업", "PAYMENT_DATE")
+        startup_policy = _add_policy(policy_repo, "STARTUP", "창업기업", "CONTRACT_DATE")
+
+        _add_certification(
+            certification_repo, small_company, small_policy, date(2026, 1, 1), date(2026, 6, 30)
+        )
+        _add_certification(
+            certification_repo, startup_company, startup_policy, date(2026, 1, 1), date(2026, 6, 30)
+        )
+
+        # 중소기업: 지급일 기준으로 인정(지급일 3-15 in), 계약일은 밖
+        _add_purchase(
+            purchase_repo,
+            "3000000",
+            company_id=small_company,
+            payment_date=date(2026, 3, 15),
+            contract_date=date(2025, 11, 1),
+        )
+        # 창업기업: 계약일 기준으로 인정(계약일 2-1 in), 지급일은 밖
+        _add_purchase(
+            purchase_repo,
+            "7000000",
+            company_id=startup_company,
+            payment_date=date(2026, 9, 1),
+            contract_date=date(2026, 2, 1),
+        )
+
+        results = calculator.calculate_all(
+            {small_policy: Decimal("50"), startup_policy: Decimal("50")}
+        )
+        by_code = {r.policy_code: r for r in results}
+        assert by_code["SMALL_BUSINESS"].purchase_amount == Decimal("3000000")
+        assert by_code["STARTUP"].purchase_amount == Decimal("7000000")
+        # 전체 구매금액은 매칭·유효기간과 무관하게 모든 구매 합산
+        assert by_code["SMALL_BUSINESS"].total_purchase_amount == Decimal("10000000")
+
+    def test_mixed_with_one_out_of_range(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """혼합 계산에서 유효기간 밖 구매는 해당 정책 실적에서만 제외됩니다."""
+        small_company = _add_company(company_repo, "1000000001")
+        startup_company = _add_company(company_repo, "1000000002")
+
+        small_policy = _add_policy(policy_repo, "SMALL_BUSINESS", "중소기업", "PAYMENT_DATE")
+        startup_policy = _add_policy(policy_repo, "STARTUP", "창업기업", "CONTRACT_DATE")
+
+        _add_certification(
+            certification_repo, small_company, small_policy, date(2026, 1, 1), date(2026, 6, 30)
+        )
+        _add_certification(
+            certification_repo, startup_company, startup_policy, date(2026, 1, 1), date(2026, 6, 30)
+        )
+
+        # 중소기업: 지급일이 유효기간 밖 → 제외
+        _add_purchase(
+            purchase_repo,
+            "3000000",
+            company_id=small_company,
+            payment_date=date(2026, 12, 1),
+        )
+        # 창업기업: 계약일 유효기간 안 → 인정
+        _add_purchase(
+            purchase_repo,
+            "7000000",
+            company_id=startup_company,
+            contract_date=date(2026, 2, 1),
+        )
+
+        results = calculator.calculate_all(
+            {small_policy: Decimal("50"), startup_policy: Decimal("50")}
+        )
+        by_code = {r.policy_code: r for r in results}
+        assert by_code["SMALL_BUSINESS"].purchase_amount == Decimal("0")
+        assert by_code["STARTUP"].purchase_amount == Decimal("7000000")

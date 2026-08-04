@@ -28,6 +28,7 @@ Dashboard 가 사용할 계산 기반(Service Layer)으로, Repository 를 주�
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from procurement.calculators.achievement_result import AchievementResult
@@ -35,12 +36,19 @@ from procurement.database.certification_repository import CertificationRepositor
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models.policy import Policy
+from procurement.models.purchase import Purchase
 
 #: 달성률 표기 자리수 (소수점 둘째 자리)
 _RATE_EXPONENT = Decimal("0.01")
 
 #: 비율을 백분율로 변환할 때 사용하는 계수
 _PERCENT = Decimal("100")
+
+#: 판정 기준일 유형 — 계약일 기준 (창업기업)
+_BASIS_CONTRACT_DATE = "CONTRACT_DATE"
+
+#: 판정 기준일 유형 — 대금 지급일 기준 (그 외 일반 정책)
+_BASIS_PAYMENT_DATE = "PAYMENT_DATE"
 
 
 class CalculatorValidationError(ValueError):
@@ -81,10 +89,16 @@ class ProcurementAchievementCalculator:
         return total
 
     def calculate_policy_purchase(self, policy_id: int) -> Decimal:
-        """해당 정책 인증을 보유한 기업으로부터의 구매금액을 합산합니다.
+        """해당 정책의 실제 업무 규칙을 적용해 정책별 구매금액을 합산합니다.
 
-        정책에 연결된 인증을 조회해 대상 기업을 모으고, 그 기업들의 구매실적을
-        합산합니다. ``company_id`` 가 없는(미매칭) 구매는 제외됩니다.
+        정책의 ``evaluation_basis`` 에 따라 판정 기준일을 선택합니다.
+
+        - ``PAYMENT_DATE`` → 구매의 대금 지급일(``payment_date``)
+        - ``CONTRACT_DATE`` → 구매의 계약일(``contract_date``)
+
+        선택한 기준일이 해당 기업의 정책 인증 유효기간
+        (``valid_from <= 기준일 <= valid_to``, 경계 포함) 내에 있는 구매만
+        정책 실적으로 인정합니다. ``company_id`` 가 없는(미매칭) 구매는 제외됩니다.
 
         Args:
             policy_id: 집계할 정책 ID.
@@ -176,19 +190,56 @@ class ProcurementAchievementCalculator:
             )
 
     def _sum_policy_purchase(self, policy_id: int) -> Decimal:
-        """정책 인증기업의 구매금액을 합산합니다 (정책 존재 검증 없음)."""
-        company_ids = {
-            certification.company_id
-            for certification in self._certification_repository.find_by_policy(policy_id)
-        }
-        if not company_ids:
+        """정책 인증기업의 구매금액을 업무 규칙에 따라 합산합니다 (정책 존재 검증 없음).
+
+        정책의 ``evaluation_basis`` 에 따라 판정 기준일(지급일 또는 계약일)을
+        선택하고, 그 기준일이 해당 기업의 인증 유효기간(``valid_from`` ~
+        ``valid_to``, 경계 포함) 내에 있는 구매만 합산합니다. ``company_id`` 가
+        없는(미매칭) 구매는 제외됩니다.
+
+        한 기업이 같은 정책 인증을 여러 건 보유한 경우, 그중 하나라도 유효기간을
+        만족하면 해당 구매를 인정합니다.
+        """
+        policy = self._policy_repository.find_by_id(policy_id)
+        if policy is None:
+            return Decimal("0")
+
+        # company_id -> 인증 유효기간(valid_from, valid_to) 목록
+        validity_ranges: dict[int, list[tuple[date, date]]] = {}
+        for certification in self._certification_repository.find_by_policy(policy_id):
+            if certification.company_id is None:
+                continue
+            validity_ranges.setdefault(certification.company_id, []).append(
+                (certification.valid_from, certification.valid_to)
+            )
+        if not validity_ranges:
             return Decimal("0")
 
         total = Decimal("0")
         for purchase in self._purchase_repository.find_all():
-            if purchase.company_id is not None and purchase.company_id in company_ids:
+            company_id = purchase.company_id
+            if company_id is None or company_id not in validity_ranges:
+                continue
+            basis_date = self._basis_date(purchase, policy.evaluation_basis)
+            if self._is_within_any(basis_date, validity_ranges[company_id]):
                 total += purchase.amount
         return total
+
+    @staticmethod
+    def _basis_date(purchase: Purchase, evaluation_basis: str) -> date:
+        """정책의 판정 기준일 유형에 따라 구매의 기준일을 선택합니다.
+
+        ``CONTRACT_DATE`` 는 계약일(``contract_date``), 그 외(``PAYMENT_DATE``)는
+        대금 지급일(``payment_date``)을 사용합니다.
+        """
+        if evaluation_basis == _BASIS_CONTRACT_DATE:
+            return purchase.contract_date
+        return purchase.payment_date
+
+    @staticmethod
+    def _is_within_any(basis_date: date, ranges: list[tuple[date, date]]) -> bool:
+        """기준일이 유효기간(경계 포함) 중 하나라도 만족하는지 확인합니다."""
+        return any(valid_from <= basis_date <= valid_to for valid_from, valid_to in ranges)
 
     def _build_result(
         self,
