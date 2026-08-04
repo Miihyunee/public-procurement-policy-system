@@ -175,6 +175,17 @@ class PurchaseRepository(BaseRepository):
         )
         return [self._row_to_purchase(row) for row in rows]
 
+    def find_all(self) -> list[Purchase]:
+        """전체 구매실적 목록을 조회합니다.
+
+        전체 구매금액 집계 등 기관 단위 계산에 사용됩니다.
+
+        Returns:
+            :class:`Purchase` 목록. 없으면 빈 목록.
+        """
+        rows = self.execute("SELECT * FROM purchase ORDER BY purchase_id")
+        return [self._row_to_purchase(row) for row in rows]
+
     def find_unmatched(self) -> list[Purchase]:
         """기업 매칭이 되지 않은 구매실적 목록을 조회합니다.
 
