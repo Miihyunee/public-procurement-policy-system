@@ -57,7 +57,8 @@ def _purchase(business_no: str, company_id: int | None = None) -> Purchase:
         business_no=business_no,
         company_id=company_id,
         company_name="공급업체",
-        purchase_date=date(2026, 3, 15),
+        contract_date=date(2026, 3, 1),
+        payment_date=date(2026, 3, 15),
         amount=Decimal("1000000"),
     )
 
@@ -120,7 +121,8 @@ class TestPurchaseRepositoryUpdateCompanyId:
         assert found is not None
         assert found.business_no == saved.business_no
         assert found.company_name == saved.company_name
-        assert found.purchase_date == saved.purchase_date
+        assert found.contract_date == saved.contract_date
+        assert found.payment_date == saved.payment_date
         assert found.amount == saved.amount
         assert found.created_at == saved.created_at
 

@@ -27,7 +27,9 @@ class PurchaseValidationError(ValueError):
     """필수값 누락·금액 오류 등 Purchase 데이터 검증 실패 시 발생하는 예외."""
 
 
-# DATABASE_DESIGN.md 의 Purchase 테이블 정의를 그대로 반영한다.
+# DATABASE_DESIGN.md v1.1 의 Purchase 테이블 정의를 그대로 반영한다.
+# 판정 기준일을 계약일(창업기업)/지급일(일반 정책)로 이원화하기 위해
+# contract_date 와 payment_date 를 사용한다.
 # company_id 는 매칭 후 저장되므로 NULL 을 허용하고, Foreign Key 제약은
 # 이번 Issue 범위에서 제외한다.
 CREATE_TABLE_SQL = """
@@ -36,7 +38,8 @@ CREATE TABLE IF NOT EXISTS purchase (
     business_no TEXT NOT NULL,
     company_id INTEGER,
     company_name TEXT NOT NULL,
-    purchase_date DATE NOT NULL,
+    contract_date DATE NOT NULL,
+    payment_date DATE NOT NULL,
     amount NUMERIC NOT NULL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
@@ -116,15 +119,16 @@ class PurchaseRepository(BaseRepository):
 
         sql = (
             "INSERT INTO purchase "
-            "(business_no, company_id, company_name, purchase_date, amount, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "(business_no, company_id, company_name, contract_date, payment_date, "
+            "amount, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )
         params = (
             purchase.business_no,
             purchase.company_id,
             purchase.company_name,
-            _to_db_date(purchase.purchase_date),
+            _to_db_date(purchase.contract_date),
+            _to_db_date(purchase.payment_date),
             _to_db_amount(purchase.amount),
             _to_db(created_at),
             _to_db(updated_at),
@@ -139,7 +143,8 @@ class PurchaseRepository(BaseRepository):
             business_no=purchase.business_no,
             company_id=purchase.company_id,
             company_name=purchase.company_name,
-            purchase_date=purchase.purchase_date,
+            contract_date=purchase.contract_date,
+            payment_date=purchase.payment_date,
             amount=purchase.amount,
             created_at=created_at,
             updated_at=updated_at,
@@ -235,8 +240,11 @@ class PurchaseRepository(BaseRepository):
             if value is None or not str(value).strip():
                 raise PurchaseValidationError(f"필수값이 누락되었습니다: {field}")
 
-        if purchase.purchase_date is None:
-            raise PurchaseValidationError("필수값이 누락되었습니다: purchase_date")
+        if purchase.contract_date is None:
+            raise PurchaseValidationError("필수값이 누락되었습니다: contract_date")
+
+        if purchase.payment_date is None:
+            raise PurchaseValidationError("필수값이 누락되었습니다: payment_date")
 
         if purchase.amount is None:
             raise PurchaseValidationError("필수값이 누락되었습니다: amount")
@@ -254,7 +262,8 @@ class PurchaseRepository(BaseRepository):
             business_no=row["business_no"],
             company_id=row["company_id"],
             company_name=row["company_name"],
-            purchase_date=_from_db_date(row["purchase_date"]),
+            contract_date=_from_db_date(row["contract_date"]),
+            payment_date=_from_db_date(row["payment_date"]),
             amount=_from_db_amount(row["amount"]),
             created_at=_from_db(row["created_at"]),
             updated_at=_from_db(row["updated_at"]),
