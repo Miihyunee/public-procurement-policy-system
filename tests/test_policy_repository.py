@@ -59,13 +59,20 @@ class TestCreateTable:
 
     def test_not_null_columns(self, repo: PolicyRepository) -> None:
         cols = {row["name"]: row for row in repo.execute("PRAGMA table_info(policy)")}
-        for name in ("policy_code", "policy_name", "is_active", "created_at", "updated_at"):
+        for name in (
+            "policy_code",
+            "policy_name",
+            "is_active",
+            "evaluation_basis",
+            "created_at",
+            "updated_at",
+        ):
             assert cols[name]["notnull"] == 1, f"{name} 은 NOT NULL 이어야 합니다."
         # description 은 선택 항목이므로 NULL 허용
         assert cols["description"]["notnull"] == 0
 
     def test_columns_match_design(self, repo: PolicyRepository) -> None:
-        """DATABASE_DESIGN.md 정의 컬럼과 정확히 일치해야 합니다."""
+        """DATABASE_DESIGN.md v1.1 정의 컬럼과 정확히 일치해야 합니다."""
         names = [row["name"] for row in repo.execute("PRAGMA table_info(policy)")]
         assert names == [
             "policy_id",
@@ -73,6 +80,7 @@ class TestCreateTable:
             "policy_name",
             "description",
             "is_active",
+            "evaluation_basis",
             "created_at",
             "updated_at",
         ]
@@ -114,6 +122,80 @@ class TestInsert:
         found = repo.find_by_policy_code("OLD")
         assert found is not None
         assert found.is_active is False
+
+
+class TestEvaluationBasis:
+    """evaluation_basis 저장·검증·복원을 검증합니다."""
+
+    def test_default_is_payment_date(self, repo: PolicyRepository) -> None:
+        """미지정 시 기본값 PAYMENT_DATE 로 저장됩니다."""
+        repo.insert(_sample("DEFAULT_BASIS"))
+        found = repo.find_by_policy_code("DEFAULT_BASIS")
+        assert found is not None
+        assert found.evaluation_basis == "PAYMENT_DATE"
+
+    def test_store_payment_date(self, repo: PolicyRepository) -> None:
+        repo.insert(
+            Policy(policy_code="WOMAN", policy_name="여성기업", evaluation_basis="PAYMENT_DATE")
+        )
+        found = repo.find_by_policy_code("WOMAN")
+        assert found is not None
+        assert found.evaluation_basis == "PAYMENT_DATE"
+
+    def test_store_contract_date(self, repo: PolicyRepository) -> None:
+        repo.insert(
+            Policy(policy_code="STARTUP", policy_name="창업기업", evaluation_basis="CONTRACT_DATE")
+        )
+        found = repo.find_by_policy_code("STARTUP")
+        assert found is not None
+        assert found.evaluation_basis == "CONTRACT_DATE"
+
+    def test_row_mapping_includes_evaluation_basis(self, repo: PolicyRepository) -> None:
+        """Row Mapping 이 evaluation_basis 를 포함해 복원해야 합니다."""
+        saved = repo.insert(
+            Policy(
+                policy_code="DISABLED", policy_name="장애인기업", evaluation_basis="CONTRACT_DATE"
+            )
+        )
+        assert saved.policy_id is not None
+        # insert 반환값과 find_by_id 조회값 모두 동일 값을 가져야 함
+        assert saved.evaluation_basis == "CONTRACT_DATE"
+        found = repo.find_by_id(saved.policy_id)
+        assert found is not None
+        assert found.evaluation_basis == "CONTRACT_DATE"
+
+    def test_invalid_value_raises(self, repo: PolicyRepository) -> None:
+        with pytest.raises(PolicyValidationError):
+            repo.insert(
+                Policy(policy_code="BAD", policy_name="잘못된정책", evaluation_basis="SOMETHING")
+            )
+
+    def test_empty_value_raises(self, repo: PolicyRepository) -> None:
+        with pytest.raises(PolicyValidationError):
+            repo.insert(Policy(policy_code="EMPTY_BASIS", policy_name="빈값", evaluation_basis=""))
+
+    def test_vendor_existence_not_allowed_in_mvp(self, repo: PolicyRepository) -> None:
+        """VENDOR_EXISTENCE 는 MVP 범위 밖이므로 허용되지 않습니다."""
+        with pytest.raises(PolicyValidationError):
+            repo.insert(
+                Policy(
+                    policy_code="SELF_SUPPORT",
+                    policy_name="자활용사촌",
+                    evaluation_basis="VENDOR_EXISTENCE",
+                )
+            )
+
+    def test_invalid_value_persists_nothing(self, repo: PolicyRepository) -> None:
+        with pytest.raises(PolicyValidationError):
+            repo.insert(
+                Policy(policy_code="BAD2", policy_name="잘못된정책", evaluation_basis="XXX")
+            )
+        assert repo.count() == 0
+
+    def test_column_not_null_rejects_direct_null(self, repo: PolicyRepository) -> None:
+        """스키마 레벨에서 evaluation_basis 는 NOT NULL 이어야 합니다."""
+        cols = {row["name"]: row for row in repo.execute("PRAGMA table_info(policy)")}
+        assert cols["evaluation_basis"]["notnull"] == 1
 
 
 class TestExists:

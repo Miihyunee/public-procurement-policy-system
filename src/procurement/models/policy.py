@@ -29,6 +29,8 @@ class Policy:
         policy_name: 정책명 (필수).
         description: 정책 설명 (선택).
         is_active: 사용 여부 (필수). 기본값은 ``True`` 입니다.
+        evaluation_basis: 판정 기준일 유형 (필수). ``PAYMENT_DATE`` 또는
+            ``CONTRACT_DATE``. 기본값은 ``"PAYMENT_DATE"`` 입니다.
         policy_id: 내부 고유 ID (Primary Key). 저장 전에는 ``None`` 입니다.
         created_at: 데이터 생성일시. 저장 시 채워집니다.
         updated_at: 데이터 최종 수정일시. 저장 시 채워집니다.
@@ -38,6 +40,7 @@ class Policy:
     policy_name: str
     description: str | None = None
     is_active: bool = True
+    evaluation_basis: str = "PAYMENT_DATE"
     policy_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
