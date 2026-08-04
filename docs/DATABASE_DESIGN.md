@@ -4,9 +4,9 @@
 
 | Item | Value |
 |------|------|
-| Version | v1.0 |
+| Version | v1.1 |
 | Status | Draft |
-| Last Updated | 2026-07-20 |
+| Last Updated | 2026-08-04 |
 
 ---
 
@@ -137,10 +137,15 @@
 | business_no | TEXT | Yes | 사업자등록번호 |
 | company_id | INTEGER | No | Company 테이블 참조 (매칭 후 저장) |
 | company_name | TEXT | Yes | 공급업체명 |
-| purchase_date | DATE | Yes | 구매일 |
+| contract_date | DATE | Yes | 계약일 (창업기업 판정 기준일) |
+| payment_date | DATE | Yes | 대금 지급일(지출완료) (일반 정책 판정 기준일) |
 | amount | NUMERIC | Yes | 구매금액 |
 | created_at | DATETIME | Yes | 데이터 생성일시 |
 | updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
+> `purchase_date`(단일 구매일)는 판정 기준 이원화를 위해 제거하고 `payment_date`로 대체하였다.
+> `contract_date`는 창업기업(계약일 기준) 판정을 위해 신규 추가하였다. (Issue #12)
+> 품목 수(`item_count`)는 자활용사촌 등 향후 정책에서 사용하므로 MVP 범위에 포함하지 않는다.
 
 ---
 
@@ -179,8 +184,22 @@
 | policy_name | TEXT | Yes | 정책명 |
 | description | TEXT | No | 정책 설명 |
 | is_active | BOOLEAN | Yes | 사용 여부 |
+| evaluation_basis | TEXT | Yes | 판정 기준일 유형 (PAYMENT_DATE / CONTRACT_DATE) |
 | created_at | DATETIME | Yes | 데이터 생성일시 |
 | updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
+### evaluation_basis 허용 값
+
+정책별 판정 기준일 유형을 데이터로 관리하여, 계산 로직(Calculator)이 정책 코드를
+하드코딩하지 않고 이 값에 따라 분기하도록 한다.
+
+| 값 | 의미 | 적용 정책 (MVP) |
+|-----|------|-----------------|
+| PAYMENT_DATE | 대금 지급일이 인증 유효기간 내 | 중소기업, 여성기업, 장애인기업, 녹색제품 |
+| CONTRACT_DATE | 계약일이 인증 유효기간 내 | 창업기업 |
+
+> MVP에서는 위 두 값만 사용한다.
+> 자활용사촌(기간 무관·거래 유무·품목 기준)을 위한 `VENDOR_EXISTENCE` 유형은 향후 정책 확장 시 정의한다.
 
 ---
 
@@ -249,4 +268,14 @@ AuditLog
 
 Company, Certification, Purchase, Policy 테이블의 기본 컬럼은 정의되었으며, 구현 시 기준 설계로 사용한다.
 
-인덱스(Index), 외래키(Foreign Key), 상세 제약조건(Constraint) 및 Dataset, AuditLog의 컬럼 정의는 다음 버전(v1.1)에서 보완한다.
+## v1.1 변경 이력 (Issue #12)
+
+실제 기관 업무 기준(정책별 판정 기준일)을 반영하기 위해 다음을 개정하였다.
+
+- Purchase: `purchase_date` 제거 → `payment_date`(대금 지급일), `contract_date`(계약일) 추가
+- Policy: `evaluation_basis`(판정 기준일 유형) 추가 — MVP 값은 `PAYMENT_DATE`, `CONTRACT_DATE`
+
+판정 기준일과 유효기간 판정 규칙은 `docs/POLICY_DEFINITION.md`를 정본으로 한다.
+컬럼의 실제 스키마 반영(Model/Repository)은 Issue #13 이후에서 구현한다.
+
+인덱스(Index), 외래키(Foreign Key), 상세 제약조건(Constraint) 및 Dataset, AuditLog의 컬럼 정의는 다음 버전에서 보완한다.
