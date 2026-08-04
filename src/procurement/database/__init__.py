@@ -27,6 +27,10 @@ from procurement.database.policy_repository import (
     PolicyRepository,
     PolicyValidationError,
 )
+from procurement.database.purchase_repository import (
+    PurchaseRepository,
+    PurchaseValidationError,
+)
 
 __all__ = [
     "BaseRepository",
@@ -38,6 +42,8 @@ __all__ = [
     "DuplicatePolicyCodeError",
     "PolicyRepository",
     "PolicyValidationError",
+    "PurchaseRepository",
+    "PurchaseValidationError",
     "create_connection",
     "get_connection",
 ]
