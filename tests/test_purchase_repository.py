@@ -32,7 +32,8 @@ def _sample(business_no: str = "1234567890", amount: str = "1000000") -> Purchas
     return Purchase(
         business_no=business_no,
         company_name="테스트기업",
-        purchase_date=date(2026, 3, 15),
+        contract_date=date(2026, 3, 1),
+        payment_date=date(2026, 3, 15),
         amount=Decimal(amount),
     )
 
@@ -59,7 +60,8 @@ class TestCreateTable:
         for name in (
             "business_no",
             "company_name",
-            "purchase_date",
+            "contract_date",
+            "payment_date",
             "amount",
             "created_at",
             "updated_at",
@@ -72,14 +74,15 @@ class TestCreateTable:
         assert cols["company_id"]["notnull"] == 0
 
     def test_columns_match_design(self, repo: PurchaseRepository) -> None:
-        """DATABASE_DESIGN.md 정의 컬럼과 정확히 일치해야 합니다."""
+        """DATABASE_DESIGN.md v1.1 정의 컬럼과 정확히 일치해야 합니다."""
         names = [row["name"] for row in repo.execute("PRAGMA table_info(purchase)")]
         assert names == [
             "purchase_id",
             "business_no",
             "company_id",
             "company_name",
-            "purchase_date",
+            "contract_date",
+            "payment_date",
             "amount",
             "created_at",
             "updated_at",
@@ -123,7 +126,8 @@ class TestInsert:
                 business_no="1112223334",
                 company_id=42,
                 company_name="매칭된기업",
-                purchase_date=date(2026, 1, 10),
+                contract_date=date(2026, 1, 5),
+                payment_date=date(2026, 1, 10),
                 amount=Decimal("500000"),
             )
         )
@@ -169,6 +173,19 @@ class TestFindByBusinessNo:
         assert repo.find_by_business_no("0000000000") == []
 
 
+class TestFindAll:
+    """전체 조회를 검증합니다."""
+
+    def test_returns_empty_when_no_rows(self, repo: PurchaseRepository) -> None:
+        assert repo.find_all() == []
+
+    def test_returns_all_rows_ordered(self, repo: PurchaseRepository) -> None:
+        repo.insert(_sample("1000000001"))
+        repo.insert(_sample("1000000002"))
+        rows = repo.find_all()
+        assert [p.business_no for p in rows] == ["1000000001", "1000000002"]
+
+
 class TestCount:
     """등록 구매건 수 집계를 검증합니다."""
 
@@ -185,13 +202,38 @@ class TestCount:
 class TestDateAndTimestampRoundtrip:
     """날짜·타임스탬프 저장/조회를 검증합니다."""
 
-    def test_purchase_date_roundtrip(self, repo: PurchaseRepository) -> None:
+    def test_contract_date_roundtrip(self, repo: PurchaseRepository) -> None:
         saved = repo.insert(_sample())
         assert saved.purchase_id is not None
         found = repo.find_by_id(saved.purchase_id)
         assert found is not None
-        assert found.purchase_date == date(2026, 3, 15)
-        assert isinstance(found.purchase_date, date)
+        assert found.contract_date == date(2026, 3, 1)
+        assert isinstance(found.contract_date, date)
+
+    def test_payment_date_roundtrip(self, repo: PurchaseRepository) -> None:
+        saved = repo.insert(_sample())
+        assert saved.purchase_id is not None
+        found = repo.find_by_id(saved.purchase_id)
+        assert found is not None
+        assert found.payment_date == date(2026, 3, 15)
+        assert isinstance(found.payment_date, date)
+
+    def test_contract_and_payment_are_independent(self, repo: PurchaseRepository) -> None:
+        """계약일과 지급일이 서로 다른 값으로 각각 저장/복원되어야 합니다."""
+        saved = repo.insert(
+            Purchase(
+                business_no="1234567890",
+                company_name="테스트기업",
+                contract_date=date(2025, 12, 20),
+                payment_date=date(2026, 2, 3),
+                amount=Decimal("1000000"),
+            )
+        )
+        assert saved.purchase_id is not None
+        found = repo.find_by_id(saved.purchase_id)
+        assert found is not None
+        assert found.contract_date == date(2025, 12, 20)
+        assert found.payment_date == date(2026, 2, 3)
 
     def test_timestamps_roundtrip(self, repo: PurchaseRepository) -> None:
         saved = repo.insert(_sample())
@@ -250,9 +292,15 @@ class TestRequiredValidation:
         with pytest.raises(PurchaseValidationError):
             repo.insert(p)
 
-    def test_none_purchase_date(self, repo: PurchaseRepository) -> None:
+    def test_none_contract_date(self, repo: PurchaseRepository) -> None:
         p = _sample()
-        p.purchase_date = None  # type: ignore[assignment]
+        p.contract_date = None  # type: ignore[assignment]
+        with pytest.raises(PurchaseValidationError):
+            repo.insert(p)
+
+    def test_none_payment_date(self, repo: PurchaseRepository) -> None:
+        p = _sample()
+        p.payment_date = None  # type: ignore[assignment]
         with pytest.raises(PurchaseValidationError):
             repo.insert(p)
 

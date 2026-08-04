@@ -103,7 +103,8 @@ def _add_purchase(repo: PurchaseRepository, amount: str, company_id: int | None 
             business_no="0000000000",
             company_id=company_id,
             company_name="공급업체",
-            purchase_date=date(2026, 3, 15),
+            contract_date=date(2026, 3, 1),
+            payment_date=date(2026, 3, 15),
             amount=Decimal(amount),
         )
     )

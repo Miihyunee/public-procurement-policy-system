@@ -28,7 +28,8 @@ class Purchase:
     Attributes:
         business_no: 사업자등록번호 (필수). 중복될 수 있습니다.
         company_name: 공급업체명 (필수).
-        purchase_date: 구매일 (필수).
+        contract_date: 계약일 (필수). 창업기업 정책 판정 기준일입니다.
+        payment_date: 대금 지급일(지출완료) (필수). 일반 정책 판정 기준일입니다.
         amount: 구매금액 (필수). 0 보다 커야 합니다.
         company_id: Company 테이블 참조 ID. 매칭 후 저장되므로 기본값은 ``None`` 입니다.
         purchase_id: 내부 고유 ID (Primary Key). 저장 전에는 ``None`` 입니다.
@@ -38,7 +39,8 @@ class Purchase:
 
     business_no: str
     company_name: str
-    purchase_date: date
+    contract_date: date
+    payment_date: date
     amount: Decimal
     company_id: int | None = None
     purchase_id: int | None = None
