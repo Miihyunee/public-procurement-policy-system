@@ -29,7 +29,7 @@ class DuplicatePolicyCodeError(Exception):
     """이미 등록된 정책 코드로 저장을 시도할 때 발생하는 예외."""
 
 
-# DATABASE_DESIGN.md 의 Policy 테이블 정의를 그대로 반영한다.
+# DATABASE_DESIGN.md v1.1 의 Policy 테이블 정의를 그대로 반영한다.
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS policy (
     policy_id INTEGER PRIMARY KEY,
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS policy (
     policy_name TEXT NOT NULL,
     description TEXT,
     is_active BOOLEAN NOT NULL,
+    evaluation_basis TEXT NOT NULL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 )
@@ -44,6 +45,9 @@ CREATE TABLE IF NOT EXISTS policy (
 
 # 필수 입력값 (policy_code 는 UNIQUE 제약과 별개로 비어 있지 않아야 함)
 _REQUIRED_FIELDS = ("policy_code", "policy_name")
+
+# evaluation_basis 허용 값 (MVP). VENDOR_EXISTENCE 는 이번 범위에 포함하지 않는다.
+ALLOWED_EVALUATION_BASIS = ("PAYMENT_DATE", "CONTRACT_DATE")
 
 
 def _to_db(value: datetime) -> str:
@@ -80,7 +84,8 @@ class PolicyRepository(BaseRepository):
 
         Raises:
             PolicyValidationError: 필수값(정책 코드·정책명)이 비어 있거나
-                ``is_active`` 가 ``None`` 인 경우.
+                ``is_active`` 가 ``None`` 이거나, ``evaluation_basis`` 가 허용값
+                (``PAYMENT_DATE`` / ``CONTRACT_DATE``) 이 아닌 경우.
             DuplicatePolicyCodeError: 동일한 정책 코드가 이미 존재하는 경우.
         """
         self._validate_required(policy)
@@ -91,14 +96,16 @@ class PolicyRepository(BaseRepository):
 
         sql = (
             "INSERT INTO policy "
-            "(policy_code, policy_name, description, is_active, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)"
+            "(policy_code, policy_name, description, is_active, evaluation_basis, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)"
         )
         params = (
             policy.policy_code,
             policy.policy_name,
             policy.description,
             int(policy.is_active),
+            policy.evaluation_basis,
             _to_db(created_at),
             _to_db(updated_at),
         )
@@ -118,6 +125,7 @@ class PolicyRepository(BaseRepository):
             policy_name=policy.policy_name,
             description=policy.description,
             is_active=policy.is_active,
+            evaluation_basis=policy.evaluation_basis,
             created_at=created_at,
             updated_at=updated_at,
         )
@@ -171,13 +179,19 @@ class PolicyRepository(BaseRepository):
     # 내부 헬퍼
     # ------------------------------------------------------------------
     def _validate_required(self, policy: Policy) -> None:
-        """필수 입력값이 비어 있지 않은지 검증합니다."""
+        """필수 입력값과 evaluation_basis 허용값을 검증합니다."""
         for field in _REQUIRED_FIELDS:
             value = getattr(policy, field)
             if value is None or not str(value).strip():
                 raise PolicyValidationError(f"필수값이 누락되었습니다: {field}")
         if policy.is_active is None:
             raise PolicyValidationError("필수값이 누락되었습니다: is_active")
+        if policy.evaluation_basis not in ALLOWED_EVALUATION_BASIS:
+            raise PolicyValidationError(
+                "evaluation_basis 는 "
+                f"{', '.join(ALLOWED_EVALUATION_BASIS)} 만 허용됩니다: "
+                f"{policy.evaluation_basis!r}"
+            )
 
     @staticmethod
     def _row_to_policy(row: sqlite3.Row) -> Policy:
@@ -188,6 +202,7 @@ class PolicyRepository(BaseRepository):
             policy_name=row["policy_name"],
             description=row["description"],
             is_active=bool(row["is_active"]),
+            evaluation_basis=row["evaluation_basis"],
             created_at=_from_db(row["created_at"]),
             updated_at=_from_db(row["updated_at"]),
         )
