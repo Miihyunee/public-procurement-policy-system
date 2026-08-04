@@ -14,4 +14,12 @@ def test_version_exists() -> None:
 
 def test_subpackages_importable() -> None:
     """서브패키지들이 오류 없이 import 되어야 합니다."""
-    from procurement import core, collectors, matchers, calculators, models, database, api  # noqa: F401
+    from procurement import (  # noqa: F401
+        api,
+        calculators,
+        collectors,
+        core,
+        database,
+        matchers,
+        models,
+    )

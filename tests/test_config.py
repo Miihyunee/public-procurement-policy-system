@@ -117,8 +117,14 @@ class TestEnvExampleFile:
         env_example = settings.project_root / ".env.example"
         content = env_example.read_text(encoding="utf-8")
         required_keys = [
-            "APP_NAME", "APP_VERSION", "ENVIRONMENT", "DEBUG",
-            "DATA_PATH", "DATABASE_PATH", "DATABASE_FILENAME", "LOG_PATH",
+            "APP_NAME",
+            "APP_VERSION",
+            "ENVIRONMENT",
+            "DEBUG",
+            "DATA_PATH",
+            "DATABASE_PATH",
+            "DATABASE_FILENAME",
+            "LOG_PATH",
         ]
         for key in required_keys:
             assert key in content, f".env.example에 {key} 항목이 없습니다."

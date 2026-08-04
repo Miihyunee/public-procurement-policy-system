@@ -24,7 +24,6 @@ from typing import Literal
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 # 프로젝트 루트: 이 파일 기준 5단계 상위 (src/procurement/core/config/settings.py)
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
