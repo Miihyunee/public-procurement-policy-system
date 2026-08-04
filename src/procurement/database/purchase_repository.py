@@ -175,6 +175,35 @@ class PurchaseRepository(BaseRepository):
         )
         return [self._row_to_purchase(row) for row in rows]
 
+    def find_unmatched(self) -> list[Purchase]:
+        """기업 매칭이 되지 않은 구매실적 목록을 조회합니다.
+
+        ``company_id`` 가 ``NULL`` 인 행을 대상으로 합니다.
+
+        Returns:
+            :class:`Purchase` 목록. 없으면 빈 목록.
+        """
+        rows = self.execute("SELECT * FROM purchase WHERE company_id IS NULL ORDER BY purchase_id")
+        return [self._row_to_purchase(row) for row in rows]
+
+    def update_company_id(self, purchase_id: int, company_id: int) -> bool:
+        """구매실적의 ``company_id`` 를 갱신합니다.
+
+        실제 수정이 발생하므로 ``updated_at`` 도 함께 갱신합니다.
+
+        Args:
+            purchase_id: 갱신할 구매실적의 내부 고유 ID.
+            company_id: 연결할 Company 참조 ID.
+
+        Returns:
+            갱신된 행이 있으면 ``True``, 해당 ``purchase_id`` 가 없으면 ``False``.
+        """
+        affected = self.execute_write(
+            "UPDATE purchase SET company_id = ?, updated_at = ? WHERE purchase_id = ?",
+            (company_id, _to_db(datetime.now()), purchase_id),
+        )
+        return affected > 0
+
     def count(self) -> int:
         """등록된 구매실적 수를 반환합니다.
 
