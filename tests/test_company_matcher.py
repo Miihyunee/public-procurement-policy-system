@@ -99,18 +99,16 @@ class TestPurchaseRepositoryUpdateCompanyId:
     def test_returns_false_for_missing_purchase(self, purchase_repo: PurchaseRepository) -> None:
         assert purchase_repo.update_company_id(99999, 1) is False
 
-    def test_updates_updated_at(self, purchase_repo: PurchaseRepository) -> None:
-        """실제 수정이 발생하므로 updated_at 이 갱신되어야 합니다."""
+    def test_does_not_change_updated_at(self, purchase_repo: PurchaseRepository) -> None:
+        """updated_at 관리는 향후 Update 기능 범위이므로 변경되지 않아야 합니다."""
         saved = purchase_repo.insert(_purchase("2000000002"))
         assert saved.purchase_id is not None
-        assert saved.updated_at is not None
 
         purchase_repo.update_company_id(saved.purchase_id, 3)
 
         found = purchase_repo.find_by_id(saved.purchase_id)
         assert found is not None
-        assert found.updated_at is not None
-        assert found.updated_at >= saved.updated_at
+        assert found.updated_at == saved.updated_at
 
     def test_does_not_change_other_columns(self, purchase_repo: PurchaseRepository) -> None:
         saved = purchase_repo.insert(_purchase("2000000003"))

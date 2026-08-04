@@ -189,7 +189,8 @@ class PurchaseRepository(BaseRepository):
     def update_company_id(self, purchase_id: int, company_id: int) -> bool:
         """구매실적의 ``company_id`` 를 갱신합니다.
 
-        실제 수정이 발생하므로 ``updated_at`` 도 함께 갱신합니다.
+        ``company_id`` 만 변경합니다. ``updated_at`` 관리는 향후 Update 기능에서
+        일괄 처리합니다.
 
         Args:
             purchase_id: 갱신할 구매실적의 내부 고유 ID.
@@ -199,8 +200,8 @@ class PurchaseRepository(BaseRepository):
             갱신된 행이 있으면 ``True``, 해당 ``purchase_id`` 가 없으면 ``False``.
         """
         affected = self.execute_write(
-            "UPDATE purchase SET company_id = ?, updated_at = ? WHERE purchase_id = ?",
-            (company_id, _to_db(datetime.now()), purchase_id),
+            "UPDATE purchase SET company_id = ? WHERE purchase_id = ?",
+            (company_id, purchase_id),
         )
         return affected > 0
 
