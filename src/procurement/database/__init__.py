@@ -12,6 +12,10 @@ procurement.database
 """
 
 from procurement.database.base import BaseRepository
+from procurement.database.certification_repository import (
+    CertificationRepository,
+    CertificationValidationError,
+)
 from procurement.database.company_repository import (
     CompanyRepository,
     CompanyValidationError,
@@ -26,6 +30,8 @@ from procurement.database.policy_repository import (
 
 __all__ = [
     "BaseRepository",
+    "CertificationRepository",
+    "CertificationValidationError",
     "CompanyRepository",
     "CompanyValidationError",
     "DuplicateBusinessNoError",
