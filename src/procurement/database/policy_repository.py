@@ -169,6 +169,24 @@ class PolicyRepository(BaseRepository):
         rows = self.execute("SELECT * FROM policy WHERE policy_id = ?", (policy_id,))
         return self._row_to_policy(rows[0]) if rows else None
 
+    def find_active_with_target_rate(self) -> list[Policy]:
+        """목표율이 설정된 활성 정책을 조회합니다.
+
+        ``is_active = 1`` 이고 ``target_rate`` 가 NULL 이 아닌 정책만
+        ``policy_id`` 오름차순으로 반환합니다. 목표율 기반 대시보드 계산
+        (:class:`~procurement.dashboard.data_service.DashboardDataService`)에서
+        외부 입력 없이 목표율을 확보하기 위한 조회입니다.
+
+        Returns:
+            목표율이 설정된 활성 :class:`Policy` 목록. 없으면 빈 목록.
+        """
+        rows = self.execute(
+            "SELECT * FROM policy "
+            "WHERE is_active = 1 AND target_rate IS NOT NULL "
+            "ORDER BY policy_id"
+        )
+        return [self._row_to_policy(row) for row in rows]
+
     def exists(self, policy_code: str) -> bool:
         """해당 정책 코드의 정책이 존재하는지 확인합니다.
 

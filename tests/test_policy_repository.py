@@ -348,3 +348,45 @@ class TestTargetRate:
                 Policy(policy_code="RATE_BAD", policy_name="정책", target_rate=Decimal("0"))
             )
         assert repo.count() == 0
+
+
+class TestFindActiveWithTargetRate:
+    """활성 + 목표율 보유 정책 조회를 검증합니다 (#20-2 조회 기반)."""
+
+    def test_empty_when_no_policies(self, repo: PolicyRepository) -> None:
+        assert repo.find_active_with_target_rate() == []
+
+    def test_includes_active_with_target(self, repo: PolicyRepository) -> None:
+        repo.insert(Policy(policy_code="A", policy_name="중소기업", target_rate=Decimal("50")))
+        found = repo.find_active_with_target_rate()
+        assert [p.policy_code for p in found] == ["A"]
+        assert found[0].target_rate == Decimal("50")
+
+    def test_excludes_null_target_rate(self, repo: PolicyRepository) -> None:
+        """목표율이 없는(NULL) 정책은 제외됩니다."""
+        repo.insert(Policy(policy_code="NO_RATE", policy_name="목표없음"))
+        repo.insert(
+            Policy(policy_code="HAS_RATE", policy_name="목표있음", target_rate=Decimal("30"))
+        )
+        codes = [p.policy_code for p in repo.find_active_with_target_rate()]
+        assert codes == ["HAS_RATE"]
+
+    def test_excludes_inactive_policy(self, repo: PolicyRepository) -> None:
+        """비활성 정책은 목표율이 있어도 제외됩니다."""
+        repo.insert(
+            Policy(
+                policy_code="OFF",
+                policy_name="폐지",
+                is_active=False,
+                target_rate=Decimal("40"),
+            )
+        )
+        assert repo.find_active_with_target_rate() == []
+
+    def test_ordered_by_policy_id(self, repo: PolicyRepository) -> None:
+        repo.insert(Policy(policy_code="P1", policy_name="정책1", target_rate=Decimal("10")))
+        repo.insert(Policy(policy_code="P2", policy_name="정책2", target_rate=Decimal("20")))
+        repo.insert(Policy(policy_code="P3", policy_name="정책3", target_rate=Decimal("30")))
+        found = repo.find_active_with_target_rate()
+        assert [p.policy_code for p in found] == ["P1", "P2", "P3"]
+        assert all(p.policy_id is not None for p in found)
