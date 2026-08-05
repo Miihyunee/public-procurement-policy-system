@@ -14,6 +14,30 @@
 
 ---
 
+## 0. PM 최종 결정 (확정)
+
+> 아래 결정으로 **본 명세의 권장안(CLI)은 채택되지 않았다.** 최종 목표는 **Web Dashboard**이며,
+> 이번 Issue #22 는 그 백엔드인 **FastAPI 서버 + Dashboard API Endpoint** 구현까지를 목표로 한다.
+
+| 항목 | 결정 |
+|---|---|
+| 전달 표면 (Q1) | **FastAPI 도입** (CLI 미구현) |
+| 출력 형식 (Q2) | **JSON 전용** (table 미구현) |
+| 조립 지점 (Q3) | **`src/procurement/app.py`** 로 분리. `__main__` 은 최대한 얇게 유지 |
+| 범위 (Q4) | **등록 목표율 기반 Dashboard 만** — `GET /dashboard/summary` 만 구현. 외부 목표율 입력은 후속 Issue |
+| 성공 기준 | **Swagger(OpenAPI) 문서가 동작**하면 성공 |
+
+구조(유지):
+```
+FastAPI → DashboardApiService → DashboardDataService → Calculator → Repository
+```
+- `DashboardApiService` 만 `DashboardDataService` 를 호출한다.
+- Calculator 직접 호출 금지 / Repository 직접 접근 금지.
+
+> 아래 4장의 방안 비교·CLI 설계는 **의사결정 기록(history)** 으로 보존한다. 실제 구현은 본 0장 결정을 따른다.
+
+---
+
 ## 1. 배경 및 목표
 
 ### 1.1 현재까지의 진행
