@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
+from decimal import Decimal
 
 from procurement.database.base import BaseRepository
 from procurement.models.policy import Policy
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS policy (
     description TEXT,
     is_active BOOLEAN NOT NULL,
     evaluation_basis TEXT NOT NULL,
+    target_rate TEXT,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 )
@@ -58,6 +60,16 @@ def _to_db(value: datetime) -> str:
 def _from_db(value: str) -> datetime:
     """SQLite 에서 읽은 ISO 문자열을 datetime 으로 변환합니다."""
     return datetime.fromisoformat(value)
+
+
+def _rate_to_db(value: Decimal | None) -> str | None:
+    """목표율(Decimal)을 SQLite 저장용 문자열로 변환합니다 (미설정은 ``None``)."""
+    return None if value is None else str(value)
+
+
+def _rate_from_db(value: str | None) -> Decimal | None:
+    """SQLite 에서 읽은 목표율 문자열을 Decimal 로 변환합니다 (NULL 은 ``None``)."""
+    return None if value is None else Decimal(value)
 
 
 class PolicyRepository(BaseRepository):
@@ -85,7 +97,8 @@ class PolicyRepository(BaseRepository):
         Raises:
             PolicyValidationError: 필수값(정책 코드·정책명)이 비어 있거나
                 ``is_active`` 가 ``None`` 이거나, ``evaluation_basis`` 가 허용값
-                (``PAYMENT_DATE`` / ``CONTRACT_DATE``) 이 아닌 경우.
+                (``PAYMENT_DATE`` / ``CONTRACT_DATE``) 이 아니거나, ``target_rate``
+                가 0 이하인 경우.
             DuplicatePolicyCodeError: 동일한 정책 코드가 이미 존재하는 경우.
         """
         self._validate_required(policy)
@@ -97,8 +110,8 @@ class PolicyRepository(BaseRepository):
         sql = (
             "INSERT INTO policy "
             "(policy_code, policy_name, description, is_active, evaluation_basis, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "target_rate, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )
         params = (
             policy.policy_code,
@@ -106,6 +119,7 @@ class PolicyRepository(BaseRepository):
             policy.description,
             int(policy.is_active),
             policy.evaluation_basis,
+            _rate_to_db(policy.target_rate),
             _to_db(created_at),
             _to_db(updated_at),
         )
@@ -126,6 +140,7 @@ class PolicyRepository(BaseRepository):
             description=policy.description,
             is_active=policy.is_active,
             evaluation_basis=policy.evaluation_basis,
+            target_rate=policy.target_rate,
             created_at=created_at,
             updated_at=updated_at,
         )
@@ -192,6 +207,9 @@ class PolicyRepository(BaseRepository):
                 f"{', '.join(ALLOWED_EVALUATION_BASIS)} 만 허용됩니다: "
                 f"{policy.evaluation_basis!r}"
             )
+        # target_rate 는 선택 항목(NULL 허용). 값이 있으면 0 보다 커야 한다.
+        if policy.target_rate is not None and policy.target_rate <= 0:
+            raise PolicyValidationError(f"target_rate 는 0 보다 커야 합니다: {policy.target_rate}")
 
     @staticmethod
     def _row_to_policy(row: sqlite3.Row) -> Policy:
@@ -203,6 +221,7 @@ class PolicyRepository(BaseRepository):
             description=row["description"],
             is_active=bool(row["is_active"]),
             evaluation_basis=row["evaluation_basis"],
+            target_rate=_rate_from_db(row["target_rate"]),
             created_at=_from_db(row["created_at"]),
             updated_at=_from_db(row["updated_at"]),
         )

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 
 @dataclass(kw_only=True)
@@ -31,6 +32,8 @@ class Policy:
         is_active: 사용 여부 (필수). 기본값은 ``True`` 입니다.
         evaluation_basis: 판정 기준일 유형 (필수). ``PAYMENT_DATE`` 또는
             ``CONTRACT_DATE``. 기본값은 ``"PAYMENT_DATE"`` 입니다.
+        target_rate: 목표 구매비율(%). 선택 항목이며 미설정 시 ``None`` 입니다.
+            정책 등록 후 별도로 보완할 수 있습니다. 값이 있으면 0 보다 커야 합니다.
         policy_id: 내부 고유 ID (Primary Key). 저장 전에는 ``None`` 입니다.
         created_at: 데이터 생성일시. 저장 시 채워집니다.
         updated_at: 데이터 최종 수정일시. 저장 시 채워집니다.
@@ -41,6 +44,7 @@ class Policy:
     description: str | None = None
     is_active: bool = True
     evaluation_basis: str = "PAYMENT_DATE"
+    target_rate: Decimal | None = None
     policy_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

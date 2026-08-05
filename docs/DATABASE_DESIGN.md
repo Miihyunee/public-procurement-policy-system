@@ -185,8 +185,19 @@
 | description | TEXT | No | 정책 설명 |
 | is_active | BOOLEAN | Yes | 사용 여부 |
 | evaluation_basis | TEXT | Yes | 판정 기준일 유형 (PAYMENT_DATE / CONTRACT_DATE) |
+| target_rate | TEXT | No | 목표 구매비율(%) . 미설정 시 NULL. 값이 있으면 0 보다 커야 함 |
 | created_at | DATETIME | Yes | 데이터 생성일시 |
 | updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
+### target_rate (목표율)
+
+정책별 목표 구매비율(%)을 시스템에서 관리하기 위한 컬럼이다. (명세: `docs/proposals/ISSUE20-SPEC-policy-target-rate.md`)
+
+- **NULL 허용**: 정책 등록 후 목표율을 나중에 보완할 수 있도록 선택 항목으로 둔다.
+- **저장 형식**: Decimal 정밀도 보존을 위해 문자열(TEXT)로 저장한다(금액 저장 규약과 동일).
+- **제약**: 값이 있으면 0 보다 커야 한다(Calculator 의 목표율 > 0 규칙과 정합).
+- **미설정 정책 처리**: Dashboard 계산에서는 목표율이 없는 정책을 대상에서 제외한다(향후 조회 기능, #20-2).
+- **연도별 이력**: MVP 범위에서는 다루지 않으며, 필요 시 별도 History 테이블로 확장한다.
 
 ### evaluation_basis 허용 값
 
