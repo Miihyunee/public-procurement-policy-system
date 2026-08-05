@@ -8,6 +8,7 @@ DB 파일은 tmp_path 로 격리합니다.
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -68,8 +69,9 @@ class TestCreateTable:
             "updated_at",
         ):
             assert cols[name]["notnull"] == 1, f"{name} 은 NOT NULL 이어야 합니다."
-        # description 은 선택 항목이므로 NULL 허용
+        # description, target_rate 은 선택 항목이므로 NULL 허용
         assert cols["description"]["notnull"] == 0
+        assert cols["target_rate"]["notnull"] == 0
 
     def test_columns_match_design(self, repo: PolicyRepository) -> None:
         """DATABASE_DESIGN.md v1.1 정의 컬럼과 정확히 일치해야 합니다."""
@@ -81,6 +83,7 @@ class TestCreateTable:
             "description",
             "is_active",
             "evaluation_basis",
+            "target_rate",
             "created_at",
             "updated_at",
         ]
@@ -290,4 +293,58 @@ class TestRequiredValidation:
     def test_validation_failure_persists_nothing(self, repo: PolicyRepository) -> None:
         with pytest.raises(PolicyValidationError):
             repo.insert(Policy(policy_code="", policy_name="정책명"))
+        assert repo.count() == 0
+
+
+class TestTargetRate:
+    """목표율(target_rate) 저장·조회·검증을 확인합니다 (NULL 허용)."""
+
+    def test_default_target_rate_is_none(self, repo: PolicyRepository) -> None:
+        """미지정 시 목표율은 NULL(None) 로 저장됩니다."""
+        saved = repo.insert(_sample("NO_RATE"))
+        assert saved.target_rate is None
+        found = repo.find_by_policy_code("NO_RATE")
+        assert found is not None
+        assert found.target_rate is None
+
+    def test_insert_with_target_rate(self, repo: PolicyRepository) -> None:
+        """목표율을 지정하면 그대로 저장·조회됩니다."""
+        repo.insert(Policy(policy_code="RATE50", policy_name="중소기업", target_rate=Decimal("50")))
+        found = repo.find_by_policy_code("RATE50")
+        assert found is not None
+        assert found.target_rate == Decimal("50")
+
+    def test_target_rate_decimal_precision(self, repo: PolicyRepository) -> None:
+        """소수 목표율도 정밀도 손실 없이 저장·복원됩니다."""
+        repo.insert(
+            Policy(policy_code="RATE_DEC", policy_name="여성기업", target_rate=Decimal("12.34"))
+        )
+        found = repo.find_by_policy_code("RATE_DEC")
+        assert found is not None
+        assert found.target_rate == Decimal("12.34")
+
+    def test_returned_policy_carries_target_rate(self, repo: PolicyRepository) -> None:
+        """insert 반환값에도 목표율이 반영됩니다."""
+        saved = repo.insert(
+            Policy(policy_code="RATE_RET", policy_name="장애인기업", target_rate=Decimal("20"))
+        )
+        assert saved.target_rate == Decimal("20")
+
+    def test_zero_target_rate_raises(self, repo: PolicyRepository) -> None:
+        """목표율이 0 이면 검증 예외가 발생합니다."""
+        with pytest.raises(PolicyValidationError):
+            repo.insert(Policy(policy_code="RATE0", policy_name="정책", target_rate=Decimal("0")))
+
+    def test_negative_target_rate_raises(self, repo: PolicyRepository) -> None:
+        """목표율이 음수면 검증 예외가 발생합니다."""
+        with pytest.raises(PolicyValidationError):
+            repo.insert(
+                Policy(policy_code="RATE_NEG", policy_name="정책", target_rate=Decimal("-10"))
+            )
+
+    def test_invalid_target_rate_persists_nothing(self, repo: PolicyRepository) -> None:
+        with pytest.raises(PolicyValidationError):
+            repo.insert(
+                Policy(policy_code="RATE_BAD", policy_name="정책", target_rate=Decimal("0"))
+            )
         assert repo.count() == 0
