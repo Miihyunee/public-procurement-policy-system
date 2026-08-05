@@ -63,6 +63,17 @@ def service(
     return DashboardDataService(calculator)
 
 
+@pytest.fixture
+def service_with_repo(
+    purchase_repo: PurchaseRepository,
+    certification_repo: CertificationRepository,
+    policy_repo: PolicyRepository,
+) -> DashboardDataService:
+    """등록된 목표율 조회를 위해 PolicyRepository 를 주입한 서비스."""
+    calculator = ProcurementAchievementCalculator(purchase_repo, certification_repo, policy_repo)
+    return DashboardDataService(calculator, policy_repository=policy_repo)
+
+
 # ----------------------------------------------------------------------
 # 테스트 데이터 헬퍼
 # ----------------------------------------------------------------------
@@ -80,6 +91,20 @@ def _add_company(repo: CompanyRepository, business_no: str) -> int:
 
 def _add_policy(repo: PolicyRepository, code: str, name: str) -> int:
     saved = repo.insert(Policy(policy_code=code, policy_name=name))
+    assert saved.policy_id is not None
+    return saved.policy_id
+
+
+def _add_policy_with_target(
+    repo: PolicyRepository,
+    code: str,
+    name: str,
+    target_rate: Decimal | None,
+    is_active: bool = True,
+) -> int:
+    saved = repo.insert(
+        Policy(policy_code=code, policy_name=name, target_rate=target_rate, is_active=is_active)
+    )
     assert saved.policy_id is not None
     return saved.policy_id
 
@@ -298,3 +323,78 @@ class TestBuildSummaryValidationPropagation:
         policy_id = _add_policy(policy_repo, "SMALL_BUSINESS", "중소기업")
         with pytest.raises(CalculatorValidationError):
             service.build_summary({policy_id: Decimal("0")})
+
+
+class TestBuildSummaryFromRegisteredTargets:
+    """등록된 목표율 기반 요약(build_summary_from_registered_targets)을 검증합니다."""
+
+    def test_uses_registered_target_rate(
+        self,
+        service_with_repo: DashboardDataService,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """등록된 목표율로 외부 입력 없이 요약이 생성됩니다."""
+        company_id = _add_company(company_repo, "1000000001")
+        policy_id = _add_policy_with_target(
+            policy_repo, "SMALL_BUSINESS", "중소기업", Decimal("50")
+        )
+        _add_certification(certification_repo, company_id, policy_id)
+        _add_purchase(purchase_repo, "3000000", company_id=company_id)
+        _add_purchase(purchase_repo, "7000000", company_id=None)
+
+        summary = service_with_repo.build_summary_from_registered_targets()
+        assert len(summary.policy_summaries) == 1
+        item = summary.policy_summaries[0]
+        assert item.policy_code == "SMALL_BUSINESS"
+        assert item.target_rate == Decimal("50")
+        assert item.achievement_rate == Decimal("60.00")  # 정책비율 30% / 목표 50%
+        assert item.status is DashboardStatus.SHORTAGE
+
+    def test_excludes_policy_without_target_rate(
+        self,
+        service_with_repo: DashboardDataService,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """목표율이 없는(NULL) 정책은 계산 대상에서 제외됩니다."""
+        company_id = _add_company(company_repo, "1000000001")
+        with_rate = _add_policy_with_target(policy_repo, "HAS_RATE", "목표있음", Decimal("50"))
+        no_rate = _add_policy_with_target(policy_repo, "NO_RATE", "목표없음", None)
+        _add_certification(certification_repo, company_id, with_rate)
+        _add_certification(certification_repo, company_id, no_rate)
+        _add_purchase(purchase_repo, "1000000", company_id=company_id)
+
+        summary = service_with_repo.build_summary_from_registered_targets()
+        codes = {s.policy_code for s in summary.policy_summaries}
+        assert codes == {"HAS_RATE"}
+
+    def test_excludes_inactive_policy(
+        self,
+        service_with_repo: DashboardDataService,
+        policy_repo: PolicyRepository,
+    ) -> None:
+        """비활성 정책은 목표율이 있어도 제외됩니다."""
+        _add_policy_with_target(policy_repo, "OFF", "폐지정책", Decimal("50"), is_active=False)
+        summary = service_with_repo.build_summary_from_registered_targets()
+        assert summary.policy_summaries == []
+
+    def test_empty_when_no_registered_targets(
+        self,
+        service_with_repo: DashboardDataService,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """등록된 목표율이 없으면 정책 요약은 비고 전체 구매액만 집계됩니다."""
+        _add_purchase(purchase_repo, "2000000", company_id=None)
+        summary = service_with_repo.build_summary_from_registered_targets()
+        assert summary.total_purchase_amount == Decimal("2000000")
+        assert summary.policy_summaries == []
+
+    def test_raises_without_policy_repository(self, service: DashboardDataService) -> None:
+        """policy_repository 를 주입하지 않으면 사용할 수 없습니다."""
+        with pytest.raises(ValueError):
+            service.build_summary_from_registered_targets()

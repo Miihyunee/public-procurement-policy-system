@@ -10,7 +10,11 @@ Calculator 계산 결과를 대시보드 화면이 바로 사용할 수 있는 �
 
 .. note::
     본 서비스는 데이터 생성 계층입니다. UI·API·차트는 이번 범위에 포함하지
-    않으며, 목표율(``target_rate``)은 DB 가 아니라 호출 시 입력값으로 받습니다.
+    않습니다. 목표율(``target_rate``)은 두 방식으로 공급할 수 있습니다.
+
+    - :meth:`DashboardDataService.build_summary` — 호출 시 목표율 dict 를 직접 입력(하위호환).
+    - :meth:`DashboardDataService.build_summary_from_registered_targets` — 시스템에
+      등록된(활성·목표율 설정) 정책의 목표율을 조회해 사용(Issue #20-2).
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from procurement.dashboard.models import (
     DashboardSummary,
     PolicySummary,
 )
+from procurement.database.policy_repository import PolicyRepository
 
 #: 부족률 표기 자리수 (소수점 둘째 자리)
 _RATE_EXPONENT = Decimal("0.01")
@@ -35,13 +40,22 @@ _FULL_ACHIEVEMENT = Decimal("100")
 class DashboardDataService:
     """Calculator 결과를 대시보드 요약 DTO 로 조합합니다."""
 
-    def __init__(self, calculator: ProcurementAchievementCalculator) -> None:
+    def __init__(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        policy_repository: PolicyRepository | None = None,
+    ) -> None:
         """서비스를 초기화합니다.
 
         Args:
             calculator: 달성률 계산에 사용할 :class:`ProcurementAchievementCalculator`.
+            policy_repository: 시스템에 등록된 목표율을 조회할
+                :class:`PolicyRepository`. :meth:`build_summary_from_registered_targets`
+                를 사용할 때만 필요하며, 외부 입력 방식(:meth:`build_summary`)만
+                사용할 경우 생략할 수 있습니다.
         """
         self._calculator = calculator
+        self._policy_repository = policy_repository
 
     def build_summary(self, target_rates: dict[int, Decimal]) -> DashboardSummary:
         """대시보드 전체 요약을 생성합니다.
@@ -67,6 +81,40 @@ class DashboardDataService:
             self._to_policy_summary(result, target_rates[result.policy_id]) for result in results
         ]
         return DashboardSummary(total_purchase_amount=total_amount, policy_summaries=summaries)
+
+    def build_summary_from_registered_targets(self) -> DashboardSummary:
+        """시스템에 등록된 목표율로 대시보드 전체 요약을 생성합니다.
+
+        외부 입력 없이 :class:`PolicyRepository` 에서 **활성이면서 목표율이
+        설정된** 정책을 조회해 ``{policy_id: target_rate}`` 를 구성한 뒤,
+        기존 :meth:`build_summary` 를 그대로 호출합니다. 목표율이 없는(NULL)
+        정책은 조회 단계에서 제외되므로 계산 대상에 포함되지 않습니다.
+
+        Calculator 는 변경하지 않으며, 목표율 dict 를 만들어 넘기는 방식만
+        다릅니다.
+
+        Returns:
+            :class:`DashboardSummary`. 목표율이 설정된 활성 정책이 없으면 정책
+            요약은 빈 목록이 되고 전체 구매액만 담깁니다.
+
+        Raises:
+            ValueError: 생성 시 ``policy_repository`` 를 주입하지 않은 경우.
+            CalculatorValidationError: 존재하지 않는 정책이 조회된 경우(계산기 검증 전파).
+        """
+        if self._policy_repository is None:
+            raise ValueError(
+                "build_summary_from_registered_targets 를 사용하려면 "
+                "policy_repository 를 주입해야 합니다."
+            )
+
+        target_rates: dict[int, Decimal] = {}
+        for policy in self._policy_repository.find_active_with_target_rate():
+            # 조회 조건상 target_rate 는 NOT NULL 이며, 저장된 정책은 policy_id 를 가진다.
+            if policy.policy_id is None or policy.target_rate is None:
+                continue
+            target_rates[policy.policy_id] = policy.target_rate
+
+        return self.build_summary(target_rates)
 
     # ------------------------------------------------------------------
     # 내부 헬퍼
