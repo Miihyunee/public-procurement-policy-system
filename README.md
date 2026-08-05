@@ -32,6 +32,11 @@ python -m procurement
 procurement
 ```
 
+FastAPI 개발 서버가 `http://127.0.0.1:8000` 에서 실행됩니다.
+
+- 대시보드 요약 API: `GET http://127.0.0.1:8000/dashboard/summary`
+- Swagger(OpenAPI) 문서: `http://127.0.0.1:8000/docs`
+
 ## 프로젝트 구조
 
 ```text
