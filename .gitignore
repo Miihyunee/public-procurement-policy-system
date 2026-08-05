@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SQLite 데이터베이스 파일 (런타임 생성물)
+/database/
+*.db
+*.sqlite
+*.sqlite3

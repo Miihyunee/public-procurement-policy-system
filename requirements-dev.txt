@@ -9,6 +9,9 @@
 pytest>=8.2,<9.0
 pytest-cov>=5.0,<6.0
 
+# FastAPI TestClient 용 HTTP 클라이언트
+httpx>=0.27,<1.0
+
 # Linter / Formatter
 ruff>=0.4,<1.0
 

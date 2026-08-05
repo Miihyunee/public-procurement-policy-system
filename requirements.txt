@@ -10,3 +10,9 @@ pydantic-settings>=2.3,<3.0
 
 # .env 파일 로드
 python-dotenv>=1.0,<2.0
+
+# 웹 프레임워크 — Dashboard REST API / OpenAPI(Swagger) 문서
+fastapi>=0.110,<1.0
+
+# ASGI 서버 — FastAPI 애플리케이션 실행
+uvicorn[standard]>=0.29,<1.0
