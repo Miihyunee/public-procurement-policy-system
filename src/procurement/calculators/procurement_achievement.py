@@ -32,23 +32,21 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from procurement.calculators.achievement_result import AchievementResult
+from procurement.calculators.rules import (
+    RuleContext,
+    RuleRegistry,
+    build_default_registry,
+)
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models.policy import Policy
-from procurement.models.purchase import Purchase
 
 #: 달성률 표기 자리수 (소수점 둘째 자리)
 _RATE_EXPONENT = Decimal("0.01")
 
 #: 비율을 백분율로 변환할 때 사용하는 계수
 _PERCENT = Decimal("100")
-
-#: 판정 기준일 유형 — 계약일 기준 (창업기업)
-_BASIS_CONTRACT_DATE = "CONTRACT_DATE"
-
-#: 판정 기준일 유형 — 대금 지급일 기준 (그 외 일반 정책)
-_BASIS_PAYMENT_DATE = "PAYMENT_DATE"
 
 
 class CalculatorValidationError(ValueError):
@@ -63,6 +61,7 @@ class ProcurementAchievementCalculator:
         purchase_repository: PurchaseRepository,
         certification_repository: CertificationRepository,
         policy_repository: PolicyRepository,
+        rule_registry: RuleRegistry | None = None,
     ) -> None:
         """Calculator 를 초기화합니다.
 
@@ -70,10 +69,14 @@ class ProcurementAchievementCalculator:
             purchase_repository: 구매실적 조회에 사용할 :class:`PurchaseRepository`.
             certification_repository: 인증 조회에 사용할 :class:`CertificationRepository`.
             policy_repository: 정책 조회에 사용할 :class:`PolicyRepository`.
+            rule_registry: 정책 판정 규칙 레지스트리. 생략 시 기본 레지스트리
+                (:func:`build_default_registry`)를 사용하며, 기본 동작은
+                지급일/계약일 기준 판정으로 기존과 동일합니다.
         """
         self._purchase_repository = purchase_repository
         self._certification_repository = certification_repository
         self._policy_repository = policy_repository
+        self._rule_registry = rule_registry or build_default_registry()
 
     def calculate_total_purchase(self) -> Decimal:
         """기관 전체 구매금액을 합산합니다.
@@ -199,6 +202,10 @@ class ProcurementAchievementCalculator:
 
         한 기업이 같은 정책 인증을 여러 건 보유한 경우, 그중 하나라도 유효기간을
         만족하면 해당 구매를 인정합니다.
+
+        판정 기준일 선택과 유효기간 판정은 정책의 ``evaluation_basis`` 에 매핑된
+        :class:`~procurement.calculators.rules.PolicyRule` 이 담당하며, 계산기는
+        규칙이 인정한 구매의 금액만 합산합니다.
         """
         policy = self._policy_repository.find_by_id(policy_id)
         if policy is None:
@@ -215,31 +222,17 @@ class ProcurementAchievementCalculator:
         if not validity_ranges:
             return Decimal("0")
 
+        rule = self._rule_registry.get(policy.evaluation_basis)
+
         total = Decimal("0")
         for purchase in self._purchase_repository.find_all():
             company_id = purchase.company_id
             if company_id is None or company_id not in validity_ranges:
                 continue
-            basis_date = self._basis_date(purchase, policy.evaluation_basis)
-            if self._is_within_any(basis_date, validity_ranges[company_id]):
+            context = RuleContext(purchase=purchase, validity_ranges=validity_ranges[company_id])
+            if rule.matches(context):
                 total += purchase.amount
         return total
-
-    @staticmethod
-    def _basis_date(purchase: Purchase, evaluation_basis: str) -> date:
-        """정책의 판정 기준일 유형에 따라 구매의 기준일을 선택합니다.
-
-        ``CONTRACT_DATE`` 는 계약일(``contract_date``), 그 외(``PAYMENT_DATE``)는
-        대금 지급일(``payment_date``)을 사용합니다.
-        """
-        if evaluation_basis == _BASIS_CONTRACT_DATE:
-            return purchase.contract_date
-        return purchase.payment_date
-
-    @staticmethod
-    def _is_within_any(basis_date: date, ranges: list[tuple[date, date]]) -> bool:
-        """기준일이 유효기간(경계 포함) 중 하나라도 만족하는지 확인합니다."""
-        return any(valid_from <= basis_date <= valid_to for valid_from, valid_to in ranges)
 
     def _build_result(
         self,
