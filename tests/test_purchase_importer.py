@@ -127,6 +127,26 @@ class TestImportFailures:
         report = importer.import_rows([_row(business_no="12345abcde")])
         assert report.failed_count == 1
 
+    def test_nine_digit_business_no_is_failed_not_corrected(
+        self, importer: PurchaseImporter, db_path: Path
+    ) -> None:
+        """9자리 사업자번호는 자동 보정하지 않고 실패로 처리합니다(PM 결정).
+
+        임의로 앞자리 0 을 채우면 **다른 기업과 잘못 연결될 위험**이 있어
+        적재하지 않고, 원인을 리포트에 남깁니다.
+        """
+        _add_company(db_path)
+        report = importer.import_rows([_row(business_no="101811629")])
+
+        assert report.failed_count == 1
+        assert PurchaseRepository(db_path).count() == 0
+        assert any("앞자리 0" in message for message in report.rows[0].messages)
+
+    def test_nine_digit_original_is_traceable(self, importer: PurchaseImporter) -> None:
+        """실패해도 원본 값을 추적할 수 있어야 합니다."""
+        report = importer.import_rows([_row(business_no="101811629")])
+        assert any("101811629" in message for message in report.rows[0].messages)
+
     def test_missing_required_column(self, importer: PurchaseImporter) -> None:
         """필수 키가 아예 없으면 실패합니다."""
         row = _row()

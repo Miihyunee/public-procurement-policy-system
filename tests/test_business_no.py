@@ -80,10 +80,12 @@ class TestNormalizeInvalidFormat:
         assert result.status is BusinessNoStatus.INVALID_FORMAT
         assert result.value is None
 
-    def test_too_short(self) -> None:
-        """8자리 이하는 보정하지 않고 형식 오류로 처리합니다."""
-        result = normalize_business_no("12345678")
+    @pytest.mark.parametrize("value", ["1", "12345678", "123456789"])
+    def test_too_short(self, value: str) -> None:
+        """10자리 미만은 **자동 보정하지 않고** 형식 오류로 처리합니다."""
+        result = normalize_business_no(value)
         assert result.status is BusinessNoStatus.INVALID_FORMAT
+        assert result.value is None
 
     def test_contains_letters(self) -> None:
         result = normalize_business_no("12345abcde")
@@ -95,19 +97,39 @@ class TestNormalizeInvalidFormat:
         assert "12345678901" in " ".join(result.warnings)
 
 
-class TestNineDigitPadding:
-    """Excel 앞자리 0 소실 복구를 검증합니다."""
+class TestNineDigitIsNotAutoCorrected:
+    """9자리 값을 **자동 보정하지 않는지** 검증합니다 (PM 결정).
 
-    def test_pads_to_ten_digits(self) -> None:
-        result = normalize_business_no("123456789")
-        assert result.value == "0123456789"
-        assert result.is_valid
+    사업자등록번호는 핵심 결합 키이므로 근거 없이 값을 만들면 **다른 기업과
+    잘못 연결될 위험**이 있습니다. 따라서 보정하지 않고 형식 오류로 처리합니다.
+    """
 
-    def test_padding_emits_warning(self) -> None:
-        """보정은 하되 확인할 수 있도록 경고를 남깁니다."""
+    def test_is_invalid_format(self) -> None:
         result = normalize_business_no("123456789")
-        assert result.has_warning
-        assert any("0 을 채웠습니다" in message for message in result.warnings)
+        assert result.status is BusinessNoStatus.INVALID_FORMAT
+        assert not result.is_valid
+
+    def test_does_not_generate_a_value(self) -> None:
+        """앞에 0 을 채운 값을 만들어내지 않습니다."""
+        result = normalize_business_no("123456789")
+        assert result.value is None
+        assert result.value != "0123456789"
+
+    def test_explains_possible_cause(self) -> None:
+        """원인을 안내하되 보정하지 않음을 명시합니다."""
+        messages = " ".join(normalize_business_no("123456789").warnings)
+        assert "앞자리 0" in messages
+        assert "자동 보정하지 않으므로" in messages
+
+    def test_original_is_preserved_for_tracing(self) -> None:
+        """원본 값은 추적할 수 있도록 보존합니다."""
+        result = normalize_business_no("123456789")
+        assert result.original == "123456789"
+
+    def test_hyphenated_nine_digit_also_rejected(self) -> None:
+        """구분자를 제거한 뒤 9자리여도 동일하게 거부합니다."""
+        result = normalize_business_no("123-45-6789")
+        assert result.status is BusinessNoStatus.INVALID_FORMAT
 
 
 class TestChecksum:

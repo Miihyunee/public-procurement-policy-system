@@ -92,8 +92,16 @@ def normalize_business_no(value: object) -> NormalizedBusinessNo:
     2. 앞뒤 공백 제거
     3. 하이픈·공백·마침표 등 구분자 제거
     4. 숫자만 남았는지 확인
-    5. 9자리면 앞에 ``0`` 을 채움(경고)
+    5. 정확히 10자리인지 확인 (**자릿수를 자동 보정하지 않음**)
     6. 체크섬 검증(불일치해도 통과, 경고만)
+
+    .. warning::
+        사업자등록번호는 **시스템의 핵심 결합 키**이므로 근거 없이 값을
+        만들어내지 않습니다. 9자리 값(Excel 에서 앞자리 ``0`` 이 사라진 경우로
+        추정)도 **자동으로 보정하지 않고 형식 오류로 처리**합니다.
+        임의 보정은 **다른 기업과 잘못 연결될 위험**이 있기 때문입니다.
+        원본 값은 :attr:`NormalizedBusinessNo.original` 에 보존되어 추적할 수
+        있습니다.
 
     Args:
         value: 정규화할 값. 문자열·정수·실수·``None`` 을 받을 수 있습니다.
@@ -129,25 +137,15 @@ def normalize_business_no(value: object) -> NormalizedBusinessNo:
             original=original,
         )
 
-    warnings: list[str] = []
-
-    # Excel 에서 숫자로 저장되면 앞자리 0 이 사라져 9자리가 되는 사례가 흔하다.
-    if len(digits) == BUSINESS_NO_LENGTH - 1:
-        digits = digits.zfill(BUSINESS_NO_LENGTH)
-        warnings.append(
-            f"9자리 값이라 앞에 0 을 채웠습니다: {original!r} → {digits}. 원본 확인이 필요합니다."
-        )
-
     if len(digits) != BUSINESS_NO_LENGTH:
         return NormalizedBusinessNo(
             value=None,
             status=BusinessNoStatus.INVALID_FORMAT,
-            warnings=[
-                f"사업자등록번호는 {BUSINESS_NO_LENGTH}자리여야 합니다: "
-                f"{original!r} (정규화 후 {len(digits)}자리)"
-            ],
+            warnings=[_length_error_message(original, digits)],
             original=original,
         )
+
+    warnings: list[str] = []
 
     # 체크섬 불일치는 경고로만 처리한다(PM 결정 D-002). 데이터를 버리지 않는다.
     if not is_valid_checksum(digits):
@@ -185,6 +183,24 @@ def is_valid_checksum(business_no: str) -> bool:
     total = sum(digit * weight for digit, weight in zip(digits, _CHECKSUM_WEIGHTS, strict=False))
     total += (digits[8] * 5) // 10
     return (10 - total % 10) % 10 == digits[9]
+
+
+def _length_error_message(original: str, digits: str) -> str:
+    """자릿수 오류 메시지를 만듭니다.
+
+    9자리인 경우, Excel 에서 앞자리 ``0`` 이 사라졌을 가능성이 높으므로 그
+    가능성을 안내합니다. **다만 값을 자동으로 보정하지는 않습니다.**
+    """
+    base = (
+        f"사업자등록번호는 {BUSINESS_NO_LENGTH}자리여야 합니다: "
+        f"{original!r} (정규화 후 {len(digits)}자리)"
+    )
+    if len(digits) == BUSINESS_NO_LENGTH - 1:
+        return (
+            f"{base}. Excel 에서 앞자리 0 이 사라졌을 수 있습니다. "
+            "자동 보정하지 않으므로 원본을 확인해 주세요."
+        )
+    return base
 
 
 def _to_text(value: object) -> str:
