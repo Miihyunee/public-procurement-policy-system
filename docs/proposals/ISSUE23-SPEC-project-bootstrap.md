@@ -206,23 +206,57 @@ GET /docs               → Swagger
 
 ---
 
-## 7. PM 확인 필요 사항 (Open Questions)
+## 7. 최종 확정 사항 (PM 결정)
 
-| # | 질문 | 기본 제안 |
+> 본 절이 **현재 유효한 기준**이다. 아래 8장의 Open Questions 는 작성 시점의 기록이며,
+> 내용이 다를 경우 **본 절이 우선**한다.
+
+| # | 확정 사항 | 반영 위치 |
 |---|---|---|
-| Q1 | 정책 `policy_code` 확정 (SMALL_BUSINESS/WOMAN/DISABLED/STARTUP/GREEN_PRODUCT) | 제안값 사용 |
-| Q2 | **seed `target_rate` 초기값** (법정 비율 확인 필요) | 확정 전까지 예시값 or NULL — PM 확정 |
-| Q3 | Seed 를 별도 함수로 두고 `init` 이 기본 호출(+`--no-seed`)? | **예(권장)** |
-| Q4 | `create_app()`/서버 startup 에서 자동 `init_db` 호출? | 아니오(명시적 `init` 권장), 개발 옵션은 추후 |
-| Q5 | 인자 없는 `python -m procurement` 동작 = 도움말 / `run` 중? | 도움말(서브커맨드 안내) |
-| Q6 | `health` 서브커맨드 단독 제공? | 제공(운영 점검 편의) |
-| Q7 | 파괴적 재생성(`--force`) 제공? | 이번 범위 제외(후속) |
+| 1 | **MVP 정책은 5종** — `SMALL_BUSINESS` · `WOMAN` · `DISABLED` · `STARTUP` · `GREEN` | `database/bootstrap.py` `MVP_POLICY_SEEDS` |
+| 2 | `target_rate` 에 **근거 없는 임의값을 입력하지 않는다** | 〃 (seed 시 값 미지정) |
+| 3 | **`target_rate=NULL` seed 를 허용**한다 | 〃 |
+| 4 | `target_rate=NULL` 정책은 **계산하지 않는다** (Calculator 에 전달하지 않음) | `dashboard/data_service.py` |
+| 5 | Dashboard 는 NULL 정책을 **제거하지 않고 `TARGET_RATE_NOT_SET` 으로 표시**한다 | `dashboard/models.py`, `api/response.py` |
+| 6 | 사업자번호 **결합 키는 `business_no`** 이다 | `matchers/business_no.py` |
+| 7 | 미매칭 구매데이터는 **Company 를 자동 생성하지 않고 보관**한다 (방안 C) | `importers/purchase_importer.py` |
+| 8 | 기업정보 확보 후 **`rematch()` 로 재연결**한다 | 〃 (멱등) |
+| 9 | **음수 금액 처리는 별도 Issue #49** 에서 결정한다 | `PURCHASE_IMPORT_DESIGN.md` 5장 |
+| 10 | 외부 API Collector 는 **인증키·실제 응답 필드 확인 이후** 착수한다 | `EXTERNAL_API_ONBOARDING.md` |
+
+### 7.1 관련 확정 사항 (참고)
+
+| 항목 | 확정 내용 |
+|---|---|
+| 사업자번호 **자릿수 자동 보정** | **하지 않는다.** 9자리 값도 보정 없이 형식 오류 처리(잘못된 기업 연결 위험 방지) |
+| 체크섬 검증 | **Warning 만**, 데이터 차단 없음 (D-002) |
+| 물리명 | 현행 유지(`business_no`, `amount`). 리팩터링 없음 (D-001) |
 
 ---
 
-## 8. 요약
-- 목표는 **clone → init → run → 바로 동작**. "DB 생성"을 넘어 **처음 받은 사람의 즉시 실행**을 책임진다.
-- 이미 있는 자산(경로/파일 자동 생성, `create_table IF NOT EXISTS`, `exists()/count()`)을 재사용하고,
-  **`init_db` + `seed_policies` + `verify_bootstrap` + CLI(`init`/`run`) + README** 를 신규로 추가한다.
-- 모든 초기화는 **멱등**하며, seed 는 **별도 함수 + `init` 기본 포함(+`--no-seed`)** 를 권장한다.
-- `target_rate` 초기값(Q2)과 코드 확정(Q1) 등 Open Questions 승인 후 구현 착수한다.
+## 8. Open Questions 처리 결과
+
+> 작성 당시의 질문과 최종 처리 상태를 기록으로 남긴다.
+
+| # | 질문 | 상태 | 최종 결과 |
+|---|---|---|---|
+| Q1 | 정책 `policy_code` 확정 | ✅ **해결됨** | `SMALL_BUSINESS` / `WOMAN` / `DISABLED` / `STARTUP` / **`GREEN`** — 제안했던 `GREEN_PRODUCT` 대신 **`GREEN` 으로 확정**됨 |
+| Q2 | seed `target_rate` 초기값 | ✅ **해결됨** | **NULL 로 seed.** 법적·공식 근거가 확인되지 않은 값을 넣지 않는다(D-004) |
+| Q3 | Seed 별도 함수 + `init` 기본 호출 | ✅ **해결됨** | 제안대로 채택. `seed_policies()` 분리 + `--no-seed` 옵션 제공 |
+| Q4 | 서버 startup 자동 `init_db` | ✅ **해결됨** | **호출하지 않음.** 명시적 `init` 명령만 사용(`app.py` 에 `init_db` 호출 없음) |
+| Q5 | 인자 없는 실행 동작 | ✅ **해결됨** | **도움말 출력** (`parser.print_help()`, 종료코드 0) |
+| Q6 | `health` 서브커맨드 | ✅ **해결됨** | **제공됨.** 정상 0 / 실패 1 종료코드 |
+| Q7 | 파괴적 재생성(`--force`) | ⏸ **보류** | 이번 범위 제외. 필요 시 별도 Issue |
+| — | DB Migration Framework | 📌 **별도 이슈** | 도입하지 않음. Health Check 의 **구 스키마 감지**로 대응 |
+| — | 음수·0 금액 저장 | 📌 **별도 이슈** | **Issue #49** 에서 명세화 후 결정 |
+
+---
+
+## 9. 요약
+- 목표는 **clone → init → run → 바로 동작**이며, **달성 확인 완료**
+  (`init` 2회 멱등, `GET /dashboard/summary` 200, `/docs` 200).
+- 기존 자산(경로/파일 자동 생성, `CREATE TABLE IF NOT EXISTS`, `exists()/count()`)을 재사용하고
+  **`init_db` + `seed_policies` + `verify_bootstrap` + CLI(`init`/`run`/`health`) + README** 를 추가했다.
+- 모든 초기화는 **멱등**하며, seed 는 **운영자가 설정한 `target_rate` 를 덮어쓰지 않는다.**
+- 정책 5종은 **`target_rate=NULL` 로 등록**되며, 대시보드에서 `TARGET_RATE_NOT_SET` 으로 표시된다.
+  목표율을 등록하면 코드 변경 없이 자동으로 계산에 포함된다.
