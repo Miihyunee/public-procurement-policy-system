@@ -361,7 +361,11 @@ class TestBuildSummaryFromRegisteredTargets:
         certification_repo: CertificationRepository,
         purchase_repo: PurchaseRepository,
     ) -> None:
-        """목표율이 없는(NULL) 정책은 계산 대상에서 제외됩니다."""
+        """목표율이 없는(NULL) 정책도 요약에 포함되며, 계산 값만 비어 있습니다.
+
+        계산 대상에서는 제외되지만 요약에서 **제거되지는 않습니다**. 화면에서
+        "정책 없음"과 "목표율 미설정"을 구분하기 위한 동작입니다.
+        """
         company_id = _add_company(company_repo, "1000000001")
         with_rate = _add_policy_with_target(policy_repo, "HAS_RATE", "목표있음", Decimal("50"))
         no_rate = _add_policy_with_target(policy_repo, "NO_RATE", "목표없음", None)
@@ -371,7 +375,17 @@ class TestBuildSummaryFromRegisteredTargets:
 
         summary = service_with_repo.build_summary_from_registered_targets()
         codes = {s.policy_code for s in summary.policy_summaries}
-        assert codes == {"HAS_RATE"}
+        assert codes == {"HAS_RATE", "NO_RATE"}
+
+        by_code = {s.policy_code: s for s in summary.policy_summaries}
+        unset = by_code["NO_RATE"]
+        assert unset.status is DashboardStatus.TARGET_RATE_NOT_SET
+        assert unset.target_rate is None
+        assert unset.achievement_rate is None
+        assert unset.shortage_rate is None
+
+        # 목표율이 있는 정책은 기존과 동일하게 계산된다.
+        assert by_code["HAS_RATE"].achievement_rate is not None
 
     def test_excludes_inactive_policy(
         self,

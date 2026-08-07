@@ -300,3 +300,122 @@ class TestDashboardApiServiceRegisteredTargets:
         api = DashboardApiService(data_service_no_repo)
         with pytest.raises(ValueError):
             api.get_dashboard()
+
+
+# ----------------------------------------------------------------------
+# 목표율 미설정(TARGET_RATE_NOT_SET) 처리 — PM 지정 Test 1~6
+# ----------------------------------------------------------------------
+class TestTargetRateNotSet:
+    """목표율이 등록되지 않은 정책의 표현 방식을 검증합니다.
+
+    핵심 목적은 화면이 **"정책 없음"과 "목표율 미설정"을 구분**할 수 있게
+    하는 것입니다.
+    """
+
+    def test_1_policy_is_included_in_response(
+        self, api: DashboardApiService, db_path: Path
+    ) -> None:
+        """Test 1 — 목표율 NULL 정책이 응답에 포함된다(제거되지 않음)."""
+        _seed_policy_with_purchase(db_path, target_rate=None)
+        response = api.get_dashboard()
+        assert [item.policy_code for item in response.policies] == ["SMALL_BUSINESS"]
+
+    def test_2_achievement_rate_is_null(
+        self, api: DashboardApiService, db_path: Path
+    ) -> None:
+        """Test 2 — 달성률은 계산하지 않고 NULL 이다(0 이 아님)."""
+        _seed_policy_with_purchase(db_path, target_rate=None)
+        item = api.get_dashboard().policies[0]
+        assert item.achievement_rate is None
+
+    def test_3_shortage_rate_is_null(self, api: DashboardApiService, db_path: Path) -> None:
+        """Test 3 — 부족률도 계산하지 않고 NULL 이다."""
+        _seed_policy_with_purchase(db_path, target_rate=None)
+        item = api.get_dashboard().policies[0]
+        assert item.shortage_rate is None
+
+    def test_4_status_is_target_rate_not_set(
+        self, api: DashboardApiService, db_path: Path
+    ) -> None:
+        """Test 4 — status 는 TARGET_RATE_NOT_SET 이다."""
+        _seed_policy_with_purchase(db_path, target_rate=None)
+        assert api.get_dashboard().policies[0].status == "TARGET_RATE_NOT_SET"
+
+    def test_5_status_label_is_korean(self, api: DashboardApiService, db_path: Path) -> None:
+        """Test 5 — status_label 은 '목표율 미설정' 이다."""
+        _seed_policy_with_purchase(db_path, target_rate=None)
+        assert api.get_dashboard().policies[0].status_label == "목표율 미설정"
+
+    def test_6_existing_calculation_is_unchanged(
+        self, api: DashboardApiService, db_path: Path
+    ) -> None:
+        """Test 6 — 목표율이 있는 정책의 계산 결과는 기존과 동일하다.
+
+        정책비율 30%, 목표 50% → 달성률 60%, 부족률 40%, 상태 '부족'.
+        """
+        _seed_policy_with_purchase(db_path, target_rate=Decimal("50"))
+        item = api.get_dashboard().policies[0]
+        assert item.target_rate == Decimal("50")
+        assert item.purchase_amount == Decimal("3000000")
+        assert item.achievement_rate == Decimal("60.00")
+        assert item.shortage_rate == Decimal("40.00")
+        assert item.status == "SHORTAGE"
+        assert item.status_label == "부족"
+
+    def test_target_rate_and_purchase_amount_are_null(
+        self, api: DashboardApiService, db_path: Path
+    ) -> None:
+        """목표율·정책 구매액도 NULL 이다(계산하지 않았음을 의미)."""
+        _seed_policy_with_purchase(db_path, target_rate=None)
+        item = api.get_dashboard().policies[0]
+        assert item.target_rate is None
+        assert item.purchase_amount is None
+
+    def test_total_purchase_amount_is_still_aggregated(
+        self, api: DashboardApiService, db_path: Path
+    ) -> None:
+        """전체 구매액은 목표율과 무관하게 집계된다."""
+        _seed_policy_with_purchase(db_path, target_rate=None)
+        assert api.get_dashboard().total_purchase_amount == Decimal("10000000")
+
+    def test_serialized_payload_uses_json_null(
+        self, api: DashboardApiService, db_path: Path
+    ) -> None:
+        """직렬화 시 문자열 'None' 이 아니라 JSON null 로 표현된다."""
+        _seed_policy_with_purchase(db_path, target_rate=None)
+        payload = json.loads(api.get_dashboard().model_dump_json())
+        item = payload["policies"][0]
+        assert item["target_rate"] is None
+        assert item["achievement_rate"] is None
+        assert item["shortage_rate"] is None
+        assert item["purchase_amount"] is None
+        assert item["status"] == "TARGET_RATE_NOT_SET"
+        assert item["status_label"] == "목표율 미설정"
+
+    def test_mixed_policies_are_both_represented(
+        self, api: DashboardApiService, db_path: Path, policy_repo: PolicyRepository
+    ) -> None:
+        """목표율이 있는 정책과 없는 정책이 한 응답에 함께 표현된다."""
+        _seed_policy_with_purchase(db_path, target_rate=Decimal("50"))
+        policy_repo.insert(Policy(policy_code="WOMAN", policy_name="여성기업", target_rate=None))
+
+        by_code = {item.policy_code: item for item in api.get_dashboard().policies}
+        assert set(by_code) == {"SMALL_BUSINESS", "WOMAN"}
+        assert by_code["SMALL_BUSINESS"].status == "SHORTAGE"
+        assert by_code["WOMAN"].status == "TARGET_RATE_NOT_SET"
+
+
+class TestTargetRateNotSetStatusModel:
+    """DashboardStatus 열거형에 추가된 상태를 검증합니다."""
+
+    def test_status_value_and_label(self) -> None:
+        assert DashboardStatus.TARGET_RATE_NOT_SET.value == "TARGET_RATE_NOT_SET"
+        assert DashboardStatus.TARGET_RATE_NOT_SET.label == "목표율 미설정"
+
+    def test_never_returned_by_rate_judgement(self) -> None:
+        """달성률 판정은 이 상태를 반환하지 않는다(계산 불가 상태이므로)."""
+        for rate in (Decimal("0"), Decimal("79.99"), Decimal("80"), Decimal("100")):
+            assert (
+                DashboardStatus.from_achievement_rate(rate)
+                is not DashboardStatus.TARGET_RATE_NOT_SET
+            )

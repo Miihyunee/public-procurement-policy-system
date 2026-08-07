@@ -228,15 +228,21 @@ class TestDashboardAfterBootstrap:
         response = TestClient(create_app(db_path)).get("/dashboard/summary")
         assert response.status_code == 200
 
-    def test_null_target_rate_policies_are_excluded(self, db_path: Path) -> None:
-        """목표율이 NULL 인 정책은 계산 대상에서 제외됩니다(0% 처리 아님)."""
+    def test_seeded_policies_are_shown_as_target_rate_not_set(self, db_path: Path) -> None:
+        """초기화 직후 5종이 모두 '목표율 미설정'으로 표시됩니다(0% 처리 아님)."""
         bootstrap(db_path)
         payload = TestClient(create_app(db_path)).get("/dashboard/summary").json()
         assert payload["total_purchase_amount"] == "0"
-        assert payload["policies"] == []
+        assert {item["policy_code"] for item in payload["policies"]} == EXPECTED_CODES
+        for item in payload["policies"]:
+            assert item["target_rate"] is None
+            assert item["achievement_rate"] is None
+            assert item["shortage_rate"] is None
+            assert item["status"] == "TARGET_RATE_NOT_SET"
+            assert item["status_label"] == "목표율 미설정"
 
-    def test_policy_appears_once_target_rate_is_set(self, db_path: Path) -> None:
-        """목표율을 등록하면 별도 조치 없이 계산에 포함됩니다."""
+    def test_policy_is_calculated_once_target_rate_is_set(self, db_path: Path) -> None:
+        """목표율을 등록하면 별도 조치 없이 계산 대상이 됩니다."""
         bootstrap(db_path)
         with sqlite3.connect(str(db_path)) as conn:
             conn.execute(
@@ -244,5 +250,12 @@ class TestDashboardAfterBootstrap:
                 ("50", "SMALL_BUSINESS"),
             )
         payload = TestClient(create_app(db_path)).get("/dashboard/summary").json()
-        codes = [item["policy_code"] for item in payload["policies"]]
-        assert codes == ["SMALL_BUSINESS"]
+        by_code = {item["policy_code"]: item for item in payload["policies"]}
+
+        # 목표율을 등록한 정책만 계산 상태로 바뀐다.
+        assert by_code["SMALL_BUSINESS"]["target_rate"] == "50"
+        assert by_code["SMALL_BUSINESS"]["status"] != "TARGET_RATE_NOT_SET"
+
+        # 나머지는 여전히 목표율 미설정으로 남는다.
+        for code in EXPECTED_CODES - {"SMALL_BUSINESS"}:
+            assert by_code[code]["status"] == "TARGET_RATE_NOT_SET"

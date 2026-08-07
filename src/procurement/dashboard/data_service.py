@@ -29,6 +29,7 @@ from procurement.dashboard.models import (
     PolicySummary,
 )
 from procurement.database.policy_repository import PolicyRepository
+from procurement.models.policy import Policy
 
 #: 부족률 표기 자리수 (소수점 둘째 자리)
 _RATE_EXPONENT = Decimal("0.01")
@@ -85,21 +86,29 @@ class DashboardDataService:
     def build_summary_from_registered_targets(self) -> DashboardSummary:
         """시스템에 등록된 목표율로 대시보드 전체 요약을 생성합니다.
 
-        외부 입력 없이 :class:`PolicyRepository` 에서 **활성이면서 목표율이
-        설정된** 정책을 조회해 ``{policy_id: target_rate}`` 를 구성한 뒤,
-        기존 :meth:`build_summary` 를 그대로 호출합니다. 목표율이 없는(NULL)
-        정책은 조회 단계에서 제외되므로 계산 대상에 포함되지 않습니다.
+        외부 입력 없이 :class:`PolicyRepository` 에서 **활성 정책 전체**를 조회한
+        뒤, 목표율 설정 여부에 따라 다르게 처리합니다.
 
-        Calculator 는 변경하지 않으며, 목표율 dict 를 만들어 넘기는 방식만
-        다릅니다.
+        - **목표율이 설정된 정책**: 기존과 동일하게 계산기로 달성률을 계산합니다.
+        - **목표율이 없는(NULL) 정책**: 계산기를 호출하지 않고, 계산 값을 모두
+          ``None`` 으로 두고 상태를 :attr:`DashboardStatus.TARGET_RATE_NOT_SET`
+          으로 표시합니다. **요약에서 제외하지 않습니다.**
+
+        목표율이 없는 정책을 제외하지 않는 이유는, 화면에서 "정책이 없음"과
+        "정책은 있으나 목표율이 아직 등록되지 않음"을 구분하기 위해서입니다.
+        달성률을 ``0`` 으로 처리하지 않습니다.
+
+        Calculator 는 변경하지 않으며, 목표율이 있는 정책만 골라 dict 로 넘기는
+        방식은 기존과 같습니다.
 
         Returns:
-            :class:`DashboardSummary`. 목표율이 설정된 활성 정책이 없으면 정책
-            요약은 빈 목록이 되고 전체 구매액만 담깁니다.
+            :class:`DashboardSummary`. 활성 정책이 없으면 정책 요약은 빈 목록이
+            되고 전체 구매액만 담깁니다.
 
         Raises:
             ValueError: 생성 시 ``policy_repository`` 를 주입하지 않은 경우.
-            CalculatorValidationError: 존재하지 않는 정책이 조회된 경우(계산기 검증 전파).
+            CalculatorValidationError: 목표율이 0 이하이거나 존재하지 않는
+                정책이 조회된 경우(계산기 검증 전파).
         """
         if self._policy_repository is None:
             raise ValueError(
@@ -107,14 +116,37 @@ class DashboardDataService:
                 "policy_repository 를 주입해야 합니다."
             )
 
-        target_rates: dict[int, Decimal] = {}
-        for policy in self._policy_repository.find_active_with_target_rate():
-            # 조회 조건상 target_rate 는 NOT NULL 이며, 저장된 정책은 policy_id 를 가진다.
-            if policy.policy_id is None or policy.target_rate is None:
-                continue
-            target_rates[policy.policy_id] = policy.target_rate
+        policies = [
+            policy
+            for policy in self._policy_repository.find_active()
+            if policy.policy_id is not None
+        ]
 
-        return self.build_summary(target_rates)
+        target_rates: dict[int, Decimal] = {
+            policy.policy_id: policy.target_rate
+            for policy in policies
+            if policy.policy_id is not None and policy.target_rate is not None
+        }
+
+        total_amount = self._calculator.calculate_total_purchase()
+        # 목표율이 있는 정책만 계산 대상으로 넘긴다(기존 계산 경로 그대로).
+        results = {
+            result.policy_id: result for result in self._calculator.calculate_all(target_rates)
+        }
+
+        summaries: list[PolicySummary] = []
+        for policy in policies:
+            assert policy.policy_id is not None  # 위에서 필터링됨
+            result = results.get(policy.policy_id)
+            if result is None:
+                # 목표율 미설정 — 계산기를 호출하지 않는다.
+                summaries.append(self._to_unset_summary(policy, total_amount))
+            else:
+                summaries.append(
+                    self._to_policy_summary(result, target_rates[policy.policy_id])
+                )
+
+        return DashboardSummary(total_purchase_amount=total_amount, policy_summaries=summaries)
 
     # ------------------------------------------------------------------
     # 내부 헬퍼
@@ -133,6 +165,26 @@ class DashboardDataService:
             achievement_rate=result.achievement_rate,
             shortage_rate=shortage_rate,
             status=status,
+        )
+
+    @staticmethod
+    def _to_unset_summary(policy: Policy, total_amount: Decimal) -> PolicySummary:
+        """목표율이 없는 정책의 요약을 만듭니다(계산 없음).
+
+        계산기를 호출하지 않으므로 정책별 구매금액·달성률·부족률은 모두
+        ``None`` 이며, ``0`` 과 구분됩니다(계산하지 않았음을 의미).
+        """
+        assert policy.policy_id is not None  # 호출부에서 보장
+        return PolicySummary(
+            policy_id=policy.policy_id,
+            policy_code=policy.policy_code,
+            policy_name=policy.policy_name,
+            purchase_amount=None,
+            total_purchase_amount=total_amount,
+            target_rate=None,
+            achievement_rate=None,
+            shortage_rate=None,
+            status=DashboardStatus.TARGET_RATE_NOT_SET,
         )
 
     @staticmethod
