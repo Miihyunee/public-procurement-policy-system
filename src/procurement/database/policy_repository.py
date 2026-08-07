@@ -169,6 +169,22 @@ class PolicyRepository(BaseRepository):
         rows = self.execute("SELECT * FROM policy WHERE policy_id = ?", (policy_id,))
         return self._row_to_policy(rows[0]) if rows else None
 
+    def find_active(self) -> list[Policy]:
+        """활성 정책을 목표율 설정 여부와 무관하게 모두 조회합니다.
+
+        ``is_active = 1`` 인 정책을 ``policy_id`` 오름차순으로 반환합니다.
+        목표율(``target_rate``)이 설정되지 않은 정책도 포함되므로, 대시보드에서
+        **"목표율 미설정" 상태를 표시**할 때 사용합니다.
+
+        목표율이 설정된 정책만 필요하면 :meth:`find_active_with_target_rate` 를
+        사용합니다.
+
+        Returns:
+            활성 :class:`Policy` 목록. 없으면 빈 목록.
+        """
+        rows = self.execute("SELECT * FROM policy WHERE is_active = 1 ORDER BY policy_id")
+        return [self._row_to_policy(row) for row in rows]
+
     def find_active_with_target_rate(self) -> list[Policy]:
         """목표율이 설정된 활성 정책을 조회합니다.
 

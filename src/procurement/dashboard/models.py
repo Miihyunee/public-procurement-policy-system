@@ -36,11 +36,21 @@ class DashboardStatus(Enum):
     - ``NORMAL`` (정상): 달성률 >= 100
     - ``WARNING`` (주의): 80 <= 달성률 < 100
     - ``SHORTAGE`` (부족): 달성률 < 80
+
+    위 세 가지와 별개로, 목표율이 등록되지 않아 **달성률을 계산할 수 없는**
+    상태를 나타내는 값이 있습니다.
+
+    - ``TARGET_RATE_NOT_SET`` (목표율 미설정): ``target_rate`` 가 없어 계산하지 않음
+
+    ``TARGET_RATE_NOT_SET`` 은 달성률로부터 판정되지 않으며
+    (:meth:`from_achievement_rate` 는 이 값을 반환하지 않습니다),
+    "정책이 없음"과 "목표율이 아직 등록되지 않음"을 구분하기 위해 사용합니다.
     """
 
     NORMAL = "NORMAL"
     WARNING = "WARNING"
     SHORTAGE = "SHORTAGE"
+    TARGET_RATE_NOT_SET = "TARGET_RATE_NOT_SET"
 
     @property
     def label(self) -> str:
@@ -69,6 +79,7 @@ _STATUS_LABELS: dict[DashboardStatus, str] = {
     DashboardStatus.NORMAL: "정상",
     DashboardStatus.WARNING: "주의",
     DashboardStatus.SHORTAGE: "부족",
+    DashboardStatus.TARGET_RATE_NOT_SET: "목표율 미설정",
 }
 
 
@@ -76,26 +87,33 @@ _STATUS_LABELS: dict[DashboardStatus, str] = {
 class PolicySummary:
     """정책 하나에 대한 대시보드 요약(DTO).
 
+    목표율(``target_rate``)이 등록되지 않은 정책은 달성률을 계산할 수 없으므로,
+    계산 관련 값이 모두 ``None`` 이고 상태는
+    :attr:`DashboardStatus.TARGET_RATE_NOT_SET` 이 됩니다. 이 경우에도 정책은
+    요약에서 제외되지 않으며, 화면은 "목표율 미설정"으로 표시할 수 있습니다.
+
     Attributes:
         policy_id: 정책 ID.
         policy_code: 정책 코드.
         policy_name: 정책명.
-        purchase_amount: 해당 정책 구매금액.
+        purchase_amount: 해당 정책 구매금액. 목표율 미설정이면 ``None``
+            (계산을 수행하지 않았음을 의미하며 ``0`` 과 구분됩니다).
         total_purchase_amount: 기관 전체 구매액(모든 정책 요약이 공유하는 분모).
-        target_rate: 목표 구매비율(%).
-        achievement_rate: 목표 대비 달성률(%).
+        target_rate: 목표 구매비율(%). 미설정이면 ``None``.
+        achievement_rate: 목표 대비 달성률(%). 목표율 미설정이면 ``None``.
         shortage_rate: 목표 달성까지 부족한 비율(%). ``max(0, 100 - 달성률)``.
-        status: 달성 상태(정상/주의/부족).
+            목표율 미설정이면 ``None``.
+        status: 달성 상태(정상/주의/부족/목표율 미설정).
     """
 
     policy_id: int
     policy_code: str
     policy_name: str
-    purchase_amount: Decimal
+    purchase_amount: Decimal | None
     total_purchase_amount: Decimal
-    target_rate: Decimal
-    achievement_rate: Decimal
-    shortage_rate: Decimal
+    target_rate: Decimal | None
+    achievement_rate: Decimal | None
+    shortage_rate: Decimal | None
     status: DashboardStatus
 
 

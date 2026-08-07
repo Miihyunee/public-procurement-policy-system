@@ -35,17 +35,25 @@ class PolicySummaryResponseModel(BaseModel):
     문자열로 직렬화되며, 상태는 ``status``(코드)와 ``status_label``(한글) 두
     필드로 제공됩니다.
 
+    목표율이 등록되지 않은 정책은 달성률을 계산할 수 없으므로, 계산 관련 값이
+    모두 ``null`` 이고 ``status`` 는 ``TARGET_RATE_NOT_SET`` 이 됩니다. 이 경우에도
+    정책은 응답에서 제외되지 않으므로, 화면에서 "정책이 없음"과 "목표율 미설정"을
+    구분할 수 있습니다.
+
     Attributes:
         policy_id: 정책 ID.
         policy_code: 정책 코드.
         policy_name: 정책명.
-        purchase_amount: 해당 정책 구매금액(직렬화 시 문자열).
+        purchase_amount: 해당 정책 구매금액(직렬화 시 문자열). 목표율 미설정이면
+            ``null`` — 계산을 수행하지 않았음을 의미하며 ``"0"`` 과 구분됩니다.
         total_purchase_amount: 기관 전체 구매액(직렬화 시 문자열).
-        target_rate: 목표 구매비율(%)(직렬화 시 문자열).
-        achievement_rate: 목표 대비 달성률(%)(직렬화 시 문자열).
+        target_rate: 목표 구매비율(%)(직렬화 시 문자열). 미설정이면 ``null``.
+        achievement_rate: 목표 대비 달성률(%)(직렬화 시 문자열). 목표율 미설정이면 ``null``.
         shortage_rate: 목표 달성까지 부족한 비율(%)(직렬화 시 문자열).
-        status: 달성 상태 코드(``NORMAL`` / ``WARNING`` / ``SHORTAGE``).
-        status_label: 화면 표시용 한글 상태명(정상 / 주의 / 부족).
+            목표율 미설정이면 ``null``.
+        status: 달성 상태 코드(``NORMAL`` / ``WARNING`` / ``SHORTAGE`` /
+            ``TARGET_RATE_NOT_SET``).
+        status_label: 화면 표시용 한글 상태명(정상 / 주의 / 부족 / 목표율 미설정).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -53,11 +61,11 @@ class PolicySummaryResponseModel(BaseModel):
     policy_id: int
     policy_code: str
     policy_name: str
-    purchase_amount: Decimal
+    purchase_amount: Decimal | None
     total_purchase_amount: Decimal
-    target_rate: Decimal
-    achievement_rate: Decimal
-    shortage_rate: Decimal
+    target_rate: Decimal | None
+    achievement_rate: Decimal | None
+    shortage_rate: Decimal | None
     status: str
     status_label: str
 
@@ -69,9 +77,13 @@ class PolicySummaryResponseModel(BaseModel):
         "shortage_rate",
         when_used="always",
     )
-    def _serialize_decimal(self, value: Decimal) -> str:
-        """``Decimal`` 필드를 문자열로 직렬화합니다(python·json 모드 공통)."""
-        return str(value)
+    def _serialize_decimal(self, value: Decimal | None) -> str | None:
+        """``Decimal`` 필드를 문자열로 직렬화합니다(python·json 모드 공통).
+
+        값이 없으면(``None``) 그대로 ``None`` 을 반환해 JSON ``null`` 로
+        직렬화합니다. ``"None"`` 같은 문자열로 변환하지 않습니다.
+        """
+        return None if value is None else str(value)
 
     @classmethod
     def from_policy_summary(cls, summary: PolicySummary) -> PolicySummaryResponseModel:

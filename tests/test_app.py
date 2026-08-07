@@ -121,11 +121,19 @@ class TestDashboardSummaryEndpoint:
     def test_excludes_policy_without_target_rate(
         self, client: TestClient, db_path: Path
     ) -> None:
-        """목표율이 없는 정책은 요약에서 제외됩니다(전체 구매액만 집계)."""
+        """목표율이 없는 정책도 응답에 포함되며 '목표율 미설정'으로 표시됩니다."""
         _seed(db_path, target_rate=None)
         payload = client.get("/dashboard/summary").json()
         assert payload["total_purchase_amount"] == "10000000"
-        assert payload["policies"] == []
+        assert len(payload["policies"]) == 1
+
+        item = payload["policies"][0]
+        assert item["policy_code"] == "SMALL_BUSINESS"
+        assert item["target_rate"] is None
+        assert item["achievement_rate"] is None
+        assert item["shortage_rate"] is None
+        assert item["status"] == "TARGET_RATE_NOT_SET"
+        assert item["status_label"] == "목표율 미설정"
 
     def test_empty_database(self, client: TestClient) -> None:
         """데이터가 없으면 전체 구매액 0, 정책 요약은 빈 목록입니다."""
