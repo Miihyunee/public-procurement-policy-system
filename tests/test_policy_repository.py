@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from procurement.database.policy_repository import (
+    TARGET_RATE_MAX,
     DuplicatePolicyCodeError,
     PolicyRepository,
     PolicyValidationError,
@@ -390,3 +391,139 @@ class TestFindActiveWithTargetRate:
         found = repo.find_active_with_target_rate()
         assert [p.policy_code for p in found] == ["P1", "P2", "P3"]
         assert all(p.policy_id is not None for p in found)
+
+
+class TestFindAll:
+    """활성·비활성 전체 조회를 검증합니다 (목표율 관리 화면용)."""
+
+    def test_empty_when_no_policies(self, repo: PolicyRepository) -> None:
+        assert repo.find_all() == []
+
+    def test_includes_inactive_policy(self, repo: PolicyRepository) -> None:
+        """비활성 정책도 조회에는 포함됩니다(변경만 제한됩니다)."""
+        repo.insert(Policy(policy_code="ON", policy_name="활성"))
+        repo.insert(Policy(policy_code="OFF", policy_name="비활성", is_active=False))
+        assert [p.policy_code for p in repo.find_all()] == ["ON", "OFF"]
+
+    def test_includes_null_target_rate(self, repo: PolicyRepository) -> None:
+        repo.insert(Policy(policy_code="NO_RATE", policy_name="목표없음"))
+        found = repo.find_all()
+        assert len(found) == 1
+        assert found[0].target_rate is None
+
+    def test_ordered_by_policy_id(self, repo: PolicyRepository) -> None:
+        repo.insert(Policy(policy_code="P1", policy_name="정책1"))
+        repo.insert(Policy(policy_code="P2", policy_name="정책2"))
+        assert [p.policy_code for p in repo.find_all()] == ["P1", "P2"]
+
+
+class TestUpdateTargetRate:
+    """목표율 변경(설정·해제)을 검증합니다."""
+
+    def test_sets_target_rate_from_null(self, repo: PolicyRepository) -> None:
+        """미설정(NULL) 상태에서 값을 설정할 수 있습니다."""
+        repo.insert(_sample("SMALL_BUSINESS"))
+
+        updated = repo.update_target_rate("SMALL_BUSINESS", Decimal("50"))
+
+        assert updated is not None
+        assert updated.target_rate == Decimal("50")
+        found = repo.find_by_policy_code("SMALL_BUSINESS")
+        assert found is not None
+        assert found.target_rate == Decimal("50")
+
+    def test_updates_updated_at(self, repo: PolicyRepository) -> None:
+        saved = repo.insert(_sample("RATE_UPD"))
+        assert saved.updated_at is not None
+
+        updated = repo.update_target_rate("RATE_UPD", Decimal("10"))
+
+        assert updated is not None
+        assert updated.updated_at is not None
+        assert updated.updated_at >= saved.updated_at
+
+    def test_keeps_created_at(self, repo: PolicyRepository) -> None:
+        """변경해도 생성일시는 바뀌지 않습니다."""
+        saved = repo.insert(_sample("RATE_CREATED"))
+
+        updated = repo.update_target_rate("RATE_CREATED", Decimal("10"))
+
+        assert updated is not None
+        assert updated.created_at == saved.created_at
+
+    def test_unknown_policy_code_returns_none(self, repo: PolicyRepository) -> None:
+        assert repo.update_target_rate("NOT_EXIST", Decimal("10")) is None
+
+    def test_zero_raises(self, repo: PolicyRepository) -> None:
+        repo.insert(_sample("RATE_ZERO"))
+        with pytest.raises(PolicyValidationError, match="0 보다 커야"):
+            repo.update_target_rate("RATE_ZERO", Decimal("0"))
+
+    def test_negative_raises(self, repo: PolicyRepository) -> None:
+        repo.insert(_sample("RATE_NEG_UPD"))
+        with pytest.raises(PolicyValidationError, match="0 보다 커야"):
+            repo.update_target_rate("RATE_NEG_UPD", Decimal("-1"))
+
+    def test_over_max_raises(self, repo: PolicyRepository) -> None:
+        """상한(100)을 넘으면 거부합니다 — 구조적 상한이며 법정 상한이 아닙니다."""
+        repo.insert(_sample("RATE_OVER"))
+        with pytest.raises(PolicyValidationError, match="이하여야"):
+            repo.update_target_rate("RATE_OVER", Decimal("100.01"))
+
+    def test_max_boundary_allowed(self, repo: PolicyRepository) -> None:
+        repo.insert(_sample("RATE_MAX"))
+        updated = repo.update_target_rate("RATE_MAX", TARGET_RATE_MAX)
+        assert updated is not None
+        assert updated.target_rate == TARGET_RATE_MAX
+
+    def test_decimal_precision_preserved(self, repo: PolicyRepository) -> None:
+        repo.insert(_sample("RATE_PREC"))
+        updated = repo.update_target_rate("RATE_PREC", Decimal("12.34"))
+        assert updated is not None
+        assert updated.target_rate == Decimal("12.34")
+
+    def test_reset_to_none(self, repo: PolicyRepository) -> None:
+        """명시적 None 으로 목표율을 해제할 수 있습니다."""
+        repo.insert(Policy(policy_code="RATE_RESET", policy_name="정책", target_rate=Decimal("30")))
+
+        updated = repo.update_target_rate("RATE_RESET", None)
+
+        assert updated is not None
+        assert updated.target_rate is None
+
+    def test_does_not_affect_other_policies(self, repo: PolicyRepository) -> None:
+        repo.insert(Policy(policy_code="KEEP", policy_name="유지", target_rate=Decimal("20")))
+        repo.insert(_sample("CHANGE"))
+
+        repo.update_target_rate("CHANGE", Decimal("40"))
+
+        other = repo.find_by_policy_code("KEEP")
+        assert other is not None
+        assert other.target_rate == Decimal("20")
+
+    def test_all_seed_policy_codes(self, repo: PolicyRepository) -> None:
+        """정본 정책 코드 5종 모두 변경 가능합니다."""
+        codes = ("SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP", "GREEN")
+        for code in codes:
+            repo.insert(_sample(code))
+
+        for index, code in enumerate(codes, start=1):
+            updated = repo.update_target_rate(code, Decimal(index))
+            assert updated is not None
+            assert updated.target_rate == Decimal(index)
+
+
+class TestInsertTargetRateUpperBound:
+    """등록 경로에도 동일한 상한 규칙이 적용되는지 확인합니다."""
+
+    def test_insert_over_max_raises(self, repo: PolicyRepository) -> None:
+        with pytest.raises(PolicyValidationError, match="이하여야"):
+            repo.insert(
+                Policy(policy_code="INS_OVER", policy_name="정책", target_rate=Decimal("101"))
+            )
+
+    def test_insert_max_boundary_allowed(self, repo: PolicyRepository) -> None:
+        saved = repo.insert(
+            Policy(policy_code="INS_MAX", policy_name="정책", target_rate=TARGET_RATE_MAX)
+        )
+        assert saved.target_rate == TARGET_RATE_MAX

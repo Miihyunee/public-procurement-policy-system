@@ -23,16 +23,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from procurement.admin import (
+    PolicyAdminService,
+    PolicyItemResponseModel,
+    PolicyListResponseModel,
+    PolicyNotFoundError,
+    TargetRateUpdateRequest,
+    build_admin_token_guard,
+)
 from procurement.api import DashboardApiService, DashboardResponseModel
 from procurement.calculators import ProcurementAchievementCalculator
 from procurement.calculators.procurement_achievement import CalculatorValidationError
 from procurement.core.config import settings
 from procurement.dashboard import DashboardDataService
 from procurement.database.certification_repository import CertificationRepository
-from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.purchase_repository import PurchaseRepository
 
 
@@ -59,17 +67,42 @@ def build_dashboard_api(db_path: str | Path | None = None) -> DashboardApiServic
     return DashboardApiService(data_service)
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
+def build_policy_admin(db_path: str | Path | None = None) -> PolicyAdminService:
+    """정책 목표율 관리 서비스를 조립합니다(composition root).
+
+    설정 경로는 계산 경로와 분리되어 있으므로 계산기·대시보드 서비스를
+    주입하지 않습니다::
+
+        PolicyAdminService → PolicyRepository → SQLite
+
+    Args:
+        db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값(``settings.db_file``)을
+            사용합니다.
+
+    Returns:
+        조립된 :class:`PolicyAdminService`.
+    """
+    path: str | Path = db_path if db_path is not None else settings.db_file
+    return PolicyAdminService(PolicyRepository(path))
+
+
+def create_app(db_path: str | Path | None = None, admin_token: str | None = None) -> FastAPI:
     """FastAPI 애플리케이션을 생성합니다.
 
     Args:
         db_path: 조립에 사용할 DB 경로. ``None`` 이면 설정값을 사용합니다.
             테스트에서 격리 DB 를 주입할 때 사용합니다.
+        admin_token: 설정 변경(쓰기) API 에 사용할 관리자 토큰. ``None`` 이면
+            설정값(``settings.ADMIN_API_TOKEN``)을 사용합니다. 최종적으로 값이
+            없으면 쓰기 API 는 503 으로 비활성화됩니다.
 
     Returns:
         엔드포인트가 등록된 :class:`fastapi.FastAPI` 인스턴스.
     """
     dashboard_api = build_dashboard_api(db_path)
+    policy_admin = build_policy_admin(db_path)
+    token = admin_token if admin_token is not None else settings.ADMIN_API_TOKEN
+    require_admin_token = build_admin_token_guard(token)
 
     app = FastAPI(
         title="Public Procurement Policy System API",
@@ -86,6 +119,46 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     def get_dashboard_summary() -> DashboardResponseModel:
         """시스템에 등록된 목표율 기반 대시보드 요약을 반환합니다."""
         return dashboard_api.get_dashboard()
+
+    @app.get(
+        "/policies",
+        response_model=PolicyListResponseModel,
+        summary="정책 목록 및 현재 목표율 조회",
+        tags=["policies"],
+    )
+    def list_policies() -> PolicyListResponseModel:
+        """등록된 정책과 현재 목표율을 반환합니다.
+
+        비활성 정책도 포함하며 ``is_active`` 로 구분합니다. 목표율이 설정되지
+        않은 정책은 ``target_rate`` 가 ``null`` 이고 ``target_rate_status`` 가
+        ``NOT_SET`` 입니다.
+        """
+        return policy_admin.list_policies()
+
+    @app.put(
+        "/policies/{policy_code}/target-rate",
+        response_model=PolicyItemResponseModel,
+        summary="정책 목표율 설정·해제",
+        tags=["policies"],
+        dependencies=[Depends(require_admin_token)],
+    )
+    def update_target_rate(
+        policy_code: str, payload: TargetRateUpdateRequest
+    ) -> PolicyItemResponseModel:
+        """정책의 목표율을 설정하거나 해제합니다.
+
+        ``{"target_rate": null}`` 은 목표율 **해제**를 뜻합니다. ``target_rate``
+        키가 아예 없으면 422 로 거부해 "변경하지 않음"과 "해제"를 구분합니다.
+
+        예외는 이 엔드포인트 안에서만 HTTP 응답으로 변환합니다(전역 예외 처리
+        방식을 변경하지 않기 위함).
+        """
+        try:
+            return policy_admin.set_target_rate(policy_code, payload.target_rate)
+        except PolicyNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PolicyValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.exception_handler(CalculatorValidationError)
     async def _handle_calculator_validation_error(
