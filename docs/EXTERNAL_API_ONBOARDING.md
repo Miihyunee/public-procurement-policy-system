@@ -7,7 +7,7 @@
 | Version | v1.0 |
 | Status | Draft — 신청 진행에 따라 갱신 |
 | Last Updated | 2026-08-07 |
-| 관련 문서 | `DATA_COLLECTION_STRATEGY.md`(조사 결과), `DATA_SOURCES.md` |
+| 관련 문서 | `DATA_ACQUISITION_PLAN.md`(조사 결과), `DATA_ACQUISITION_PLAN.md` |
 
 ---
 
@@ -59,7 +59,7 @@ SME_API_KEY=           # 중소벤처24 (중소기업)
 
 > ⚠️ 위 표의 "가능"은 **공개된 조회 조건 기준**이며, 실제 응답 필드를 확인한 것이 아니다.
 > 필드 단위의 확정/추정/미확정 구분은
-> `PURCHASE_DATA_VERIFICATION_PLAN.md` 8.1절을 따른다.
+> `PURCHASE_DATA_STRUCTURE_VALIDATION_SPEC.md` 8.1절을 따른다.
 >
 > **인증 데이터가 없으면 모든 정책 실적이 0으로 계산되므로, 본 신청 절차가
 > 실제 달성률 산출의 선행 조건이다.**
@@ -246,8 +246,8 @@ SME_API_KEY=           # 중소벤처24 (중소기업)
 | 1 | 포털 데이터셋 페이지의 **"미리보기 / OpenAPI 실행"** 기능으로 즉시 확인 |
 | 2 | 포털 제공 **활용가이드(참고문서)** 에서 요청·응답 명세 확인 |
 | 3 | 실제 사업자번호로 호출해 **응답 샘플 확보** |
-| 4 | 샘플을 `DATA_MAPPING.md` 표준 컬럼과 대조 |
-| 5 | 검증 결과로 `DATA_COLLECTION_STRATEGY.md` 를 v1.1 로 갱신 |
+| 4 | 샘플을 `DATA_DICTIONARY.md` 표준 컬럼과 대조 |
+| 5 | 검증 결과로 `DATA_ACQUISITION_PLAN.md` 를 v1.1 로 갱신 |
 
 > 🔒 응답 샘플을 문서화할 때 **인증키가 포함된 요청 URL 전체를 붙여넣지 않는다.**
 > 키 부분은 반드시 마스킹한다.

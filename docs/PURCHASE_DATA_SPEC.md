@@ -7,7 +7,7 @@
 | Version | v0.1 (초안) |
 | Status | Draft — **샘플 확인 완료(9장), W-1~W-4·W-9 확정 후 v1.0** |
 | Last Updated | 2026-08-11 (9장 추가 — **1~8장 규격 미변경**) |
-| 관련 문서 | `DATA_DICTIONARY.md`, `DATA_COLLECTION_STRATEGY.md`, `POLICY_DEFINITION.md`, `DATABASE_DESIGN.md` |
+| 관련 문서 | `DATA_DICTIONARY.md`, `DATA_ACQUISITION_PLAN.md`, `POLICY_DEFINITION.md`, `DATABASE_DESIGN.md` |
 
 ---
 
@@ -205,5 +205,5 @@
 |---|---|
 | `REAL_PURCHASE_DATA_ANALYSIS.md` | 샘플 구조 분석 |
 | `PURCHASE_PARSER_SPEC.md` | Parser 설계 명세 |
-| `PARSER_SPEC_CONSISTENCY_CHECK.md` | 문서 간 정합성 점검 |
+| `DECISIONS.md` | 문서 간 정합성 점검 |
 | `CUSTOMER_DATA_QUESTIONS.md` | W-1~W-10 고객 확인 질문 |

@@ -65,15 +65,15 @@ PM 지시 4장이 "실제 `main` 기준으로 확인"하라고 한 문서 11종�
 | 1 | `PURCHASE_DATA_SPEC.md` | ✅ 있음 | — (단 9장은 PR #61 에만) |
 | 2 | `PURCHASE_IMPORT_DESIGN.md` | ✅ 있음 | — |
 | 3 | **`PURCHASE_PARSER_SPEC.md`** | ❌ **없음** | PR #61 |
-| 4 | **`PARSER_SPEC_CONSISTENCY_CHECK.md`** | ❌ **없음** | PR #61 |
+| 4 | **`DECISIONS.md`** | ❌ **없음** | PR #61 |
 | 5 | **`REAL_PURCHASE_DATA_ANALYSIS.md`** | ❌ **없음** | PR #60 → #61 |
 | 6 | **`CUSTOMER_DATA_QUESTIONS.md`** | ❌ **없음** | PR #61 |
 | 7 | `POLICY_GAP_ANALYSIS_2026.md` | ✅ 있음 | — |
 | 8 | `POLICY_DECISION_ANALYSIS.md` | ✅ 있음 | — |
-| 9 | **`ISSUE25-SPEC-purchase-preprocessing.md`** | ❌ **없음** | PR #61 |
+| 9 | **`PURCHASE_PARSER_SPEC.md`** | ❌ **없음** | PR #61 |
 | 10 | `DATA_DICTIONARY.md` | ✅ 있음 | — |
-| 11 | `DATA_MAPPING.md` | ✅ 있음 | — |
-| + | **`PREPROCESSING_DECISION_ANALYSIS.md`** | ❌ **없음** | PR #61 |
+| 11 | `DATA_DICTIONARY.md` | ✅ 있음 | — |
+| + | **`PURCHASE_PARSER_SPEC.md`** | ❌ **없음** | PR #61 |
 | + | **`DATA_ACQUISITION_PLAN.md`** | ❌ **없음** | PR #59 → #61 |
 
 > **즉, 샘플 분석 이후의 산출물 전체가 아직 `main` 에 반영되지 않았다.**

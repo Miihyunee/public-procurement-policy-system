@@ -9,7 +9,7 @@
 | 기준 커밋 | `main = 1595989` |
 | 대상 | Phase 1 — 구조 검증 리포트 도구 |
 | 구현 여부 | ❌ **코드를 작성하지 않았다.** PM 승인(D-22) 후 구현 |
-| 관련 문서 | `PURCHASE_PARSER_SPEC.md` · `PREPROCESSING_DECISION_ANALYSIS.md` · `REAL_PURCHASE_DATA_ANALYSIS.md` |
+| 관련 문서 | `PURCHASE_PARSER_SPEC.md` · `PURCHASE_PARSER_SPEC.md` · `REAL_PURCHASE_DATA_ANALYSIS.md` |
 
 ---
 
