@@ -8,7 +8,7 @@
 | Status | **설계 명세 (Spec)** — 구현은 본 명세 검토·승인 후 진행 |
 | Last Updated | 2026-08-07 |
 | 관련 Issue | #49 |
-| 관련 문서 | `PURCHASE_IMPORT_DESIGN.md` 5장, `PURCHASE_DATA_MAPPING_TEMPLATE.md` V-030~V-033 |
+| 관련 문서 | `PURCHASE_IMPORT_DESIGN.md` 5장, `PURCHASE_DATA_SPEC.md` V-030~V-033 |
 | 관련 코드 | `database/purchase_repository.py`, `importers/purchase_importer.py`, `calculators/procurement_achievement.py` |
 
 > ⚠️ 본 명세는 **문서만** 포함한다. 코드·테스트 변경은 없다.

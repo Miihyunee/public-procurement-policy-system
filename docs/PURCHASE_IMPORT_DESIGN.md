@@ -7,7 +7,7 @@
 | Version | v1.0 |
 | Status | 구현 완료 (본 문서 기준으로 구현됨) |
 | Last Updated | 2026-08-07 |
-| 관련 문서 | `PURCHASE_DATA_SPEC.md`, `PURCHASE_DATA_VERIFICATION_PLAN.md`, `PURCHASE_DATA_MAPPING_TEMPLATE.md` |
+| 관련 문서 | `PURCHASE_DATA_SPEC.md`, `PURCHASE_DATA_STRUCTURE_VALIDATION_SPEC.md`, `PURCHASE_DATA_SPEC.md` |
 | 관련 코드 | `matchers/business_no.py`, `importers/purchase_importer.py`, `matchers/company_matcher.py` |
 
 ---

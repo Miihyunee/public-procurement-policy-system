@@ -4,7 +4,7 @@ procurement.matchers.company_matcher
 구매실적(Purchase)과 기업(Company)을 사업자등록번호 기준으로 연결하는
 Matcher 서비스입니다.
 
-``docs/DATA_MAPPING.md`` 의 원칙에 따라 사업자등록번호(``business_no``)를
+``docs/DATA_DICTIONARY.md`` 의 원칙에 따라 사업자등록번호(``business_no``)를
 모든 데이터 연결의 기준 키로 사용합니다. 매칭 결과는
 ``Purchase.company_id`` 에 반영되며, 이후 정책 달성률 계산(Calculator)의
 입력 데이터가 됩니다.

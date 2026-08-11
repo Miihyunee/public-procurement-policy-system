@@ -16,10 +16,10 @@
 
 | 문서 | 관계 |
 |---|---|
-| `docs/E2E_TEST_SCENARIOS.md` | **구조 검증용** 시나리오 A~E(최소 Fixture 기반). 본 Spec 은 이를 **실제 데이터로 재수행**하는 계획이다 |
-| `docs/DATA_INTAKE_CHECKLIST.md` | 실제 데이터 투입 시 선행 점검 절차. 본 Spec 3~4장의 데이터 조건과 연결된다 |
+| `docs/../tests/test_e2e_scenarios.py` | **구조 검증용** 시나리오 A~E(최소 Fixture 기반). 본 Spec 은 이를 **실제 데이터로 재수행**하는 계획이다 |
+| `docs/PURCHASE_DATA_STRUCTURE_VALIDATION_SPEC.md` | 실제 데이터 투입 시 선행 점검 절차. 본 Spec 3~4장의 데이터 조건과 연결된다 |
 | `docs/PURCHASE_DATA_SPEC.md` · `PURCHASE_IMPORT_DESIGN.md` | 구매데이터 규격·Import 설계 |
-| `docs/POLICY_TARGET_RATE_ADMIN_SPEC.md` | 목표율 등록 기능(구현 완료, PR #57) |
+| `docs/DECISIONS.md` | 목표율 등록 기능(구현 완료, PR #57) |
 
 ---
 
@@ -710,7 +710,7 @@ Authorization: Bearer <관리자 토큰>
 |---|---|---|
 | 1 | 데이터 공급 현황 확정 (23장 표의 `확인 필요` 해소) | PM |
 | 2 | 확보 단계에 따라 1/2/3단계 결정 (22장) | 데이터 |
-| 3 | 데이터 투입 전 점검 (`DATA_INTAKE_CHECKLIST.md`) | 데이터 |
+| 3 | 데이터 투입 전 점검 (`PURCHASE_DATA_STRUCTURE_VALIDATION_SPEC.md`) | 데이터 |
 | 4 | 검증 수행 및 결과 보고 (20.2 항목) | — |
 | 5 | 발견된 Blocker 를 Issue 로 분리 | — |
 

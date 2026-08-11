@@ -7,7 +7,7 @@
 | Version | v1.0 |
 | Status | Draft |
 | Last Updated | 2026-08-06 |
-| 관련 문서 | `DATABASE_DESIGN.md`, `DATA_MAPPING.md`, `DATA_COLLECTION_STRATEGY.md`, `PURCHASE_DATA_SPEC.md` |
+| 관련 문서 | `DATABASE_DESIGN.md`, `DATA_DICTIONARY.md`, `DATA_ACQUISITION_PLAN.md`, `PURCHASE_DATA_SPEC.md` |
 
 ---
 
@@ -19,7 +19,7 @@
 **시스템 내부에서 사용할 하나의 표준 이름과 의미를 고정**하여 혼선을 방지하는 것이 목적이다.
 
 - 실제 컬럼 정의(테이블 구조)는 `DATABASE_DESIGN.md`가 기준이다.
-- 외부 데이터 → 표준 컬럼 변환 규칙은 `DATA_MAPPING.md`가 기준이다.
+- 외부 데이터 → 표준 컬럼 변환 규칙은 `DATA_DICTIONARY.md`가 기준이다.
 - 본 문서는 **항목의 의미·타입·출처·사용 목적**을 설명한다.
 
 ## 표기 규칙
@@ -183,7 +183,7 @@
 > ✅ **PM 승인 완료 — `representative_name` nullable 허용**
 > 인증 조회 API가 대표자명을 제공하지 않을 수 있어, 수집 데이터만으로 기업을 생성할 수 없는
 > 문제가 있었다. **nullable 허용 방향으로 승인**되었으며, 스키마 변경은 **Sprint B(구축)**
-> 에서 Bootstrap 구현과 함께 반영한다. (`DATA_COLLECTION_STRATEGY.md` R-4)
+> 에서 Bootstrap 구현과 함께 반영한다. (`DATA_ACQUISITION_PLAN.md` R-4)
 
 ---
 
@@ -220,7 +220,7 @@ valid_from  <=  판정 기준일  <=  valid_to     → 실적 인정
 > ⚠️ 단, **유효기간이 NULL인 경우의 판정 규칙은 아직 정의되지 않았다.**
 > (기간 무관으로 인정 / 계산 제외 등) Backlog 정책 확장 시 Rule Engine에서 정의해야 한다.
 > **MVP 5종은 모두 유효기간이 제공되므로 이번 범위에서는 영향이 없다.**
-> (`DATA_COLLECTION_STRATEGY.md` R-3)
+> (`DATA_ACQUISITION_PLAN.md` R-3)
 
 - 동일 기업이 같은 정책 인증을 **여러 건** 보유할 수 있으며, 그중 하나라도 조건을 만족하면 인정한다.
 
@@ -305,7 +305,7 @@ valid_from  <=  판정 기준일  <=  valid_to     → 실적 인정
 
 # 9. 수집 관리 항목 (제안 — 미구현)
 
-수집 이력 관리를 위해 향후 필요한 항목이다. (`DATA_SOURCES.md`의 "수집 이력 관리" 원칙)
+수집 이력 관리를 위해 향후 필요한 항목이다. (`DATA_ACQUISITION_PLAN.md`의 "수집 이력 관리" 원칙)
 
 | 제안 항목 | 의미 | 타입 | 목적 |
 |---|---|---|---|
