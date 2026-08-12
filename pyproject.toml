@@ -48,6 +48,11 @@ procurement = "procurement.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Dashboard 정적 페이지를 패키지에 포함한다(템플릿 엔진을 도입하지 않기 위해
+# HTML 파일을 그대로 읽어 반환한다).
+[tool.setuptools.package-data]
+procurement = ["web/static/*.html"]
+
 [tool.ruff]
 src = ["src"]
 line-length = 100

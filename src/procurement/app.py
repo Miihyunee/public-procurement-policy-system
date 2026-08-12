@@ -14,17 +14,23 @@ FastAPI 애플리케이션과 **의존성 조립(composition root)** 을 정의�
   한 곳에서만 수행).
 
 .. note::
-    이번 범위는 **등록 목표율 기반 대시보드 요약**(``GET /dashboard/summary``)
-    뿐입니다. 외부 목표율 입력 방식은 후속 Issue 로 분리합니다. 응답은 JSON 전용이며,
-    Swagger(OpenAPI) 문서는 ``/docs`` 에서 확인할 수 있습니다.
+    JSON API 외에 브라우저용 Dashboard 화면(``GET /``)을 제공합니다. 화면은
+    서버에서 값을 렌더링하지 않고 JSON API 를 호출해 그리므로 계층 구조에
+    영향을 주지 않습니다. Swagger(OpenAPI) 문서는 ``/docs`` 에서 확인할 수
+    있습니다.
+
+.. warning::
+    **기간(연도) 필터는 아직 구현되지 않았습니다.** 모든 조회는 전체 데이터
+    기준이며, 화면의 연도 선택은 응답에 되돌려 주기만 합니다. 연도별 집계·중복
+    적재 방지는 D-23 ~ D-27 확정 후 별도 Issue 에서 다룹니다.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from procurement.admin import (
     PolicyAdminService,
@@ -35,13 +41,22 @@ from procurement.admin import (
     build_admin_token_guard,
 )
 from procurement.api import DashboardApiService, DashboardResponseModel
+from procurement.api.status_api import DataStatusApiService
+from procurement.api.status_response import DataStatusResponseModel
 from procurement.calculators import ProcurementAchievementCalculator
 from procurement.calculators.procurement_achievement import CalculatorValidationError
 from procurement.core.config import settings
 from procurement.dashboard import DashboardDataService
+from procurement.dashboard.status_service import DataStatusService
 from procurement.database.certification_repository import CertificationRepository
+from procurement.database.company_repository import CompanyRepository
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.purchase_repository import PurchaseRepository
+from procurement.web import (
+    PolicyDisplayResponseModel,
+    build_policy_display_response,
+    read_index_html,
+)
 
 
 def build_dashboard_api(db_path: str | Path | None = None) -> DashboardApiService:
@@ -86,7 +101,39 @@ def build_policy_admin(db_path: str | Path | None = None) -> PolicyAdminService:
     return PolicyAdminService(PolicyRepository(path))
 
 
-def create_app(db_path: str | Path | None = None, admin_token: str | None = None) -> FastAPI:
+def build_data_status_api(
+    db_path: str | Path | None = None, data_mode: str | None = None
+) -> DataStatusApiService:
+    """데이터 적재 현황 API 서비스를 조립합니다(composition root).
+
+    계산 경로와 분리된 조회 전용 경로입니다::
+
+        DataStatusApiService → DataStatusService → Repository → SQLite
+
+    Args:
+        db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값을 사용합니다.
+        data_mode: 데이터 모드(``demo`` / ``operational``). ``None`` 이면
+            설정값(``settings.DATA_MODE``)을 사용합니다.
+
+    Returns:
+        조립된 :class:`DataStatusApiService`.
+    """
+    path: str | Path = db_path if db_path is not None else settings.db_file
+    status_service = DataStatusService(
+        PurchaseRepository(path),
+        CompanyRepository(path),
+        CertificationRepository(path),
+        PolicyRepository(path),
+    )
+    mode = data_mode if data_mode is not None else settings.DATA_MODE
+    return DataStatusApiService(status_service, mode)
+
+
+def create_app(
+    db_path: str | Path | None = None,
+    admin_token: str | None = None,
+    data_mode: str | None = None,
+) -> FastAPI:
     """FastAPI 애플리케이션을 생성합니다.
 
     Args:
@@ -95,12 +142,15 @@ def create_app(db_path: str | Path | None = None, admin_token: str | None = None
         admin_token: 설정 변경(쓰기) API 에 사용할 관리자 토큰. ``None`` 이면
             설정값(``settings.ADMIN_API_TOKEN``)을 사용합니다. 최종적으로 값이
             없으면 쓰기 API 는 503 으로 비활성화됩니다.
+        data_mode: Dashboard 화면에 표시할 데이터 모드. ``None`` 이면 설정값
+            (``settings.DATA_MODE``)을 사용합니다.
 
     Returns:
         엔드포인트가 등록된 :class:`fastapi.FastAPI` 인스턴스.
     """
     dashboard_api = build_dashboard_api(db_path)
     policy_admin = build_policy_admin(db_path)
+    data_status_api = build_data_status_api(db_path, data_mode)
     token = admin_token if admin_token is not None else settings.ADMIN_API_TOKEN
     require_admin_token = build_admin_token_guard(token)
 
@@ -119,6 +169,60 @@ def create_app(db_path: str | Path | None = None, admin_token: str | None = None
     def get_dashboard_summary() -> DashboardResponseModel:
         """시스템에 등록된 목표율 기반 대시보드 요약을 반환합니다."""
         return dashboard_api.get_dashboard()
+
+    @app.get(
+        "/dashboard/data-status",
+        response_model=DataStatusResponseModel,
+        summary="데이터 적재 현황 조회",
+        tags=["dashboard"],
+    )
+    def get_data_status(
+        year: int | None = Query(
+            default=None,
+            ge=1900,
+            le=2999,
+            description=(
+                "화면이 선택한 연도. **현재는 조회 조건으로 사용되지 않고** "
+                "응답에 그대로 되돌려 줍니다(기간 필터 미구현)."
+            ),
+        ),
+    ) -> DataStatusResponseModel:
+        """저장소에 적재된 데이터 현황을 반환합니다.
+
+        달성률을 계산하지 않고 건수·금액 합계·일자 범위만 집계합니다.
+        연도별 집계는 D-23 ~ D-27 확정 후 별도 Issue 에서 구현하므로, 응답의
+        ``period_filter_applied`` 는 항상 ``false`` 입니다.
+        """
+        return data_status_api.get_data_status(year)
+
+    @app.get(
+        "/dashboard/policy-display",
+        response_model=PolicyDisplayResponseModel,
+        summary="정책별 개발 진행 상태(화면 표시용) 조회",
+        tags=["dashboard"],
+    )
+    def get_policy_display() -> PolicyDisplayResponseModel:
+        """정책별 화면 표시 정보를 반환합니다.
+
+        값은 ``docs/DECISIONS.md`` 의 결정을 옮긴 것이며 계산에 사용되지
+        않습니다. 화면이 "계산 가능"과 "계산 보류"를 구분하기 위해 사용합니다.
+        """
+        return build_policy_display_response()
+
+    @app.get(
+        "/",
+        response_class=HTMLResponse,
+        summary="Dashboard 화면",
+        tags=["dashboard"],
+        include_in_schema=False,
+    )
+    def get_dashboard_page() -> HTMLResponse:
+        """Dashboard 화면(정적 HTML)을 반환합니다.
+
+        페이지는 값을 서버에서 렌더링하지 않고, 브라우저에서 위 JSON API 를
+        호출해 채웁니다.
+        """
+        return HTMLResponse(read_index_html())
 
     @app.get(
         "/policies",
