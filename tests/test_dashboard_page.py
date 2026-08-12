@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from procurement.api.status_response import PERIOD_NOTICE
+from procurement.api.status_response import PERIOD_NOTICE_UNAVAILABLE
 from procurement.app import create_app
 from procurement.database.bootstrap import init_db, seed_policies
 from procurement.database.purchase_repository import PurchaseRepository
@@ -111,9 +111,16 @@ class TestDataStatusEndpoint:
         assert body["purchase_total_amount"] == "1234.56"
 
     def test_period_filter_is_never_applied(self, client: TestClient) -> None:
+        """적재 현황 자체는 항상 전체 데이터 기준이다."""
         body = client.get("/dashboard/data-status?year=2026").json()
         assert body["period_filter_applied"] is False
-        assert body["period_notice"] == PERIOD_NOTICE
+
+    def test_notice_says_unavailable_when_date_field_unset(self, client: TestClient) -> None:
+        """기간 판정 기준일(D-24)이 미설정이면 사용 불가로 안내한다."""
+        body = client.get("/dashboard/data-status").json()
+        assert body["period_filter_available"] is False
+        assert body["period_date_field"] is None
+        assert body["period_notice"] == PERIOD_NOTICE_UNAVAILABLE
 
     def test_year_is_echoed_back(self, client: TestClient) -> None:
         assert client.get("/dashboard/data-status?year=2026").json()["requested_year"] == 2026

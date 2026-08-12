@@ -19,7 +19,9 @@ import sqlite3
 from datetime import date, datetime
 from decimal import Decimal
 
+from procurement.core.period import PeriodFilter
 from procurement.database.base import BaseRepository
+from procurement.models.import_batch import STATUS_ACTIVE
 from procurement.models.purchase import Purchase
 
 
@@ -41,10 +43,16 @@ CREATE TABLE IF NOT EXISTS purchase (
     contract_date DATE NOT NULL,
     payment_date DATE NOT NULL,
     amount NUMERIC NOT NULL,
+    batch_id INTEGER,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 )
 """
+
+#: 배치 단위 조회·대체 처리에 필요한 인덱스.
+CREATE_BATCH_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_purchase_batch ON purchase (batch_id)"
+)
 
 # 공백만 있는 값도 허용하지 않는 문자열 필수값
 _REQUIRED_TEXT_FIELDS = ("business_no", "company_name")
@@ -97,6 +105,19 @@ class PurchaseRepository(BaseRepository):
         with self.connection() as conn:
             conn.execute(CREATE_TABLE_SQL)
 
+    def ensure_indexes(self) -> None:
+        """조회 인덱스를 생성합니다 (없을 때만).
+
+        ``batch_id`` 컬럼이 있어야 하므로, 구 스키마 DB 에서는 컬럼 추가
+        (:func:`procurement.database.bootstrap.migrate_schema`) **이후에**
+        호출해야 합니다. 컬럼이 없으면 아무 것도 하지 않습니다.
+        """
+        columns = {row["name"] for row in self.execute("PRAGMA table_info(purchase)")}
+        if "batch_id" not in columns:
+            return
+        with self.connection() as conn:
+            conn.execute(CREATE_BATCH_INDEX_SQL)
+
     def insert(self, purchase: Purchase) -> Purchase:
         """구매실적을 저장하고 채번된 ID 와 타임스탬프를 반영해 반환합니다.
 
@@ -120,8 +141,8 @@ class PurchaseRepository(BaseRepository):
         sql = (
             "INSERT INTO purchase "
             "(business_no, company_id, company_name, contract_date, payment_date, "
-            "amount, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            "amount, batch_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         params = (
             purchase.business_no,
@@ -130,6 +151,7 @@ class PurchaseRepository(BaseRepository):
             _to_db_date(purchase.contract_date),
             _to_db_date(purchase.payment_date),
             _to_db_amount(purchase.amount),
+            purchase.batch_id,
             _to_db(created_at),
             _to_db(updated_at),
         )
@@ -146,6 +168,7 @@ class PurchaseRepository(BaseRepository):
             contract_date=purchase.contract_date,
             payment_date=purchase.payment_date,
             amount=purchase.amount,
+            batch_id=purchase.batch_id,
             created_at=created_at,
             updated_at=updated_at,
         )
@@ -190,6 +213,79 @@ class PurchaseRepository(BaseRepository):
         """
         rows = self.execute("SELECT * FROM purchase ORDER BY purchase_id")
         return [self._row_to_purchase(row) for row in rows]
+
+    def find_for_calculation(self, period: PeriodFilter | None = None) -> list[Purchase]:
+        """**계산 대상** 구매실적을 조회합니다.
+
+        ``find_all()`` 과 두 가지가 다릅니다.
+
+        1. **대체된 배치의 행을 제외**합니다. 계산 대상은 다음과 같습니다::
+
+               batch_id 가 NULL 이거나
+               batch_id 가 status='ACTIVE' 인 배치를 가리키는 행
+
+           ``batch_id`` 가 ``NULL`` 인 행을 포함하는 이유는, 배치 도입 이전에
+           적재된 데이터를 계산에서 갑자기 사라지게 만들지 않기 위함입니다.
+
+        2. ``period`` 를 주면 **기간 조건**을 적용합니다.
+
+        ``import_batch`` 테이블이 아직 없는 DB(구 스키마)에서는 배치 조건을
+        건너뛰고 기존과 동일하게 동작합니다.
+
+        Args:
+            period: 적용할 기간 조건. ``None`` 이면 기간 제한 없이 전체를
+                조회합니다(기존 동작과 동일).
+
+        Returns:
+            :class:`Purchase` 목록. 없으면 빈 목록.
+        """
+        conditions: list[str] = []
+        params: list[object] = []
+
+        if self._has_import_batch_table():
+            conditions.append(
+                "(batch_id IS NULL OR batch_id IN "
+                "(SELECT batch_id FROM import_batch WHERE status = ?))"
+            )
+            params.append(STATUS_ACTIVE)
+
+        if period is not None:
+            # date_field 는 PeriodFilter 가 허용 목록으로 검증하므로 SQL 에
+            # 직접 넣어도 안전하다(사용자 입력이 그대로 들어오지 않는다).
+            conditions.append(f"{period.date_field} BETWEEN ? AND ?")
+            params.append(_to_db_date(period.start))
+            params.append(_to_db_date(period.end))
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = self.execute(
+            f"SELECT * FROM purchase{where} ORDER BY purchase_id", tuple(params)
+        )
+        return [self._row_to_purchase(row) for row in rows]
+
+    def find_by_batch(self, batch_id: int) -> list[Purchase]:
+        """특정 배치로 적재된 구매실적을 조회합니다.
+
+        Args:
+            batch_id: 조회할 배치 ID.
+
+        Returns:
+            :class:`Purchase` 목록. 없으면 빈 목록.
+        """
+        rows = self.execute(
+            "SELECT * FROM purchase WHERE batch_id = ? ORDER BY purchase_id", (batch_id,)
+        )
+        return [self._row_to_purchase(row) for row in rows]
+
+    def _has_import_batch_table(self) -> bool:
+        """``import_batch`` 테이블이 존재하는지 확인합니다.
+
+        구 스키마 DB 에서도 계산이 동작해야 하므로, 배치 조건을 붙이기 전에
+        테이블 존재 여부를 먼저 확인합니다.
+        """
+        rows = self.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'import_batch'"
+        )
+        return bool(rows)
 
     def find_unmatched(self) -> list[Purchase]:
         """기업 매칭이 되지 않은 구매실적 목록을 조회합니다.
@@ -265,6 +361,7 @@ class PurchaseRepository(BaseRepository):
             contract_date=_from_db_date(row["contract_date"]),
             payment_date=_from_db_date(row["payment_date"]),
             amount=_from_db_amount(row["amount"]),
+            batch_id=row["batch_id"],
             created_at=_from_db(row["created_at"]),
             updated_at=_from_db(row["updated_at"]),
         )

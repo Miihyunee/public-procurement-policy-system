@@ -25,6 +25,7 @@ from decimal import Decimal
 
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 
@@ -48,6 +49,11 @@ class DataStatus:
         certification_count: 적재된 인증 건수.
         policy_count: 등록된 정책 수(비활성 포함).
         policy_with_target_rate_count: 목표율이 설정된 활성 정책 수.
+        batch_count: 등록된 업로드 배치 수(대체된 배치 포함).
+        active_batch_count: 계산에 사용되는 ACTIVE 배치 수.
+        superseded_batch_count: 재업로드로 대체된 배치 수.
+        calculation_target_count: **계산 대상** 구매 건수. 대체된 배치의 행을
+            제외한 수이며, ``purchase_count`` 와 다르면 대체가 발생한 것입니다.
     """
 
     purchase_count: int
@@ -62,6 +68,10 @@ class DataStatus:
     certification_count: int
     policy_count: int
     policy_with_target_rate_count: int
+    batch_count: int
+    active_batch_count: int
+    superseded_batch_count: int
+    calculation_target_count: int
 
 
 class DataStatusService:
@@ -73,6 +83,7 @@ class DataStatusService:
         company_repository: CompanyRepository,
         certification_repository: CertificationRepository,
         policy_repository: PolicyRepository,
+        import_batch_repository: ImportBatchRepository,
     ) -> None:
         """서비스를 초기화합니다.
 
@@ -81,11 +92,13 @@ class DataStatusService:
             company_repository: 기업 저장소.
             certification_repository: 인증 저장소.
             policy_repository: 정책 저장소.
+            import_batch_repository: 업로드 배치 저장소.
         """
         self._purchase_repository = purchase_repository
         self._company_repository = company_repository
         self._certification_repository = certification_repository
         self._policy_repository = policy_repository
+        self._import_batch_repository = import_batch_repository
 
     def build_status(self) -> DataStatus:
         """현재 적재 현황을 집계합니다.
@@ -111,6 +124,9 @@ class DataStatusService:
             if purchase.company_id is not None:
                 matched += 1
 
+        batches = self._import_batch_repository.find_all()
+        active_batches = sum(1 for batch in batches if batch.is_active)
+
         policies = self._policy_repository.find_all()
         with_target_rate = sum(
             1 for policy in policies if policy.is_active and policy.target_rate is not None
@@ -129,4 +145,8 @@ class DataStatusService:
             certification_count=self._certification_repository.count(),
             policy_count=len(policies),
             policy_with_target_rate_count=with_target_rate,
+            batch_count=len(batches),
+            active_batch_count=active_batches,
+            superseded_batch_count=len(batches) - active_batches,
+            calculation_target_count=len(self._purchase_repository.find_for_calculation()),
         )

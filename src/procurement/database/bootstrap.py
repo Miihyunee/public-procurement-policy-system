@@ -10,7 +10,8 @@ procurement.database.bootstrap
 
 제공 기능:
 
-- :func:`init_db` — 핵심 4개 테이블을 일괄 생성(멱등)
+- :func:`init_db` — 핵심 테이블을 일괄 생성(멱등)
+- :func:`migrate_schema` — 이전 버전 DB 에 누락된 컬럼을 보완(멱등)
 - :func:`seed_policies` — MVP 정책 5종을 등록(멱등)
 - :func:`verify_bootstrap` — DB·테이블·컬럼·seed 상태를 점검
 - :func:`bootstrap` — 위 과정을 순서대로 수행하는 오케스트레이터
@@ -34,6 +35,7 @@ from pathlib import Path
 from procurement.core.config import settings
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models.policy import Policy
@@ -98,7 +100,23 @@ _REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
     "company": ("company_id", "business_no", "company_name", "representative_name"),
     "policy": ("policy_id", "policy_code", "policy_name", "evaluation_basis", "target_rate"),
     "certification": ("certification_id", "company_id", "policy_id", "valid_from", "valid_to"),
-    "purchase": ("purchase_id", "business_no", "contract_date", "payment_date", "amount"),
+    "purchase": (
+        "purchase_id",
+        "business_no",
+        "contract_date",
+        "payment_date",
+        "amount",
+        "batch_id",
+    ),
+    "import_batch": (
+        "batch_id",
+        "file_name",
+        "period_start",
+        "period_end",
+        "status",
+        "row_count",
+        "total_amount",
+    ),
 }
 
 
@@ -158,11 +176,14 @@ def resolve_db_path(db_path: str | Path | None = None) -> Path:
 
 
 def init_db(db_path: str | Path | None = None) -> None:
-    """핵심 4개 테이블을 생성합니다.
+    """핵심 테이블을 생성합니다.
 
     각 Repository 의 ``create_table()`` 은 ``CREATE TABLE IF NOT EXISTS`` 를
     사용하므로 **반복 실행해도 안전**하며, 기존 데이터를 삭제하지 않습니다.
     DB 파일과 상위 디렉터리는 연결 시점에 자동 생성됩니다.
+
+    생성 후 :func:`migrate_schema` 를 호출해, 이전 버전에서 만든 DB 에 추가된
+    컬럼을 보완합니다.
 
     Args:
         db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
@@ -172,6 +193,47 @@ def init_db(db_path: str | Path | None = None) -> None:
     PolicyRepository(path).create_table()
     CertificationRepository(path).create_table()
     PurchaseRepository(path).create_table()
+    ImportBatchRepository(path).create_table()
+    migrate_schema(path)
+    # 인덱스는 컬럼 보완 이후에 만든다(구 스키마 DB 대응).
+    PurchaseRepository(path).ensure_indexes()
+
+
+#: 기존 테이블에 나중에 추가된 컬럼. ``CREATE TABLE IF NOT EXISTS`` 로는 추가되지
+#: 않으므로 ``ALTER TABLE`` 로 보완한다. (테이블, 컬럼, 컬럼 정의)
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("purchase", "batch_id", "INTEGER"),
+)
+
+
+def migrate_schema(db_path: str | Path | None = None) -> list[str]:
+    """이전 버전에서 만든 DB 에 누락된 컬럼을 추가합니다(멱등).
+
+    ``CREATE TABLE IF NOT EXISTS`` 는 **기존 테이블에 컬럼을 추가하지 않습니다.**
+    따라서 나중에 추가된 컬럼은 ``ALTER TABLE ... ADD COLUMN`` 으로 보완해야
+    합니다. 이미 있는 컬럼은 건너뛰므로 반복 실행해도 안전합니다.
+
+    기존 행의 새 컬럼 값은 ``NULL`` 이 됩니다. ``purchase.batch_id`` 가 ``NULL``
+    인 행은 **계산에 계속 포함**되므로(배치 도입 이전 데이터 보호), 기존 계산
+    결과가 달라지지 않습니다.
+
+    Args:
+        db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        이번 호출에서 실제로 추가한 컬럼 목록(``"테이블.컬럼"`` 형식).
+    """
+    path = resolve_db_path(db_path)
+    existing = _read_schema(path)
+
+    added: list[str] = []
+    with sqlite3.connect(path) as conn:
+        for table, column, definition in _ADDED_COLUMNS:
+            if table not in existing or column in existing[table]:
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            added.append(f"{table}.{column}")
+    return added
 
 
 def seed_policies(db_path: str | Path | None = None) -> list[str]:
@@ -215,7 +277,7 @@ def verify_bootstrap(db_path: str | Path | None = None) -> HealthReport:
     다음을 확인하고 항목별 결과를 반환합니다.
 
     1. DB 파일 존재
-    2. 필수 테이블 4개 존재
+    2. 필수 테이블 존재
     3. 각 테이블의 필수 컬럼 존재(구 스키마 DB 감지)
     4. MVP 정책 seed 존재
 

@@ -426,7 +426,11 @@
       ["계약일 범위", range(status.earliest_contract_date, status.latest_contract_date)],
       ["기업 수", numberFormat(status.company_count) + " 건"],
       ["인증 정보", numberFormat(status.certification_count) + " 건"],
-      ["등록 정책", numberFormat(status.policy_count) + " 종"]
+      ["등록 정책", numberFormat(status.policy_count) + " 종"],
+      ["업로드 배치 (사용 / 대체)",
+        numberFormat(status.active_batch_count) + " / "
+        + numberFormat(status.superseded_batch_count) + " 건"],
+      ["계산 대상 구매", numberFormat(status.calculation_target_count) + " 건"]
     ];
 
     var tbody = el("status-table");
@@ -438,9 +442,22 @@
       tbody.appendChild(tr);
     });
 
-    text(el("status-note"), status.purchase_count === 0
-      ? "업로드된 구매 데이터가 없습니다. 데이터를 적재하기 전까지 달성률은 계산되지 않습니다."
-      : "선택한 연도(" + (status.requested_year || "-") + ")는 아직 조회 조건으로 사용되지 않습니다.");
+    var note;
+    if (status.purchase_count === 0) {
+      note = "업로드된 구매 데이터가 없습니다. 데이터를 적재하기 전까지 달성률은 계산되지 않습니다.";
+    } else if (!status.period_filter_available) {
+      note = "연도 귀속 기준일이 확정되지 않아 선택한 연도("
+        + (status.requested_year || "-") + ")가 조회 조건으로 사용되지 않습니다.";
+    } else {
+      note = "달성률은 " + (status.requested_year || "-")
+        + "년(" + status.period_date_field + " 기준)으로 계산됩니다.";
+    }
+    if (status.superseded_batch_count > 0) {
+      note += " 재업로드로 대체된 배치 " + status.superseded_batch_count
+        + "건의 " + numberFormat(status.purchase_count - status.calculation_target_count)
+        + "행은 계산에서 제외됩니다.";
+    }
+    text(el("status-note"), note);
   }
 
   // ------------------------------------------------------------ 정책 카드
@@ -718,20 +735,31 @@
     var year = el("year-select").value;
     el("error-box").hidden = true;
 
-    Promise.all([
-      fetchJson("/dashboard/data-status?year=" + encodeURIComponent(year)),
-      fetchJson("/dashboard/summary"),
-      fetchJson("/dashboard/policy-display")
-    ]).then(function (results) {
-      var displayMap = {};
-      results[2].items.forEach(function (item) { displayMap[item.policy_code] = item; });
-      lastData = [results[0], results[1], displayMap];
-      draw(results[0], results[1], displayMap);
-    }).catch(function (err) {
-      var box = el("error-box");
-      box.hidden = false;
-      text(box, "데이터를 불러오지 못했습니다: " + err.message);
-    });
+    // 적재 현황을 먼저 받아 기간 조회 가능 여부를 확인한 뒤,
+    // 가능할 때만 달성률을 연도 기준으로 요청한다.
+    // (기준일이 확정되지 않은 상태에서 연도별 숫자를 만들지 않기 위함)
+    fetchJson("/dashboard/data-status?year=" + encodeURIComponent(year))
+      .then(function (status) {
+        var summaryUrl = status.period_filter_available
+          ? "/dashboard/summary?year=" + encodeURIComponent(year)
+          : "/dashboard/summary";
+        return Promise.all([
+          status,
+          fetchJson(summaryUrl),
+          fetchJson("/dashboard/policy-display")
+        ]);
+      })
+      .then(function (results) {
+        var displayMap = {};
+        results[2].items.forEach(function (item) { displayMap[item.policy_code] = item; });
+        lastData = [results[0], results[1], displayMap];
+        draw(results[0], results[1], displayMap);
+      })
+      .catch(function (err) {
+        var box = el("error-box");
+        box.hidden = false;
+        text(box, "데이터를 불러오지 못했습니다: " + err.message);
+      });
   }
 
   initTheme();

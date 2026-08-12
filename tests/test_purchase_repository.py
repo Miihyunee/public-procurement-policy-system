@@ -74,7 +74,11 @@ class TestCreateTable:
         assert cols["company_id"]["notnull"] == 0
 
     def test_columns_match_design(self, repo: PurchaseRepository) -> None:
-        """DATABASE_DESIGN.md v1.1 정의 컬럼과 정확히 일치해야 합니다."""
+        """DATABASE_DESIGN.md 정의 컬럼과 정확히 일치해야 합니다.
+
+        ``batch_id`` 는 월별 누적 적재(Import Batch) 도입으로 추가된 컬럼이며
+        NULL 을 허용합니다.
+        """
         names = [row["name"] for row in repo.execute("PRAGMA table_info(purchase)")]
         assert names == [
             "purchase_id",
@@ -84,9 +88,15 @@ class TestCreateTable:
             "contract_date",
             "payment_date",
             "amount",
+            "batch_id",
             "created_at",
             "updated_at",
         ]
+
+    def test_batch_id_allows_null(self, repo: PurchaseRepository) -> None:
+        """batch_id 는 배치 없이 적재된 행을 위해 NULL 을 허용합니다."""
+        cols = {row["name"]: row for row in repo.execute("PRAGMA table_info(purchase)")}
+        assert cols["batch_id"]["notnull"] == 0
 
     def test_no_foreign_keys(self, repo: PurchaseRepository) -> None:
         """이번 Issue 범위에서 Foreign Key 제약은 추가하지 않습니다."""

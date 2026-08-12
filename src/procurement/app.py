@@ -46,10 +46,12 @@ from procurement.api.status_response import DataStatusResponseModel
 from procurement.calculators import ProcurementAchievementCalculator
 from procurement.calculators.procurement_achievement import CalculatorValidationError
 from procurement.core.config import settings
+from procurement.core.period import PeriodFilter
 from procurement.dashboard import DashboardDataService
 from procurement.dashboard.status_service import DataStatusService
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.web import (
@@ -102,7 +104,9 @@ def build_policy_admin(db_path: str | Path | None = None) -> PolicyAdminService:
 
 
 def build_data_status_api(
-    db_path: str | Path | None = None, data_mode: str | None = None
+    db_path: str | Path | None = None,
+    data_mode: str | None = None,
+    period_date_field: str | None = None,
 ) -> DataStatusApiService:
     """데이터 적재 현황 API 서비스를 조립합니다(composition root).
 
@@ -114,6 +118,8 @@ def build_data_status_api(
         db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값을 사용합니다.
         data_mode: 데이터 모드(``demo`` / ``operational``). ``None`` 이면
             설정값(``settings.DATA_MODE``)을 사용합니다.
+        period_date_field: 기간 판정 날짜 컬럼. ``None`` 이면 설정값
+            (``settings.PURCHASE_PERIOD_DATE_FIELD``)을 사용합니다.
 
     Returns:
         조립된 :class:`DataStatusApiService`.
@@ -124,15 +130,50 @@ def build_data_status_api(
         CompanyRepository(path),
         CertificationRepository(path),
         PolicyRepository(path),
+        ImportBatchRepository(path),
     )
     mode = data_mode if data_mode is not None else settings.DATA_MODE
-    return DataStatusApiService(status_service, mode)
+    date_field = (
+        period_date_field
+        if period_date_field is not None
+        else settings.PURCHASE_PERIOD_DATE_FIELD
+    )
+    return DataStatusApiService(status_service, mode, date_field)
+
+
+def _resolve_period(year: int | None, date_field: str | None) -> PeriodFilter | None:
+    """연도 요청을 기간 조건으로 변환합니다.
+
+    Args:
+        year: 요청된 연도. ``None`` 이면 기간 조건을 만들지 않습니다.
+        date_field: 기간 판정에 사용할 날짜 컬럼. ``None`` 이면 사용할 수 없습니다.
+
+    Returns:
+        :class:`PeriodFilter`. ``year`` 가 ``None`` 이면 ``None``.
+
+    Raises:
+        HTTPException: ``year`` 를 지정했으나 ``date_field`` 가 설정되지 않은 경우
+            **503**. 연도 귀속 기준일(D-24)이 확정되지 않아 계산할 수 없습니다.
+    """
+    if year is None:
+        return None
+    if date_field is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "연도별 조회를 사용할 수 없습니다. 연도 귀속 기준일이 확정되지 "
+                "않았습니다(D-24 · 고객 확인 항목 W-1). 확정 후 설정값 "
+                "PURCHASE_PERIOD_DATE_FIELD 를 지정하면 활성화됩니다."
+            ),
+        )
+    return PeriodFilter.for_year(year, date_field)
 
 
 def create_app(
     db_path: str | Path | None = None,
     admin_token: str | None = None,
     data_mode: str | None = None,
+    period_date_field: str | None = None,
 ) -> FastAPI:
     """FastAPI 애플리케이션을 생성합니다.
 
@@ -144,13 +185,22 @@ def create_app(
             없으면 쓰기 API 는 503 으로 비활성화됩니다.
         data_mode: Dashboard 화면에 표시할 데이터 모드. ``None`` 이면 설정값
             (``settings.DATA_MODE``)을 사용합니다.
+        period_date_field: 기간(연도) 판정에 사용할 날짜 컬럼. ``None`` 이면
+            설정값(``settings.PURCHASE_PERIOD_DATE_FIELD``)을 사용합니다.
+            최종적으로 값이 없으면 연도 지정 조회가 503 으로 거부됩니다
+            (D-24 미확정 — 임의의 기준일을 쓰지 않기 위함).
 
     Returns:
         엔드포인트가 등록된 :class:`fastapi.FastAPI` 인스턴스.
     """
     dashboard_api = build_dashboard_api(db_path)
     policy_admin = build_policy_admin(db_path)
-    data_status_api = build_data_status_api(db_path, data_mode)
+    date_field = (
+        period_date_field
+        if period_date_field is not None
+        else settings.PURCHASE_PERIOD_DATE_FIELD
+    )
+    data_status_api = build_data_status_api(db_path, data_mode, date_field)
     token = admin_token if admin_token is not None else settings.ADMIN_API_TOKEN
     require_admin_token = build_admin_token_guard(token)
 
@@ -166,9 +216,28 @@ def create_app(
         summary="등록 목표율 기반 대시보드 요약 조회",
         tags=["dashboard"],
     )
-    def get_dashboard_summary() -> DashboardResponseModel:
-        """시스템에 등록된 목표율 기반 대시보드 요약을 반환합니다."""
-        return dashboard_api.get_dashboard()
+    def get_dashboard_summary(
+        year: int | None = Query(
+            default=None,
+            ge=1900,
+            le=2999,
+            description=(
+                "대상 회계연도(1/1 ~ 12/31, D-23). 생략하면 **전 기간 합산**으로 "
+                "기존과 동일하게 동작합니다."
+            ),
+        ),
+    ) -> DashboardResponseModel:
+        """시스템에 등록된 목표율 기반 대시보드 요약을 반환합니다.
+
+        ``year`` 를 지정하면 해당 회계연도(1/1 ~ 12/31)의 구매만 집계합니다.
+        기간 조건은 **분모(전체 구매액)와 분자(정책 구매액)에 동일하게** 적용되며,
+        계산 공식 자체는 변경되지 않습니다.
+
+        ``year`` 를 지정했는데 기간 판정 기준일이 설정되지 않았다면 **503** 으로
+        거부합니다. 어느 날짜로 연도를 나눌지는 D-24(미확정)이며, 임의의 기준일로
+        숫자를 만들지 않기 위한 조치입니다.
+        """
+        return dashboard_api.get_dashboard(_resolve_period(year, date_field))
 
     @app.get(
         "/dashboard/data-status",

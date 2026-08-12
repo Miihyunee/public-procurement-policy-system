@@ -37,6 +37,7 @@ from procurement.calculators.rules import (
     RuleRegistry,
     build_default_registry,
 )
+from procurement.core.period import PeriodFilter
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
@@ -78,20 +79,27 @@ class ProcurementAchievementCalculator:
         self._policy_repository = policy_repository
         self._rule_registry = rule_registry or build_default_registry()
 
-    def calculate_total_purchase(self) -> Decimal:
+    def calculate_total_purchase(self, period: PeriodFilter | None = None) -> Decimal:
         """기관 전체 구매금액을 합산합니다.
 
-        기업 매칭 여부와 무관하게 모든 구매실적을 포함합니다.
+        기업 매칭 여부와 무관하게 모든 구매실적을 포함합니다. 대체된 배치의
+        행은 제외됩니다(Repository 조회 단계에서 처리).
+
+        Args:
+            period: 적용할 기간 조건. ``None`` 이면 기간 제한 없이 전체를
+                합산합니다(기존 동작과 동일).
 
         Returns:
             전체 구매금액. 구매실적이 없으면 ``Decimal("0")``.
         """
         total = Decimal("0")
-        for purchase in self._purchase_repository.find_all():
+        for purchase in self._purchase_repository.find_for_calculation(period):
             total += purchase.amount
         return total
 
-    def calculate_policy_purchase(self, policy_id: int) -> Decimal:
+    def calculate_policy_purchase(
+        self, policy_id: int, period: PeriodFilter | None = None
+    ) -> Decimal:
         """해당 정책의 실제 업무 규칙을 적용해 정책별 구매금액을 합산합니다.
 
         정책의 ``evaluation_basis`` 에 따라 판정 기준일을 선택합니다.
@@ -105,6 +113,7 @@ class ProcurementAchievementCalculator:
 
         Args:
             policy_id: 집계할 정책 ID.
+            period: 적용할 기간 조건. ``None`` 이면 기간 제한 없음.
 
         Returns:
             정책별 구매금액. 대상이 없으면 ``Decimal("0")``.
@@ -113,9 +122,14 @@ class ProcurementAchievementCalculator:
             CalculatorValidationError: 존재하지 않는 정책인 경우.
         """
         self._get_policy(policy_id)
-        return self._sum_policy_purchase(policy_id)
+        return self._sum_policy_purchase(policy_id, period)
 
-    def calculate_achievement(self, policy_id: int, target_rate: Decimal) -> AchievementResult:
+    def calculate_achievement(
+        self,
+        policy_id: int,
+        target_rate: Decimal,
+        period: PeriodFilter | None = None,
+    ) -> AchievementResult:
         """정책 하나의 목표 대비 달성률을 계산합니다.
 
         정책 구매비율(정책 구매금액 / 전체 구매금액)을 목표율과 비교합니다::
@@ -125,6 +139,8 @@ class ProcurementAchievementCalculator:
         Args:
             policy_id: 계산할 정책 ID.
             target_rate: 목표 구매비율(퍼센트 단위. 예: ``Decimal("50")`` 은 50%).
+            period: 적용할 기간 조건. 분모·분자에 **동일하게** 적용됩니다.
+                ``None`` 이면 기간 제한 없음.
 
         Returns:
             계산 결과 :class:`AchievementResult`.
@@ -136,18 +152,22 @@ class ProcurementAchievementCalculator:
         policy = self._get_policy(policy_id)
         self._validate_target_rate(target_rate)
 
-        total_amount = self.calculate_total_purchase()
-        policy_amount = self._sum_policy_purchase(policy_id)
+        total_amount = self.calculate_total_purchase(period)
+        policy_amount = self._sum_policy_purchase(policy_id, period)
 
         return self._build_result(policy, policy_amount, total_amount, target_rate)
 
-    def calculate_all(self, target_rates: dict[int, Decimal]) -> list[AchievementResult]:
+    def calculate_all(
+        self, target_rates: dict[int, Decimal], period: PeriodFilter | None = None
+    ) -> list[AchievementResult]:
         """여러 정책의 달성률을 한 번에 계산합니다.
 
         전체 구매금액은 한 번만 집계하여 모든 결과가 동일한 분모를 공유합니다.
 
         Args:
             target_rates: ``{policy_id: 목표율}`` 형태의 매핑.
+            period: 적용할 기간 조건. 분모·분자에 **동일하게** 적용됩니다.
+                ``None`` 이면 기간 제한 없음.
 
         Returns:
             :class:`AchievementResult` 목록. 입력이 비어 있으면 빈 목록.
@@ -165,12 +185,12 @@ class ProcurementAchievementCalculator:
         if not policies:
             return []
 
-        total_amount = self.calculate_total_purchase()
+        total_amount = self.calculate_total_purchase(period)
 
         results: list[AchievementResult] = []
         for policy, target_rate in policies:
             assert policy.policy_id is not None  # _get_policy 가 보장
-            policy_amount = self._sum_policy_purchase(policy.policy_id)
+            policy_amount = self._sum_policy_purchase(policy.policy_id, period)
             results.append(self._build_result(policy, policy_amount, total_amount, target_rate))
         return results
 
@@ -192,7 +212,9 @@ class ProcurementAchievementCalculator:
                 f"목표율은 0 보다 커야 합니다: target_rate={target_rate}"
             )
 
-    def _sum_policy_purchase(self, policy_id: int) -> Decimal:
+    def _sum_policy_purchase(
+        self, policy_id: int, period: PeriodFilter | None = None
+    ) -> Decimal:
         """정책 인증기업의 구매금액을 업무 규칙에 따라 합산합니다 (정책 존재 검증 없음).
 
         정책의 ``evaluation_basis`` 에 따라 판정 기준일(지급일 또는 계약일)을
@@ -225,7 +247,7 @@ class ProcurementAchievementCalculator:
         rule = self._rule_registry.get(policy.evaluation_basis)
 
         total = Decimal("0")
-        for purchase in self._purchase_repository.find_all():
+        for purchase in self._purchase_repository.find_for_calculation(period):
             company_id = purchase.company_id
             if company_id is None or company_id not in validity_ranges:
                 continue

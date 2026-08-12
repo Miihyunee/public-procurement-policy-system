@@ -32,6 +32,9 @@ class Purchase:
         payment_date: 대금 지급일(지출완료) (필수). 일반 정책 판정 기준일입니다.
         amount: 구매금액 (필수). 0 보다 커야 합니다.
         company_id: Company 테이블 참조 ID. 매칭 후 저장되므로 기본값은 ``None`` 입니다.
+        batch_id: 이 행이 들어온 업로드 단위(:class:`ImportBatch`) 참조 ID.
+            배치 없이 적재된 행(배치 도입 이전 데이터 포함)은 ``None`` 이며,
+            **계산에 계속 포함**됩니다.
         purchase_id: 내부 고유 ID (Primary Key). 저장 전에는 ``None`` 입니다.
         created_at: 데이터 생성일시. 저장 시 채워집니다.
         updated_at: 데이터 최종 수정일시. 저장 시 채워집니다.
@@ -43,6 +46,7 @@ class Purchase:
     payment_date: date
     amount: Decimal
     company_id: int | None = None
+    batch_id: int | None = None
     purchase_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

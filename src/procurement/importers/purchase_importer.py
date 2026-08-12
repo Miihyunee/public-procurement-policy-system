@@ -173,7 +173,9 @@ class PurchaseImporter:
         self._purchase_repository = purchase_repository
         self._company_repository = company_repository
 
-    def import_rows(self, rows: Iterable[Mapping[str, Any]]) -> ImportReport:
+    def import_rows(
+        self, rows: Iterable[Mapping[str, Any]], batch_id: int | None = None
+    ) -> ImportReport:
         """컬럼 매핑이 끝난 행들을 적재합니다.
 
         각 행은 다음 키를 가질 수 있습니다.
@@ -186,12 +188,14 @@ class PurchaseImporter:
 
         Args:
             rows: 행(매핑) 목록.
+            batch_id: 이 적재가 속한 업로드 배치 ID. ``None`` 이면 배치 없이
+                저장하며 **기존과 동일하게 동작**합니다(하위 호환).
 
         Returns:
             행별 결과와 집계를 담은 :class:`ImportReport`.
         """
         results = [
-            self._import_row(row_number, row)
+            self._import_row(row_number, row, batch_id)
             for row_number, row in enumerate(rows, start=1)
         ]
         return ImportReport(rows=results)
@@ -215,7 +219,9 @@ class PurchaseImporter:
     # ------------------------------------------------------------------
     # 내부 헬퍼
     # ------------------------------------------------------------------
-    def _import_row(self, row_number: int, row: Mapping[str, Any]) -> ImportRowResult:
+    def _import_row(
+        self, row_number: int, row: Mapping[str, Any], batch_id: int | None = None
+    ) -> ImportRowResult:
         """행 하나를 정규화·검증하고 저장합니다."""
         messages: list[str] = []
 
@@ -268,6 +274,7 @@ class PurchaseImporter:
                     payment_date=payment_date,
                     amount=amount,
                     company_id=company_id,
+                    batch_id=batch_id,
                 )
             )
         except PurchaseValidationError as exc:
