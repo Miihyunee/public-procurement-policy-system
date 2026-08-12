@@ -57,6 +57,17 @@ class TestDashboardPage:
         body = client.get("/").text
         assert 'id="chart-achievement"' in body
         assert 'id="chart-volume"' in body
+        assert 'id="chart-gauge"' in body
+
+    def test_contains_theme_toggle(self, client: TestClient) -> None:
+        """라이트/다크 전환 버튼이 존재한다."""
+        assert 'id="theme-toggle"' in client.get("/").text
+
+    def test_defines_both_themes(self, client: TestClient) -> None:
+        """두 테마의 색 토큰이 모두 정의되어 있다."""
+        body = client.get("/").text
+        assert ':root[data-theme="dark"]' in body
+        assert ':root[data-theme="light"]' in body
 
     def test_contains_upload_status_area(self, client: TestClient) -> None:
         assert 'id="status-table"' in client.get("/").text
