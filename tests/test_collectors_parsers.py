@@ -121,36 +121,75 @@ class TestWomanAndDisabled:
         assert record.issuing_agency == "서울지방중소벤처기업청"
 
     def test_woman_cert_code(self) -> None:
-        assert parse_cert_list(WOMAN_XML, business_no="1")[0].cert_code == "03"
+        assert parse_cert_list(WOMAN_XML, business_no="4021497692")[0].cert_code == "03"
 
     def test_disabled_cert_code(self) -> None:
-        assert parse_cert_list(DISABLED_XML, business_no="1")[0].cert_code == "04"
+        assert parse_cert_list(DISABLED_XML, business_no="4021497692")[0].cert_code == "04"
 
     def test_company_name_is_not_provided(self) -> None:
         """이 API 는 기업명을 제공하지 않는다 — 지어내지 않는다."""
-        assert parse_cert_list(WOMAN_XML, business_no="1")[0].company_name is None
+        assert parse_cert_list(WOMAN_XML, business_no="4021497692")[0].company_name is None
 
     def test_representative_name_is_not_provided(self) -> None:
         """이 API 는 대표자명을 제공하지 않는다."""
-        assert parse_cert_list(WOMAN_XML, business_no="1")[0].representative_name is None
+        assert parse_cert_list(WOMAN_XML, business_no="4021497692")[0].representative_name is None
 
     def test_no_data_returns_empty(self) -> None:
         """결과코드 03(데이터 없음)은 오류가 아니라 '유효한 확인서 없음'."""
-        assert parse_cert_list(NO_DATA_XML, business_no="1") == []
+        assert parse_cert_list(NO_DATA_XML, business_no="4021497692") == []
 
     def test_error_code_raises(self) -> None:
         with pytest.raises(ApiResponseError) as exc:
-            parse_cert_list(DENIED_XML, business_no="1")
+            parse_cert_list(DENIED_XML, business_no="4021497692")
         assert exc.value.code == "20"
 
     def test_broken_xml_raises(self) -> None:
         with pytest.raises(ApiParseError):
-            parse_cert_list("<response>", business_no="1")
+            parse_cert_list("<response>", business_no="4021497692")
 
     def test_missing_required_field_raises(self) -> None:
         broken = WOMAN_XML.replace("<validPdEndDe>20200207</validPdEndDe>", "")
         with pytest.raises(ApiParseError):
-            parse_cert_list(broken, business_no="1")
+            parse_cert_list(broken, business_no="4021497692")
+
+
+class TestBusinessNoNormalization:
+    """사업자등록번호는 기존 규칙(DECISIONS.md §3.2)과 동일하게 정규화한다."""
+
+    def test_strips_hyphens(self) -> None:
+        record = parse_cert_list(WOMAN_XML, business_no="402-14-97692")[0]
+        assert record.business_no == "4021497692"
+
+    def test_keeps_original(self) -> None:
+        record = parse_cert_list(WOMAN_XML, business_no="402-14-97692")[0]
+        assert record.business_no_original == "402-14-97692"
+
+    def test_rejects_nine_digits(self) -> None:
+        """9자리를 자동 보정하지 않는다 — 다른 기업과 잘못 연결될 위험."""
+        with pytest.raises(ApiParseError):
+            parse_cert_list(WOMAN_XML, business_no="402149769")
+
+    def test_rejects_non_numeric(self) -> None:
+        with pytest.raises(ApiParseError):
+            parse_cert_list(WOMAN_XML, business_no="ABCDEFGHIJ")
+
+    def test_checksum_warning_does_not_block(self) -> None:
+        """체크섬 오류는 경고만 남기고 저장을 막지 않는다 (D-002)."""
+        record = parse_cert_list(WOMAN_XML, business_no="1234567890")[0]
+        assert record.business_no == "1234567890"
+
+    def test_startup_response_is_normalized(self) -> None:
+        record = parse_startup_cert(STARTUP_SMPP_XML)[0]
+        assert record.business_no == "1078153660"
+
+    def test_kised_response_is_normalized(self) -> None:
+        record = parse_corporate_information_json(KISED_JSON)[0]
+        assert record.business_no == "2428602983"
+
+    def test_kised_rejects_bad_business_no(self) -> None:
+        broken = KISED_JSON.replace('"brno": "2428602983"', '"brno": "242860298"')
+        with pytest.raises(ApiParseError):
+            parse_corporate_information_json(broken)
 
 
 class TestStartupSmpp:

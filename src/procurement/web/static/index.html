@@ -317,8 +317,15 @@
 
   function fetchJson(url) {
     return fetch(url, { headers: { "Accept": "application/json" } }).then(function (res) {
-      if (!res.ok) { throw new Error(url + " 응답 오류 (HTTP " + res.status + ")"); }
-      return res.json();
+      if (res.ok) { return res.json(); }
+      // 서버가 이유(detail)를 주면 그대로 보여준다. 503(연도 귀속 기준일 미확정)
+      // 같은 상태를 "HTTP 503" 으로만 표시하면 사용자가 원인을 알 수 없다.
+      return res.json().then(function (body) {
+        var detail = body && body.detail ? String(body.detail) : "";
+        throw new Error(detail || (url + " 응답 오류 (HTTP " + res.status + ")"));
+      }, function () {
+        throw new Error(url + " 응답 오류 (HTTP " + res.status + ")");
+      });
     });
   }
 

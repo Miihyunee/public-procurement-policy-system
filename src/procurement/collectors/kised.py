@@ -28,7 +28,11 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from procurement.collectors.dates import parse_day
-from procurement.collectors.models import ApiParseError, CertificationRecord
+from procurement.collectors.models import (
+    ApiParseError,
+    CertificationRecord,
+    resolve_business_no,
+)
 
 
 def _clean(value: object) -> str | None:
@@ -45,9 +49,10 @@ def _record_from_fields(fields: Mapping[str, object]) -> CertificationRecord:
     Raises:
         ApiParseError: 필수 항목이 없거나 날짜 형식이 명세와 다른 경우.
     """
-    business_no = _clean(fields.get("brno"))
-    if business_no is None:
+    raw_business_no = _clean(fields.get("brno"))
+    if raw_business_no is None:
         raise ApiParseError("응답에 필수 항목이 없습니다: brno")
+    business_no, original, warnings = resolve_business_no(raw_business_no)
 
     issued = _clean(fields.get("confmdoc_isu_dt"))
     expires = _clean(fields.get("confmdoc_expr_dt"))
@@ -65,6 +70,8 @@ def _record_from_fields(fields: Mapping[str, object]) -> CertificationRecord:
 
     return CertificationRecord(
         business_no=business_no,
+        business_no_original=original,
+        business_no_warnings=warnings,
         valid_from=valid_from,
         valid_to=valid_to,
         certificate_number=_clean(fields.get("confmdoc_isu_no")),

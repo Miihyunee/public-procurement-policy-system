@@ -59,6 +59,10 @@ class TestDashboardPage:
         assert 'id="chart-volume"' in body
         assert 'id="chart-gauge"' in body
 
+    def test_surfaces_server_detail_on_error(self, client: TestClient) -> None:
+        """503 등의 상태를 'HTTP 503' 이 아니라 서버가 준 사유로 표시한다."""
+        assert "body.detail" in client.get("/").text
+
     def test_contains_theme_toggle(self, client: TestClient) -> None:
         """라이트/다크 전환 버튼이 존재한다."""
         assert 'id="theme-toggle"' in client.get("/").text

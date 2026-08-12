@@ -17,7 +17,7 @@ procurement.collectors.smpp
 
 .. warning::
     **여성기업·장애인기업 확인 응답에는 기업명·대표자명이 없습니다.**
-    사업자번호도 응답에 없어, 요청에 사용한 값을 그대로 넣습니다.
+    사업자번호도 응답에 없어, 요청에 사용한 값을 정규화해 넣습니다.
     ``Company`` 저장에 필요한 값을 어디서 채울지는 별도 결정 사항입니다.
 
 .. note::
@@ -30,7 +30,12 @@ from __future__ import annotations
 from xml.etree import ElementTree as ET
 
 from procurement.collectors.dates import parse_day, parse_range
-from procurement.collectors.models import ApiParseError, ApiResponseError, CertificationRecord
+from procurement.collectors.models import (
+    ApiParseError,
+    ApiResponseError,
+    CertificationRecord,
+    resolve_business_no,
+)
 
 #: 정상 응답 코드
 SUCCESS_CODE = "00"
@@ -106,7 +111,7 @@ def parse_cert_list(xml_text: str, business_no: str) -> list[CertificationRecord
     같은 파서를 사용합니다. 어느 정책인지는 ``certSeCode`` 로 구분됩니다
     (여성 ``03`` / 장애인 ``04``).
 
-    응답에는 사업자번호가 없으므로, **요청에 사용한 값**을 그대로 담습니다.
+    응답에는 사업자번호가 없으므로, **요청에 사용한 값**을 정규화해 담습니다.
 
     Args:
         xml_text: 응답 XML 문자열.
@@ -123,11 +128,15 @@ def parse_cert_list(xml_text: str, business_no: str) -> list[CertificationRecord
     if not _check_result(root):
         return []
 
+    normalized, original, warnings = resolve_business_no(business_no)
+
     records: list[CertificationRecord] = []
     for item in _items(root):
         records.append(
             CertificationRecord(
-                business_no=business_no,
+                business_no=normalized,
+                business_no_original=original,
+                business_no_warnings=warnings,
                 valid_from=parse_day(_require(item, "validPdBeginDe")),
                 valid_to=parse_day(_require(item, "validPdEndDe")),
                 cert_code=_text(item, "certSeCode"),
@@ -166,9 +175,12 @@ def parse_startup_cert(xml_text: str) -> list[CertificationRecord]:
     records: list[CertificationRecord] = []
     for item in _items(root):
         valid_from, valid_to = parse_range(_require(item, "validPdDe"))
+        normalized, original, warnings = resolve_business_no(_require(item, "bsnmNo"))
         records.append(
             CertificationRecord(
-                business_no=_require(item, "bsnmNo"),
+                business_no=normalized,
+                business_no_original=original,
+                business_no_warnings=warnings,
                 valid_from=valid_from,
                 valid_to=valid_to,
                 company_name=_text(item, "entrpsNm"),
