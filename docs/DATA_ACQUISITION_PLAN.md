@@ -111,13 +111,54 @@
 | 정책 | 필요한 데이터 | 현재 공급원 | API 키 필요 | 현재 상태 |
 |---|---|---|---|---|
 | **중소기업** | 중소기업 확인 정보 | 중소벤처24 (중소벤처기업부/TIPA) | ✅ 필요 | ❌ **미확보(미신청)** |
-| **여성기업** | 여성기업 확인 정보 | 공공구매종합정보망(SMPP) | ✅ 필요 | ❌ **미확보(미발급)** |
-| **장애인기업** | 장애인기업 확인 정보 | 공공구매종합정보망(SMPP) — **여성기업과 동일 API** | ✅ 필요 | ❌ **미확보(미발급)** |
-| **창업기업** | 창업기업 확인 정보 | 창업진흥원 (공공데이터포털) | ✅ 필요 | ❌ **미확보(미발급)** |
+| **여성기업** | 여성기업 확인 정보 | 공공구매종합정보망(SMPP) `getFnrssList` | ✅ 필요 | ✅ **확보** |
+| **장애인기업** | 장애인기업 확인 정보 | 공공구매종합정보망(SMPP) `getDspsnList` — **여성기업과 동일 서비스** | ✅ 필요 | ✅ **확보** |
+| **창업기업** | 창업기업 확인 정보 | 창업진흥원 `kisedCertService` **또는** SMPP `smppKiCertInfo` (2종 확보) | ✅ 필요 | ✅ **확보** |
 | **녹색제품** | 별도 기준 / 제품정보 | **공식 자료 확인 필요** | 🔴 **미정** | ⛔ **보류** |
 
-> ⚠️ **각 API 가 실제로 어떤 필드를 제공하는지는 이 문서에 기재하지 않는다.**
-> 공식 API 문서 또는 실제 응답을 확인한 뒤에만 기록한다.
+> 🔴 **중소기업 확인 API 는 여전히 미확보다.** 확보한 5종 어디에도 중소기업 확인
+> 기능이 없다. 현재 계산 경로가 완성된 유일한 정책이므로 최우선 항목이다.
+
+### 2.2.0 확인된 응답 필드 (공식 명세서 근거, 2026-08-12)
+
+> 출처: 각 API 의 "공공데이터 오픈API 활용가이드" / "서비스설계서 v1.0".
+> **명세서에 실린 항목만 기재했다.** 추측한 항목은 없다.
+
+| API (상세기능) | 요청 | 유효기간 | 기업명 | 대표자명 | 기타 |
+|---|---|---|---|---|---|
+| `smppCertInfo/getFnrssList` (여성) | `bsnmNo` + **`stdrDate` 필수** | `validPdBeginDe` · `validPdEndDe` (YYYYMMDD) | ❌ | ❌ | `issuInstt`(인증기관) · `certSeCode`=03 |
+| `smppCertInfo/getDspsnList` (장애인) | `bsnmNo` + **`stdrDate` 필수** | 〃 | ❌ | ❌ | `certSeCode`=04 |
+| `smppKiCertInfo/getKiCertInfo` (창업) | `bsnmNo` | `validPdDe` — **범위 문자열** `2022.04.07 ~ 2025.04.06` | ✅ `entrpsNm` | ✅ `rprsntvNm` | `adres` · `minduty` · `earlyValidPdDe` |
+| `kisedCertService/getCorporateInformation` (창업) | `brno` **옵션**(전량 조회 가능) | `confmdoc_isu_dt` · `confmdoc_expr_dt` (YYYY-MM-DD) | ✅ `ntrp_nm` | ✅ `repr_nm` | `confmdoc_isu_no`(발급번호) · JSON/XML 지원 |
+| `smppPfCertInfo` (성능인증) | `bsnmNo` | `validDe` — `20220408 - 20240407` | ✅ | ✅ | **현재 정책 범위 밖** |
+| `smppWnCertInfo` (상생협력) | `bsnmNo` | `sportPd` — `20201012 ~ 20231011` | ✅ | ✅ | **현재 정책 범위 밖** |
+
+**공통 사항**
+
+| 항목 | 값 |
+|---|---|
+| 인증 | `serviceKey` (URL Encode) |
+| 형식 | SMPP 4종 **XML 전용** / 창업진흥원 JSON·XML |
+| 갱신주기 | 일 1회 |
+| 성능 | 30 TPS · 평균 500ms · 최대 메시지 4000 byte |
+| 오류 | `03` 데이터없음 / `20` 승인 안됨 / `22` 일일 한도 초과 / `30` 키 오류 / **`32` 등록되지 않은 IP·도메인** |
+
+> ⚠️ **오류 32 주의**: 활용신청한 서버 IP 와 실제 호출 서버가 다르면 거부된다. 배포 환경 IP 를 등록해야 한다.
+
+### 2.2.0.1 🔴 확인된 제약 — 여성·장애인 API 는 기업 정보를 주지 않는다
+
+`getFnrssList` · `getDspsnList` 응답에는 **기업명·대표자명·사업자번호가 없다.**
+유효기간과 인증기관만 온다. 따라서 이 두 정책은 API 만으로 `Company` 를 만들 수 없다.
+
+| 필요 값 | 확보 경로 |
+|---|---|
+| `business_no` | 요청에 사용한 값을 그대로 사용 (구매데이터에서 옴) |
+| `company_name` | **구매데이터의 공급업체명** 사용 가능 |
+| `representative_name` | ❌ **없음** → `Company.representative_name` 필수 제약(B-4) 해소 필요 |
+
+> ⚠️ **`stdrDate`(기준일자)가 필수**다. "유효확인서를 확인할 기준일자" 이므로,
+> 어느 시점을 넣느냐에 따라 조회 결과가 달라질 수 있다. 어떤 기준일로 조회할지는
+> **실제 호출로 동작을 확인한 뒤** 정한다. 추측하지 않는다.
 
 ### 2.2.1 시스템이 저장할 수 있는 형태 (코드 실측)
 
@@ -171,7 +212,7 @@
 | **테스트 환경 제공 여부** | **확인 필요** | **확인 필요** | **확인 필요** |
 | **환경변수(제안)** | `SME_API_KEY` | `SMPP_API_KEY` | `STARTUP_API_KEY` |
 | **문의처** | 042-388-0370 / 0371, smeshelp@tipa.or.kr | 공공데이터포털 문의 | 공공데이터포털 문의 |
-| **현재 상태** | ❌ **미신청** | ❌ **미발급** | ❌ **미발급** |
+| **현재 상태** | ❌ **미신청** | ✅ **발급 완료** (2026-08-12) | ✅ **발급 완료** (2026-08-12) |
 
 > API 3개이나 대상 정책은 4개다. **SMPP 하나로 여성기업·장애인기업 2종을 커버**한다.
 
@@ -180,8 +221,17 @@
 | 항목 | 내용 |
 |---|---|
 | 인증키 | 위 환경변수에 주입 (**`.env` 에만**) |
-| 요청 엔드포인트 URL | 승인 후 전달받음 |
-| 조회 조건 | **확인 필요** — 사업자등록번호로 조회 가능한지 응답 확인 후 확정 |
+| 요청 엔드포인트 URL | **확인됨** — 아래 |
+| 조회 조건 | **확인됨** — 6종 전부 사업자등록번호로 조회 가능 |
+
+| API | 엔드포인트 |
+|---|---|
+| 여성기업 | `http://apis.data.go.kr/B550598/smppCertInfo/getFnrssList` |
+| 장애인기업 | `http://apis.data.go.kr/B550598/smppCertInfo/getDspsnList` |
+| 창업기업(SMPP) | `http://apis.data.go.kr/B550598/smppKiCertInfo/getKiCertInfo` |
+| 창업기업(창업진흥원) | `https://apis.data.go.kr/B552735/kisedCertService/getCorporateInformation` |
+| 성능인증 | `http://apis.data.go.kr/B550598/smppPfCertInfo/getPfCertInfo` |
+| 상생협력 | `http://apis.data.go.kr/B550598/smppWnCertInfo/getWnCertInfo` |
 
 ## 3.3 신청 시 함께 준비할 정보 (공통)
 
