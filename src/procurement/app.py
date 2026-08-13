@@ -56,8 +56,11 @@ from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.web import (
+    AchievementLevelsResponseModel,
     PolicyDisplayResponseModel,
+    build_achievement_levels_response,
     build_policy_display_response,
+    parse_thresholds,
     read_index_html,
 )
 
@@ -209,6 +212,7 @@ def create_app(
         else settings.PURCHASE_PERIOD_DATE_FIELD
     )
     data_status_api = build_data_status_api(db_path, data_mode, date_field)
+    thresholds = parse_thresholds(settings.DASHBOARD_ACHIEVEMENT_DISPLAY_THRESHOLDS)
     token = admin_token if admin_token is not None else settings.ADMIN_API_TOKEN
     require_admin_token = build_admin_token_guard(token)
 
@@ -288,6 +292,25 @@ def create_app(
         않습니다. 화면이 "계산 가능"과 "계산 보류"를 구분하기 위해 사용합니다.
         """
         return build_policy_display_response()
+
+    @app.get(
+        "/dashboard/achievement-levels",
+        response_model=AchievementLevelsResponseModel,
+        summary="달성률 표시 구간표 조회(화면 표시 전용)",
+        tags=["dashboard"],
+    )
+    def get_achievement_levels() -> AchievementLevelsResponseModel:
+        """달성률을 화면에 어떻게 구분해 보여줄지 정한 구간표를 반환합니다.
+
+        .. danger::
+            **법정 기준이 아닙니다.** 화면 UX 확인용 임시 표시 기준이며, 정책
+            판정·계산에 사용되지 않습니다. 기존 응답의 ``status`` 와는 별개
+            체계입니다(:mod:`procurement.web.achievement_display`).
+
+        경계값은 설정 ``DASHBOARD_ACHIEVEMENT_DISPLAY_THRESHOLDS`` 로 바꿀 수
+        있으며, 화면은 이 응답만 보고 그리므로 코드 수정이 필요 없습니다.
+        """
+        return build_achievement_levels_response(thresholds)
 
     @app.get(
         "/",

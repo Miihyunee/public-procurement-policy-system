@@ -272,6 +272,11 @@
 (function () {
   "use strict";
 
+  // 표시 전용 구간 색(낮은 구간 → 높은 구간). 기존 상태 색과 별개 체계다.
+  var LEVEL_COLOR = [
+    "#e11d48", "#f97316", "#eab308", "#84cc16", "#22c55e", "#14b8a6"
+  ];
+
   var THEME_KEY = "procurement.dashboard.theme";
   var SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -494,10 +499,11 @@
       state.className += " st-TARGET_RATE_NOT_SET";
       text(state, item.status_label);
     } else {
-      value.className += " st-" + item.status;
+      var level = levelOf(item.achievement_rate);
       text(value, item.achievement_rate + "%");
-      state.className += " st-" + item.status;
-      text(state, "달성률 · " + item.status_label);
+      value.style.color = levelColor(level);
+      text(state, "달성률 · " + (level ? level.label : item.status_label));
+      state.style.color = levelColor(level);
     }
     card.appendChild(value);
     card.appendChild(state);
@@ -599,7 +605,8 @@
 
     var tbody = document.createElement("tbody");
     rows.forEach(function (item, index) {
-      var color = cssVar("--" + item.status.toLowerCase()) || cssVar("--accent");
+      var level = levelOf(item.achievement_rate);
+      var color = levelColor(level);
       var tr = document.createElement("tr");
       tr.appendChild(make("td", "idx", ("0" + (index + 1)).slice(-2)));
       tr.appendChild(make("td", null, item.policy_name));
@@ -615,6 +622,7 @@
 
       var valCell = make("td", "val");
       var pill = make("span", "pill", item.achievement_rate + "%");
+      pill.title = level ? level.label : "";
       pill.style.color = color;
       valCell.appendChild(pill);
       tr.appendChild(valCell);
@@ -623,11 +631,30 @@
     });
     table.appendChild(tbody);
     container.appendChild(table);
+    container.appendChild(buildLevelLegend());
 
     if (skipped) {
       container.appendChild(make("p", "foot-note",
         "표시 제외 " + skipped + "종 — 목표율 미설정 또는 계산 보류."));
     }
+  }
+
+  /** 표시 구간 범례. 법정 기준이 아님을 함께 밝힌다. */
+  function buildLevelLegend() {
+    var wrap = make("div");
+    if (!levels) { return wrap; }
+    var row = make("div", "legend");
+    levels.items.forEach(function (item, index) {
+      var span = make("span");
+      var dot = make("i");
+      dot.style.background = LEVEL_COLOR[index];
+      span.appendChild(dot);
+      span.appendChild(document.createTextNode(item.label));
+      row.appendChild(span);
+    });
+    wrap.appendChild(row);
+    wrap.appendChild(make("p", "foot-note", levels.notice));
+    return wrap;
   }
 
   // ------------------------------------------------- 차트 2 · 적재 건수
@@ -740,6 +767,30 @@
   // ------------------------------------------------------------------ 로드
   var lastData = null;
 
+  //: 서버가 내려준 표시 구간표. 경계값을 화면에 하드코딩하지 않는다.
+  var levels = null;
+
+  /** 달성률을 표시 구간으로 변환한다(서버가 준 경계만 사용). */
+  function levelOf(rate) {
+    if (!levels) { return null; }
+    if (rate === null || rate === undefined) {
+      return { code: levels.not_calculated_code, label: levels.not_calculated_label,
+               index: null };
+    }
+    var value = parseFloat(rate);
+    var picked = levels.items[0];
+    var index = 0;
+    levels.items.forEach(function (item, i) {
+      if (value >= parseFloat(item.min_rate)) { picked = item; index = i; }
+    });
+    return { code: picked.code, label: picked.label, index: index };
+  }
+
+  function levelColor(level) {
+    if (!level || level.index === null) { return cssVar("--unset"); }
+    return LEVEL_COLOR[level.index] || cssVar("--accent");
+  }
+
   function draw(status, summaryResult, displayMap) {
     renderKpi(status);
     renderStatusTable(status);
@@ -786,11 +837,13 @@
         function (body) { return { ok: true, body: body }; },
         function (err) { return { ok: false, reason: err.message }; }
       ),
-      fetchJson("/dashboard/policy-display")
+      fetchJson("/dashboard/policy-display"),
+      fetchJson("/dashboard/achievement-levels")
     ])
       .then(function (results) {
         var displayMap = {};
         results[2].items.forEach(function (item) { displayMap[item.policy_code] = item; });
+        levels = results[3];
         lastData = [results[0], results[1], displayMap];
         draw(results[0], results[1], displayMap);
       })

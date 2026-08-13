@@ -85,6 +85,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    DASHBOARD_ACHIEVEMENT_DISPLAY_THRESHOLDS: str | None = Field(
+        default=None,
+        description=(
+            "Dashboard 달성률 표시 구간 경계(%). 쉼표로 구분한 5개 값. "
+            "예: '20,40,60,80,100'. 미설정이면 기본값을 사용한다. "
+            "⚠️ 법정 기준이 아니라 화면 표시용 임시 기준이며, 계산·판정에 "
+            "사용되지 않는다."
+        ),
+    )
+
     PURCHASE_PERIOD_DATE_FIELD: Literal["payment_date", "contract_date"] | None = Field(
         default=None,
         description=(
