@@ -137,7 +137,11 @@ def _purchase_row(**overrides: object) -> dict[str, Any]:
 
 def _dashboard(db_path: Path) -> dict[str, Any]:
     """Dashboard API 응답을 정책코드로 조회 가능한 형태로 돌려줍니다."""
-    payload: dict[str, Any] = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+    payload: dict[str, Any] = (
+        TestClient(create_app(db_path, period_date_field="payment_date"))
+        .get("/dashboard/summary?year=2026")
+        .json()
+    )
     payload["by_code"] = {item["policy_code"]: item for item in payload["policies"]}
     return payload
 
@@ -260,9 +264,7 @@ class TestScenarioCStartupUsesContractDate:
     def prepared(self, db_path: Path, importer: PurchaseImporter) -> Path:
         company_id = _register_company(db_path)
         policy_id = _register_policy(db_path, self.POLICY)
-        _register_certification(
-            db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
-        )
+        _register_certification(db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30))
         importer.import_rows(
             [
                 # ① 계약일 유효 / 지급일 만료 후 → 계약일 기준이므로 인정
@@ -315,12 +317,8 @@ class TestScenarioDExpiredCertification:
     def prepared(self, db_path: Path, importer: PurchaseImporter) -> Path:
         company_id = _register_company(db_path)
         policy_id = _register_policy(db_path, self.POLICY)
-        _register_certification(
-            db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
-        )
-        importer.import_rows(
-            [_purchase_row(payment_date="2026-08-01", amount="5000000")]
-        )
+        _register_certification(db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30))
+        importer.import_rows([_purchase_row(payment_date="2026-08-01", amount="5000000")])
         return db_path
 
     def test_expired_purchase_is_excluded_from_policy(self, prepared: Path) -> None:
@@ -336,12 +334,8 @@ class TestScenarioDExpiredCertification:
         """유효기간 마지막 날(경계값)은 포함됩니다."""
         company_id = _register_company(db_path)
         policy_id = _register_policy(db_path, self.POLICY)
-        _register_certification(
-            db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
-        )
-        importer.import_rows(
-            [_purchase_row(payment_date="2026-06-30", amount="5000000")]
-        )
+        _register_certification(db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30))
+        importer.import_rows([_purchase_row(payment_date="2026-06-30", amount="5000000")])
         item = _dashboard(db_path)["by_code"]["SMALL_BUSINESS"]
         assert item["purchase_amount"] == "5000000"
 

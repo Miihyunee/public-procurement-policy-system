@@ -217,11 +217,14 @@ class TestPolicyDisplayMap:
 class TestExistingEndpointsUnchanged:
     """기존 API 가 그대로 동작한다."""
 
-    def test_summary_still_returns_200(self, client: TestClient) -> None:
-        assert client.get("/dashboard/summary").status_code == 200
+    def test_summary_requires_year(self, client: TestClient) -> None:
+        """연도 미지정은 400 (D-27) — 전 기간을 임의로 합산하지 않는다."""
+        assert client.get("/dashboard/summary").status_code == 400
 
-    def test_summary_shape_unchanged(self, client: TestClient) -> None:
-        body = client.get("/dashboard/summary").json()
+    def test_summary_shape_unchanged(self, db_path: Path) -> None:
+        """연도를 주면 응답 구조는 기존과 동일하다."""
+        client = TestClient(create_app(db_path, period_date_field="payment_date"))
+        body = client.get("/dashboard/summary?year=2026").json()
         assert set(body) == {"total_purchase_amount", "policies"}
 
     def test_summary_has_no_period_fields(self, client: TestClient) -> None:

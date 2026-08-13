@@ -747,9 +747,9 @@
     // (기준일이 확정되지 않은 상태에서 연도별 숫자를 만들지 않기 위함)
     fetchJson("/dashboard/data-status?year=" + encodeURIComponent(year))
       .then(function (status) {
-        var summaryUrl = status.period_filter_available
-          ? "/dashboard/summary?year=" + encodeURIComponent(year)
-          : "/dashboard/summary";
+        // 연도는 항상 보낸다. 연도 없는 요청은 400 이며(D-27), 전 기간 합산은
+        // 제공되지 않는다. 기준일이 미확정이면 서버가 503 과 사유를 돌려준다.
+        var summaryUrl = "/dashboard/summary?year=" + encodeURIComponent(year);
         return Promise.all([
           status,
           fetchJson(summaryUrl),

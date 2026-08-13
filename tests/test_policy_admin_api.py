@@ -46,7 +46,7 @@ def db_path(tmp_path: Path) -> Path:
 @pytest.fixture
 def client(db_path: Path) -> TestClient:
     """관리자 토큰이 설정된 앱의 테스트 클라이언트."""
-    return TestClient(create_app(db_path, admin_token=TEST_TOKEN))
+    return TestClient(create_app(db_path, admin_token=TEST_TOKEN, period_date_field="payment_date"))
 
 
 def _put(client: TestClient, code: str, payload: object) -> Response:
@@ -86,7 +86,9 @@ class TestListPolicies:
 
     def test_does_not_require_admin_token(self, db_path: Path) -> None:
         """조회는 관리자 인증 대상이 아닙니다(토큰 미설정 환경에서도 동작)."""
-        response = TestClient(create_app(db_path)).get("/policies")
+        response = TestClient(create_app(db_path, period_date_field="payment_date")).get(
+            "/policies"
+        )
         assert response.status_code == 200
 
 
@@ -166,7 +168,9 @@ class TestUpdateValidation:
         PolicyRepository(db_path).insert(
             Policy(policy_code="OFF", policy_name="폐지", is_active=False)
         )
-        client = TestClient(create_app(db_path, admin_token=TEST_TOKEN))
+        client = TestClient(
+            create_app(db_path, admin_token=TEST_TOKEN, period_date_field="payment_date")
+        )
 
         assert _put(client, "OFF", {"target_rate": "10"}).status_code == 422
 
@@ -204,7 +208,7 @@ class TestAdminAuth:
 
     def test_write_disabled_without_token_is_503(self, db_path: Path) -> None:
         """토큰이 설정되지 않으면 쓰기 API 는 비활성입니다."""
-        client = TestClient(create_app(db_path))
+        client = TestClient(create_app(db_path, period_date_field="payment_date"))
 
         response = client.put(
             "/policies/SMALL_BUSINESS/target-rate",
@@ -216,10 +220,10 @@ class TestAdminAuth:
 
     def test_read_apis_work_without_token(self, db_path: Path) -> None:
         """토큰 미설정 환경에서도 조회 API 2종은 정상 동작합니다."""
-        client = TestClient(create_app(db_path))
+        client = TestClient(create_app(db_path, period_date_field="payment_date"))
 
         assert client.get("/policies").status_code == 200
-        assert client.get("/dashboard/summary").status_code == 200
+        assert client.get("/dashboard/summary?year=2026").status_code == 200
 
 
 class TestDashboardIntegration:
@@ -263,15 +267,17 @@ class TestDashboardIntegration:
 
     def test_status_changes_after_target_rate_is_registered(self, seeded: Path) -> None:
         """목표율 등록 전에는 TARGET_RATE_NOT_SET, 등록 후에는 계산 상태입니다."""
-        client = TestClient(create_app(seeded, admin_token=TEST_TOKEN))
+        client = TestClient(
+            create_app(seeded, admin_token=TEST_TOKEN, period_date_field="payment_date")
+        )
 
-        before = client.get("/dashboard/summary").json()
+        before = client.get("/dashboard/summary?year=2026").json()
         item = {p["policy_code"]: p for p in before["policies"]}["SMALL_BUSINESS"]
         assert item["status"] == "TARGET_RATE_NOT_SET"
 
         _put(client, "SMALL_BUSINESS", {"target_rate": "50"})
 
-        after = client.get("/dashboard/summary").json()
+        after = client.get("/dashboard/summary?year=2026").json()
         item = {p["policy_code"]: p for p in after["policies"]}["SMALL_BUSINESS"]
         assert item["status"] != "TARGET_RATE_NOT_SET"
         assert item["target_rate"] == "50"
@@ -279,12 +285,14 @@ class TestDashboardIntegration:
 
     def test_reset_returns_to_not_set(self, seeded: Path) -> None:
         """해제하면 다시 목표율 미설정 상태로 돌아갑니다."""
-        client = TestClient(create_app(seeded, admin_token=TEST_TOKEN))
+        client = TestClient(
+            create_app(seeded, admin_token=TEST_TOKEN, period_date_field="payment_date")
+        )
         _put(client, "SMALL_BUSINESS", {"target_rate": "50"})
 
         _put(client, "SMALL_BUSINESS", {"target_rate": None})
 
-        payload = client.get("/dashboard/summary").json()
+        payload = client.get("/dashboard/summary?year=2026").json()
         item = {p["policy_code"]: p for p in payload["policies"]}["SMALL_BUSINESS"]
         assert item["status"] == "TARGET_RATE_NOT_SET"
         assert item["target_rate"] is None
@@ -294,7 +302,7 @@ class TestExistingBehaviourPreserved:
     """기존 API·예외 처리에 영향이 없는지 확인합니다."""
 
     def test_dashboard_endpoint_still_works(self, client: TestClient) -> None:
-        assert client.get("/dashboard/summary").status_code == 200
+        assert client.get("/dashboard/summary?year=2026").status_code == 200
 
     def test_no_new_global_exception_handlers(self, db_path: Path) -> None:
         """전역 예외 처리 방식을 바꾸지 않았습니다.
@@ -307,7 +315,7 @@ class TestExistingBehaviourPreserved:
         from procurement.calculators.procurement_achievement import CalculatorValidationError
         from procurement.database.policy_repository import PolicyValidationError
 
-        app = create_app(db_path, admin_token=TEST_TOKEN)
+        app = create_app(db_path, admin_token=TEST_TOKEN, period_date_field="payment_date")
         registered = set(app.exception_handlers)
 
         assert CalculatorValidationError in registered

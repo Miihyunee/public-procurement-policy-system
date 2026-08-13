@@ -225,13 +225,19 @@ class TestDashboardAfterBootstrap:
 
     def test_summary_returns_200(self, db_path: Path) -> None:
         bootstrap(db_path)
-        response = TestClient(create_app(db_path)).get("/dashboard/summary")
+        response = TestClient(create_app(db_path, period_date_field="payment_date")).get(
+            "/dashboard/summary?year=2026"
+        )
         assert response.status_code == 200
 
     def test_seeded_policies_are_shown_as_target_rate_not_set(self, db_path: Path) -> None:
         """초기화 직후 5종이 모두 '목표율 미설정'으로 표시됩니다(0% 처리 아님)."""
         bootstrap(db_path)
-        payload = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+        payload = (
+            TestClient(create_app(db_path, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         assert payload["total_purchase_amount"] == "0"
         assert {item["policy_code"] for item in payload["policies"]} == EXPECTED_CODES
         for item in payload["policies"]:
@@ -249,7 +255,11 @@ class TestDashboardAfterBootstrap:
                 "UPDATE policy SET target_rate = ? WHERE policy_code = ?",
                 ("50", "SMALL_BUSINESS"),
             )
-        payload = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+        payload = (
+            TestClient(create_app(db_path, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         by_code = {item["policy_code"]: item for item in payload["policies"]}
 
         # 목표율을 등록한 정책만 계산 상태로 바뀐다.

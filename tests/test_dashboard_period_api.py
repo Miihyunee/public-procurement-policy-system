@@ -90,17 +90,30 @@ def client_with_payment_date(db_path: Path) -> TestClient:
 
 
 class TestWithoutYear:
-    """``year`` 생략 — 기존 동작을 유지한다."""
+    """``year`` 생략 — **400** (D-27). 전 기간을 임의로 합산하지 않는다.
 
-    def test_returns_200(self, client_without_date_field: TestClient) -> None:
-        assert client_without_date_field.get("/dashboard/summary").status_code == 200
+    이전에는 200 + 전 기간 합산이었으나, PM 이 D-27 을 적용하도록 결정해
+    동작이 바뀌었습니다. 이 클래스는 그 결정에 대한 회귀 테스트입니다.
+    """
 
-    def test_sums_all_periods(self, client_without_date_field: TestClient) -> None:
-        body = client_without_date_field.get("/dashboard/summary").json()
-        assert body["total_purchase_amount"] == "1500"
+    def test_returns_400(self, client_without_date_field: TestClient) -> None:
+        assert client_without_date_field.get("/dashboard/summary").status_code == 400
 
-    def test_response_shape_unchanged(self, client_without_date_field: TestClient) -> None:
-        body = client_without_date_field.get("/dashboard/summary").json()
+    def test_does_not_sum_all_periods(self, client_with_payment_date: TestClient) -> None:
+        """기준일이 설정되어 있어도 연도를 생략하면 합산값을 주지 않는다."""
+        response = client_with_payment_date.get("/dashboard/summary")
+        assert response.status_code == 400
+        assert "total_purchase_amount" not in response.json()
+
+    def test_message_explains_reason(self, client_without_date_field: TestClient) -> None:
+        detail = client_without_date_field.get("/dashboard/summary").json()["detail"]
+        assert "D-27" in detail
+
+    def test_response_shape_unchanged_when_year_given(
+        self, client_with_payment_date: TestClient
+    ) -> None:
+        """연도를 주면 응답 구조는 기존과 동일하다."""
+        body = client_with_payment_date.get("/dashboard/summary?year=2026").json()
         assert set(body) == {"total_purchase_amount", "policies"}
 
 

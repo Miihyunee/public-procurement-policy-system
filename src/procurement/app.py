@@ -20,9 +20,10 @@ FastAPI 애플리케이션과 **의존성 조립(composition root)** 을 정의�
     있습니다.
 
 .. warning::
-    **기간(연도) 필터는 아직 구현되지 않았습니다.** 모든 조회는 전체 데이터
-    기준이며, 화면의 연도 선택은 응답에 되돌려 주기만 합니다. 연도별 집계·중복
-    적재 방지는 D-23 ~ D-27 확정 후 별도 Issue 에서 다룹니다.
+    ``GET /dashboard/summary`` 는 **대상 연도(``year``)가 필수**입니다(**D-27**).
+    연도를 생략하면 400 으로 거부하며, 전 기간을 임의로 합산한 값을 돌려주지
+    않습니다. 어느 날짜로 연도를 나눌지(**D-24**)는 아직 확정되지 않았으므로,
+    설정값 ``PURCHASE_PERIOD_DATE_FIELD`` 가 없으면 503 으로 거부합니다.
 """
 
 from __future__ import annotations
@@ -141,22 +142,29 @@ def build_data_status_api(
     return DataStatusApiService(status_service, mode, date_field)
 
 
-def _resolve_period(year: int | None, date_field: str | None) -> PeriodFilter | None:
-    """연도 요청을 기간 조건으로 변환합니다.
+def _require_period(year: int | None, date_field: str | None) -> PeriodFilter:
+    """연도 요청을 기간 조건으로 변환합니다(연도 **필수**).
 
     Args:
-        year: 요청된 연도. ``None`` 이면 기간 조건을 만들지 않습니다.
+        year: 요청된 연도. ``None`` 이면 400 으로 거부합니다.
         date_field: 기간 판정에 사용할 날짜 컬럼. ``None`` 이면 사용할 수 없습니다.
 
     Returns:
-        :class:`PeriodFilter`. ``year`` 가 ``None`` 이면 ``None``.
+        :class:`PeriodFilter`.
 
     Raises:
-        HTTPException: ``year`` 를 지정했으나 ``date_field`` 가 설정되지 않은 경우
-            **503**. 연도 귀속 기준일(D-24)이 확정되지 않아 계산할 수 없습니다.
+        HTTPException: ``year`` 미지정 시 **400**(D-27 — 전 기간 합산 금지).
+            ``year`` 를 지정했으나 ``date_field`` 가 설정되지 않은 경우 **503**
+            (D-24 미확정 — 임의의 기준일로 계산하지 않음).
     """
     if year is None:
-        return None
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "대상 연도(year)를 지정해야 합니다. 전 기간을 합산한 값은 "
+                "어느 기간의 실적인지 알 수 없으므로 제공하지 않습니다(D-27)."
+            ),
+        )
     if date_field is None:
         raise HTTPException(
             status_code=503,
@@ -222,22 +230,25 @@ def create_app(
             ge=1900,
             le=2999,
             description=(
-                "대상 회계연도(1/1 ~ 12/31, D-23). 생략하면 **전 기간 합산**으로 "
-                "기존과 동일하게 동작합니다."
+                "대상 회계연도(1/1 ~ 12/31, D-23). **필수입니다.** 생략하면 400 으로 "
+                "거부합니다(D-27) — 전 기간을 임의로 합산하지 않습니다."
             ),
         ),
     ) -> DashboardResponseModel:
         """시스템에 등록된 목표율 기반 대시보드 요약을 반환합니다.
 
-        ``year`` 를 지정하면 해당 회계연도(1/1 ~ 12/31)의 구매만 집계합니다.
-        기간 조건은 **분모(전체 구매액)와 분자(정책 구매액)에 동일하게** 적용되며,
-        계산 공식 자체는 변경되지 않습니다.
+        해당 회계연도(1/1 ~ 12/31, **D-23**)의 구매만 집계합니다. 기간 조건은
+        **분모(전체 구매액)와 분자(정책 구매액)에 동일하게** 적용되며, 계산 공식
+        자체는 변경되지 않습니다.
 
-        ``year`` 를 지정했는데 기간 판정 기준일이 설정되지 않았다면 **503** 으로
-        거부합니다. 어느 날짜로 연도를 나눌지는 D-24(미확정)이며, 임의의 기준일로
-        숫자를 만들지 않기 위한 조치입니다.
+        오류 응답은 두 가지입니다.
+
+        - ``year`` **미지정 → 400** (**D-27**). 전 기간을 임의로 합산해
+          돌려주지 않습니다. 어느 기간의 숫자인지 모호한 값을 만들지 않기 위함입니다.
+        - ``year`` 지정 + 기간 판정 기준일 미설정 → **503**. 어느 날짜로 연도를
+          나눌지는 **D-24(미확정)** 이며, 임의의 기준일로 숫자를 만들지 않습니다.
         """
-        return dashboard_api.get_dashboard(_resolve_period(year, date_field))
+        return dashboard_api.get_dashboard(_require_period(year, date_field))
 
     @app.get(
         "/dashboard/data-status",

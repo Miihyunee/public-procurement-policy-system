@@ -83,7 +83,7 @@ def _seed(db_path: Path, target_rate: Decimal | None) -> None:
 
 @pytest.fixture
 def client(db_path: Path) -> TestClient:
-    return TestClient(create_app(db_path))
+    return TestClient(create_app(db_path, period_date_field="payment_date"))
 
 
 class TestCompositionRoot:
@@ -99,7 +99,7 @@ class TestDashboardSummaryEndpoint:
     def test_registered_target_rate(self, client: TestClient, db_path: Path) -> None:
         """등록 목표율 50% 기준으로 요약 JSON 이 반환됩니다."""
         _seed(db_path, target_rate=Decimal("50"))
-        response = client.get("/dashboard/summary")
+        response = client.get("/dashboard/summary?year=2026")
         assert response.status_code == 200
         payload = response.json()
         assert payload["total_purchase_amount"] == "10000000"
@@ -114,16 +114,14 @@ class TestDashboardSummaryEndpoint:
 
     def test_decimal_fields_are_strings(self, client: TestClient, db_path: Path) -> None:
         _seed(db_path, target_rate=Decimal("50"))
-        item = client.get("/dashboard/summary").json()["policies"][0]
+        item = client.get("/dashboard/summary?year=2026").json()["policies"][0]
         for key in ("purchase_amount", "target_rate", "achievement_rate", "shortage_rate"):
             assert isinstance(item[key], str)
 
-    def test_excludes_policy_without_target_rate(
-        self, client: TestClient, db_path: Path
-    ) -> None:
+    def test_excludes_policy_without_target_rate(self, client: TestClient, db_path: Path) -> None:
         """목표율이 없는 정책도 응답에 포함되며 '목표율 미설정'으로 표시됩니다."""
         _seed(db_path, target_rate=None)
-        payload = client.get("/dashboard/summary").json()
+        payload = client.get("/dashboard/summary?year=2026").json()
         assert payload["total_purchase_amount"] == "10000000"
         assert len(payload["policies"]) == 1
 
@@ -137,7 +135,7 @@ class TestDashboardSummaryEndpoint:
 
     def test_empty_database(self, client: TestClient) -> None:
         """데이터가 없으면 전체 구매액 0, 정책 요약은 빈 목록입니다."""
-        payload = client.get("/dashboard/summary").json()
+        payload = client.get("/dashboard/summary?year=2026").json()
         assert payload["total_purchase_amount"] == "0"
         assert payload["policies"] == []
 

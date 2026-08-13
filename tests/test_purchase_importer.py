@@ -90,9 +90,7 @@ class TestImportNormalValues:
         assert purchase.payment_date == date(2026, 3, 15)
         assert purchase.amount == Decimal("3000000")  # 콤마·단위 제거
 
-    @pytest.mark.parametrize(
-        "value", ["2026-03-01", "20260301", "2026/03/01", "2026.03.01"]
-    )
+    @pytest.mark.parametrize("value", ["2026-03-01", "20260301", "2026/03/01", "2026.03.01"])
     def test_accepts_date_formats(
         self, importer: PurchaseImporter, db_path: Path, value: str
     ) -> None:
@@ -234,9 +232,7 @@ class TestImportWarnings:
     ) -> None:
         """계약일이 지급일보다 늦어도 거부하지 않습니다(선지급 가능)."""
         _add_company(db_path)
-        report = importer.import_rows(
-            [_row(contract_date="2026-05-01", payment_date="2026-03-15")]
-        )
+        report = importer.import_rows([_row(contract_date="2026-05-01", payment_date="2026-03-15")])
         assert report.stored_count == 1
         assert any("계약일" in message for message in report.rows[0].messages)
 
@@ -374,7 +370,11 @@ class TestImportToDashboardEndToEnd:
         assert report.stored_count == 2
         assert report.matched_count == 1
 
-        payload = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+        payload = (
+            TestClient(create_app(db_path, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         assert payload["total_purchase_amount"] == "10000000"
 
         item = {p["policy_code"]: p for p in payload["policies"]}["SMALL_BUSINESS"]
@@ -398,7 +398,11 @@ class TestImportToDashboardEndToEnd:
         importer.import_rows(
             [_row(amount="5000000"), _row(business_no="9999999999", amount="5000000")]
         )
-        before = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+        before = (
+            TestClient(create_app(db_path, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         assert {p["policy_code"]: p for p in before["policies"]}["SMALL_BUSINESS"][
             "purchase_amount"
         ] == "0"
@@ -416,7 +420,11 @@ class TestImportToDashboardEndToEnd:
 
         # ③ 재매칭 → 달성률 반영
         assert importer.rematch() == 1
-        after = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+        after = (
+            TestClient(create_app(db_path, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         item = {p["policy_code"]: p for p in after["policies"]}["SMALL_BUSINESS"]
         assert item["purchase_amount"] == "5000000"
         assert item["achievement_rate"] == "100.00"
