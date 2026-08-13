@@ -239,6 +239,7 @@
     <section class="card">
       <h2 class="card-title">정책별 달성률</h2>
       <p class="card-sub">목표율이 등록되고 계산이 가능한 정책만 표시합니다</p>
+      <div id="summary-error" class="error" hidden></div>
       <div id="chart-achievement"></div>
     </section>
 
@@ -535,6 +536,24 @@
     });
   }
 
+  /** 계산 결과가 없을 때 — 정책과 개발 상태만 표시한다(숫자를 지어내지 않는다). */
+  function renderPoliciesWithoutCalculation(displayMap) {
+    var container = el("policy-cards");
+    clear(container);
+    Object.keys(displayMap).forEach(function (code) {
+      var display = displayMap[code];
+      var card = make("div", "policy");
+      var head = make("div", "policy-head");
+      head.appendChild(make("span", "policy-name", code));
+      head.appendChild(make("span", "chip", display.development_label));
+      card.appendChild(head);
+      card.appendChild(make("div", "policy-value st-TARGET_RATE_NOT_SET", "\u2014"));
+      card.appendChild(make("div", "policy-state st-TARGET_RATE_NOT_SET", "계산 불가"));
+      if (display.note) { card.appendChild(make("p", "note", display.note)); }
+      container.appendChild(card);
+    });
+  }
+
   // ------------------------------------------------- 차트 1 · 달성률 순위
   function renderAchievement(summary, displayMap) {
     var container = el("chart-achievement");
@@ -721,16 +740,28 @@
   // ------------------------------------------------------------------ 로드
   var lastData = null;
 
-  function draw(status, summary, displayMap) {
+  function draw(status, summaryResult, displayMap) {
     renderKpi(status);
     renderStatusTable(status);
-    renderPolicies(summary, displayMap);
-    renderAchievement(summary, displayMap);
     renderVolume(status);
     renderGauge(status);
+
+    if (summaryResult.ok) {
+      el("summary-error").hidden = true;
+      renderPolicies(summaryResult.body, displayMap);
+      renderAchievement(summaryResult.body, displayMap);
+    } else {
+      // 계산 결과가 없어도 정책 목록과 개발 상태는 보여준다.
+      var box = el("summary-error");
+      box.hidden = false;
+      text(box, summaryResult.reason);
+      renderPoliciesWithoutCalculation(displayMap);
+      clear(el("chart-achievement"));
+      el("chart-achievement").appendChild(
+        make("div", "empty", "달성률을 계산할 수 없습니다. 위 사유를 확인하세요."));
+    }
     text(el("footer-note"),
-      "정책별 개발 상태는 docs/DECISIONS.md 의 결정을 그대로 표시합니다. "
-      + "연도별 집계 · 중복 적재 방지는 미구현 상태입니다.");
+      "정책별 개발 상태는 docs/DECISIONS.md 의 결정을 그대로 표시합니다.");
   }
 
   /** 테마를 바꾸면 SVG 색상 변수를 다시 읽어야 하므로 마지막 데이터로 다시 그린다. */
@@ -742,20 +773,21 @@
     var year = el("year-select").value;
     el("error-box").hidden = true;
 
-    // 적재 현황을 먼저 받아 기간 조회 가능 여부를 확인한 뒤,
-    // 가능할 때만 달성률을 연도 기준으로 요청한다.
-    // (기준일이 확정되지 않은 상태에서 연도별 숫자를 만들지 않기 위함)
-    fetchJson("/dashboard/data-status?year=" + encodeURIComponent(year))
-      .then(function (status) {
-        // 연도는 항상 보낸다. 연도 없는 요청은 400 이며(D-27), 전 기간 합산은
-        // 제공되지 않는다. 기준일이 미확정이면 서버가 503 과 사유를 돌려준다.
-        var summaryUrl = "/dashboard/summary?year=" + encodeURIComponent(year);
-        return Promise.all([
-          status,
-          fetchJson(summaryUrl),
-          fetchJson("/dashboard/policy-display")
-        ]);
-      })
+    // 달성률 계산(summary)은 실패할 수 있다.
+    //   · 연도 미지정 → 400 (D-27)
+    //   · 연도 귀속 기준일 미확정 → 503 (D-24 · W-1)
+    // 이때도 적재 현황·정책 목록은 정상적으로 보여야 하므로, summary 실패를
+    // 개별적으로 흡수하고 달성률 영역에만 사유를 표시한다.
+    var summaryUrl = "/dashboard/summary?year=" + encodeURIComponent(year);
+
+    Promise.all([
+      fetchJson("/dashboard/data-status?year=" + encodeURIComponent(year)),
+      fetchJson(summaryUrl).then(
+        function (body) { return { ok: true, body: body }; },
+        function (err) { return { ok: false, reason: err.message }; }
+      ),
+      fetchJson("/dashboard/policy-display")
+    ])
       .then(function (results) {
         var displayMap = {};
         results[2].items.forEach(function (item) { displayMap[item.policy_code] = item; });
