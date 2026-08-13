@@ -66,6 +66,7 @@
 |---|---|
 | `ISSUE24-SPEC-real-data-e2e-validation.md` | Phase 4 — 실제 데이터 E2E 검증 |
 | `ISSUE49-SPEC-purchase-amount-validation.md` | **보류** — 음수/0 금액 (W-4 대기) |
+| `ISSUE26-SPEC-period-filter-and-import-batch.md` | 📜 **역사적 설계 문서** — 기간 필터 · Import Batch. **구현 완료**되었으며 현재 상태는 `DECISIONS.md` 가 정본 |
 
 ---
 
