@@ -33,8 +33,17 @@ python -m procurement init     # 1) DB 생성 + 테이블 + 기본 정책 등록
 python -m procurement run      # 2) FastAPI 개발 서버 실행
 ```
 
+- **Dashboard 화면(브라우저): `http://127.0.0.1:8000/`**
 - 대시보드 요약 API: `GET http://127.0.0.1:8000/dashboard/summary`
+- 데이터 적재 현황 API: `GET http://127.0.0.1:8000/dashboard/data-status`
 - Swagger(OpenAPI) 문서: `http://127.0.0.1:8000/docs`
+
+> 화면 우측 상단의 `DEMO / SAMPLE DATA` 배지는 설정값 `DATA_MODE` 를 그대로
+> 표시합니다. 기본값은 `demo` 이며, 실제 운영 데이터를 적재한 뒤에만
+> `DATA_MODE=operational` 로 바꿉니다.
+>
+> ⚠️ **연도 선택은 아직 조회 조건이 아닙니다.** 기간 필터·연도별 집계는 미구현
+> 상태이며(D-23 ~ D-27 확정 대기), 화면의 모든 수치는 **전체 데이터 기준**입니다.
 
 ### CLI 명령
 

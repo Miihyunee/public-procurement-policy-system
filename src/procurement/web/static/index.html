@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>우선구매 정책 달성률 대시보드</title>
+<!-- 외부 요청을 만들지 않기 위해 빈 favicon 을 지정한다. -->
+<link rel="icon" href="data:," />
+<style>
+  /* ------------------------------------------------------------------
+     테마 토큰
+     라이트/다크 두 벌만 정의하고, 이후 모든 색은 변수로만 참조한다.
+     ------------------------------------------------------------------ */
+  :root[data-theme="dark"] {
+    --bg: #080b10;
+    --card: #121820;
+    --card-soft: #182029;
+    --line: #232d39;
+    --text: #e9eef5;
+    --muted: #8493a5;
+    --accent: #6fe3cf;
+    --accent-soft: rgba(111, 227, 207, .16);
+    --normal: #4ade80;
+    --warning: #fbbf24;
+    --shortage: #fb7185;
+    --unset: #64748b;
+    --track: #1e2731;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+    --chip-bg: rgba(255, 255, 255, .05);
+  }
+  :root[data-theme="light"] {
+    --bg: #eef1f5;
+    --card: #ffffff;
+    --card-soft: #f5f7fa;
+    --line: #e2e7ee;
+    --text: #16202b;
+    --muted: #64748b;
+    --accent: #0e9d8b;
+    --accent-soft: rgba(14, 157, 139, .12);
+    --normal: #12915d;
+    --warning: #b06f00;
+    --shortage: #d1435b;
+    --unset: #8593a6;
+    --track: #e8ecf2;
+    --shadow: 0 1px 2px rgba(16, 32, 48, .06);
+    --chip-bg: rgba(16, 32, 48, .04);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    transition: background .18s ease, color .18s ease;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 22px 20px 56px; }
+
+  /* ---------------------------------------------------------- 상단 바 */
+  .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .title { font-size: 19px; font-weight: 700; letter-spacing: -.01em; margin: 0; }
+  .spacer { flex: 1 1 auto; }
+  .badge {
+    padding: 4px 11px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    letter-spacing: .06em; border: 1px solid transparent;
+  }
+  .badge-demo { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .badge-op { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .control {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 7px 11px; color: var(--text); font-size: 13px; box-shadow: var(--shadow);
+  }
+  .control select {
+    background: transparent; border: 0; color: var(--text);
+    font-size: 13px; font-family: inherit; outline: none; cursor: pointer;
+  }
+  .control select option { background: var(--card); color: var(--text); }
+  button.control { cursor: pointer; font-family: inherit; }
+  button.control:hover { border-color: var(--accent); color: var(--accent); }
+  .control-label { color: var(--muted); }
+
+  /* ------------------------------------------------------------ 알림 */
+  .notice, .error {
+    margin-top: 14px; padding: 10px 14px; border-radius: 10px; font-size: 12.5px;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  }
+  .notice::before { content: "ⓘ "; color: var(--accent); }
+  .error { border-color: var(--shortage); color: var(--shortage); }
+
+  /* ------------------------------------------------------------ 레이아웃 */
+  .row { display: grid; gap: 14px; margin-top: 14px; }
+  .row-kpi { grid-template-columns: 2fr 1fr; }
+  .row-mid { grid-template-columns: 1.6fr 1fr; }
+  .row-bottom { grid-template-columns: 320px 1fr; }
+  @media (max-width: 940px) {
+    .row-kpi, .row-mid, .row-bottom { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column;
+  }
+  /* 나란히 놓인 카드의 높이가 달라도 내부 여백이 비지 않도록 늘린다. */
+  .card > .kpi-grid, .card > .policy-grid { flex: 1 1 auto; }
+  .card-title { font-size: 15px; font-weight: 700; margin: 0; }
+  .card-sub { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
+  .card-head { display: flex; align-items: flex-start; gap: 10px; }
+
+  /* -------------------------------------------------------- KPI 타일 */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+  @media (max-width: 720px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+  .kpi {
+    background: var(--card-soft); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px;
+  }
+  .kpi-icon {
+    width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent); margin-bottom: 12px;
+  }
+  .kpi-value { font-size: 21px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+  .kpi-unit { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+  .kpi-label { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .kpi-foot { font-size: 11px; color: var(--muted); margin-top: 7px; }
+
+  /* -------------------------------------------------------- 순위 리스트 */
+  .rank { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  .rank th {
+    font-size: 11.5px; font-weight: 500; color: var(--muted); text-align: left;
+    padding: 6px 8px; border-bottom: 1px solid var(--line);
+  }
+  .rank td { padding: 11px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .rank tr:last-child td { border-bottom: 0; }
+  .rank .idx { color: var(--muted); width: 34px; font-variant-numeric: tabular-nums; }
+  .rank .bar-cell { width: 45%; }
+  .rank .val { text-align: right; width: 92px; }
+  .pill {
+    display: inline-block; min-width: 62px; text-align: center;
+    padding: 3px 9px; border-radius: 8px; font-size: 12px; font-weight: 700;
+    border: 1px solid currentColor; background: var(--chip-bg);
+  }
+  .track { height: 6px; border-radius: 999px; background: var(--track); overflow: hidden; }
+  .track > span { display: block; height: 100%; border-radius: 999px; }
+
+  /* ---------------------------------------------------------- 상태 표 */
+  .kv { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  .kv th {
+    font-weight: 500; color: var(--muted); text-align: left;
+    padding: 8px 0; font-size: 13px; border-bottom: 1px solid var(--line);
+  }
+  .kv td {
+    text-align: right; padding: 8px 0; font-size: 13px;
+    font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line);
+  }
+  .kv tr:last-child th, .kv tr:last-child td { border-bottom: 0; }
+
+  /* -------------------------------------------------------- 정책 카드 */
+  .policy-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .policy {
+    background: var(--card-soft); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px;
+  }
+  .policy-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .policy-name { font-weight: 700; font-size: 14px; }
+  .policy-code { font-size: 11px; color: var(--muted); }
+  .chip {
+    font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+    background: var(--chip-bg); border: 1px solid var(--line); color: var(--muted);
+  }
+  .chip-ready { color: var(--accent); border-color: var(--accent); }
+  .policy-value { font-size: 25px; font-weight: 700; letter-spacing: -.02em; margin-top: 10px; }
+  .policy-state { font-size: 12px; margin-top: 1px; }
+  .st-NORMAL { color: var(--normal); }
+  .st-WARNING { color: var(--warning); }
+  .st-SHORTAGE { color: var(--shortage); }
+  .st-TARGET_RATE_NOT_SET, .st-HOLD { color: var(--unset); }
+  .policy dl {
+    display: grid; grid-template-columns: auto 1fr; gap: 5px 10px;
+    margin: 12px 0 0; font-size: 12.5px;
+  }
+  .policy dt { color: var(--muted); }
+  .policy dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .policy .note {
+    margin: 11px 0 0; padding-top: 10px; border-top: 1px solid var(--line);
+    font-size: 11.5px; color: var(--muted);
+  }
+
+  .legend { display: flex; gap: 16px; justify-content: center; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
+  .empty { color: var(--muted); font-size: 12.5px; padding: 26px 0; text-align: center; }
+  .foot-note { font-size: 11.5px; color: var(--muted); margin: 12px 0 0; }
+  footer { margin-top: 22px; font-size: 11.5px; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <h1 class="title">우선구매 정책 달성률 대시보드</h1>
+    <span id="data-mode-badge" class="badge badge-demo">DATA MODE</span>
+    <span class="spacer"></span>
+    <span class="control">
+      <span class="control-label">연도</span>
+      <select id="year-select" aria-label="대상 연도 선택"></select>
+    </span>
+    <button id="theme-toggle" class="control" type="button" aria-label="테마 전환">
+      <span id="theme-icon">☾</span><span id="theme-label">다크</span>
+    </button>
+  </div>
+
+  <div id="period-notice" class="notice">기간 필터 미적용 — 전체 데이터 기준입니다.</div>
+  <div id="error-box" class="error" hidden></div>
+
+  <!-- 1. KPI + 적재 건수 -->
+  <div class="row row-kpi">
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">데이터 요약</h2>
+          <p class="card-sub">전체 데이터 기준 (기간 필터 미적용)</p>
+        </div>
+      </div>
+      <div id="kpi-grid" class="kpi-grid"></div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">적재 데이터 건수</h2>
+      <div id="chart-volume"></div>
+    </section>
+  </div>
+
+  <!-- 2. 달성률 순위 + 적재 현황 표 -->
+  <div class="row row-mid">
+    <section class="card">
+      <h2 class="card-title">정책별 달성률</h2>
+      <p class="card-sub">목표율이 등록되고 계산이 가능한 정책만 표시합니다</p>
+      <div id="chart-achievement"></div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">데이터 적재 현황</h2>
+      <table class="kv"><tbody id="status-table"></tbody></table>
+      <p class="foot-note" id="status-note"></p>
+    </section>
+  </div>
+
+  <!-- 3. 매칭률 게이지 + 정책 카드 -->
+  <div class="row row-bottom">
+    <section class="card">
+      <h2 class="card-title">기업 매칭률</h2>
+      <p class="card-sub">구매 건 중 기업 정보가 연결된 비율</p>
+      <div id="chart-gauge"></div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">정책별 현황</h2>
+      <p class="card-sub">개발 상태는 docs/DECISIONS.md 의 결정을 그대로 표시합니다</p>
+      <div id="policy-cards" class="policy-grid" style="margin-top:14px"></div>
+    </section>
+  </div>
+
+  <footer id="footer-note"></footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var THEME_KEY = "procurement.dashboard.theme";
+  var SVG_NS = "http://www.w3.org/2000/svg";
+
+  var el = function (id) { return document.getElementById(id); };
+  function text(node, value) { node.textContent = value; }
+  function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
+
+  function make(tag, className, content) {
+    var node = document.createElement(tag);
+    if (className) { node.className = className; }
+    if (content !== undefined) { node.textContent = content; }
+    return node;
+  }
+
+  function svg(tag, attrs) {
+    var node = document.createElementNS(SVG_NS, tag);
+    Object.keys(attrs).forEach(function (key) { node.setAttribute(key, attrs[key]); });
+    return node;
+  }
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function numberFormat(value) {
+    if (value === null || value === undefined || value === "") { return "-"; }
+    var parts = String(value).split(".");
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return parts.join(".");
+  }
+
+  /** 큰 금액을 억/만 단위로 요약한다(정확한 값은 타일 하단·표에 그대로 표시된다). */
+  function compactAmount(value) {
+    var n = Number(value);
+    if (!isFinite(n)) { return { value: "-", unit: "" }; }
+    if (n >= 100000000) {
+      return { value: numberFormat((n / 100000000).toFixed(1)), unit: "억원" };
+    }
+    if (n >= 10000) {
+      return { value: numberFormat(Math.round(n / 10000)), unit: "만원" };
+    }
+    return { value: numberFormat(n), unit: "원" };
+  }
+
+  function fetchJson(url) {
+    return fetch(url, { headers: { "Accept": "application/json" } }).then(function (res) {
+      if (!res.ok) { throw new Error(url + " 응답 오류 (HTTP " + res.status + ")"); }
+      return res.json();
+    });
+  }
+
+  // ------------------------------------------------------------------ 테마
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    text(el("theme-icon"), theme === "dark" ? "☾" : "☀");
+    text(el("theme-label"), theme === "dark" ? "다크" : "라이트");
+  }
+
+  function initTheme() {
+    var stored = null;
+    try { stored = window.localStorage.getItem(THEME_KEY); } catch (e) { stored = null; }
+    // 저장된 선택이 없으면 다크를 기본으로 한다(화면 기본 스타일).
+    applyTheme(stored === "light" ? "light" : "dark");
+
+    el("theme-toggle").addEventListener("click", function () {
+      var next = document.documentElement.getAttribute("data-theme") === "dark"
+        ? "light" : "dark";
+      applyTheme(next);
+      try { window.localStorage.setItem(THEME_KEY, next); } catch (e) { /* 저장 실패 무시 */ }
+      redraw();
+    });
+  }
+
+  // ------------------------------------------------------------- 연도 선택
+  function buildYearOptions() {
+    var select = el("year-select");
+    var current = new Date().getFullYear();
+    for (var y = current + 1; y >= current - 3; y--) {
+      var opt = document.createElement("option");
+      opt.value = String(y);
+      opt.textContent = y + "년";
+      if (y === current) { opt.selected = true; }
+      select.appendChild(opt);
+    }
+    select.addEventListener("change", load);
+  }
+
+  // ------------------------------------------------------------------ KPI
+  var ICON = {
+    amount: "₩",
+    count: "▤",
+    match: "⇄",
+    target: "◎"
+  };
+
+  function kpiTile(icon, value, unit, label, foot) {
+    var tile = make("div", "kpi");
+    tile.appendChild(make("div", "kpi-icon", icon));
+    var v = make("div", "kpi-value");
+    v.appendChild(document.createTextNode(value));
+    if (unit) { v.appendChild(make("span", "kpi-unit", unit)); }
+    tile.appendChild(v);
+    tile.appendChild(make("div", "kpi-label", label));
+    if (foot) { tile.appendChild(make("div", "kpi-foot", foot)); }
+    return tile;
+  }
+
+  function renderKpi(status) {
+    var grid = el("kpi-grid");
+    clear(grid);
+
+    var amount = compactAmount(status.purchase_total_amount);
+    var matchRate = status.purchase_count
+      ? Math.round((status.matched_purchase_count / status.purchase_count) * 1000) / 10
+      : null;
+
+    grid.appendChild(kpiTile(
+      ICON.amount, amount.value, amount.unit, "총 구매금액",
+      numberFormat(status.purchase_total_amount) + " 원"));
+    grid.appendChild(kpiTile(
+      ICON.count, numberFormat(status.purchase_count), "건", "구매 건수",
+      status.earliest_payment_date
+        ? status.earliest_payment_date + " ~ " + status.latest_payment_date
+        : "적재된 데이터 없음"));
+    grid.appendChild(kpiTile(
+      ICON.match, matchRate === null ? "-" : matchRate, matchRate === null ? "" : "%",
+      "기업 매칭률",
+      numberFormat(status.matched_purchase_count) + " / " +
+      numberFormat(status.purchase_count) + " 건"));
+    grid.appendChild(kpiTile(
+      ICON.target,
+      numberFormat(status.policy_with_target_rate_count) + " / " + numberFormat(status.policy_count),
+      "종", "목표율 설정 정책",
+      status.policy_with_target_rate_count === 0 ? "공식 근거 확정 전까지 미등록" : ""));
+  }
+
+  // ------------------------------------------------------------ 적재 현황 표
+  function renderStatusTable(status) {
+    var badge = el("data-mode-badge");
+    var operational = status.data_mode === "operational";
+    badge.className = operational ? "badge badge-op" : "badge badge-demo";
+    text(badge, operational ? "OPERATIONAL DATA" : "DEMO / SAMPLE DATA");
+
+    text(el("period-notice"), status.period_notice);
+
+    var range = function (from, to) { return (from && to) ? (from + " ~ " + to) : "-"; };
+    var rows = [
+      ["구매 건수", numberFormat(status.purchase_count) + " 건"],
+      ["구매금액 합계", numberFormat(status.purchase_total_amount) + " 원"],
+      ["기업 매칭 완료", numberFormat(status.matched_purchase_count) + " 건"],
+      ["기업 미매칭", numberFormat(status.unmatched_purchase_count) + " 건"],
+      ["지급일 범위", range(status.earliest_payment_date, status.latest_payment_date)],
+      ["계약일 범위", range(status.earliest_contract_date, status.latest_contract_date)],
+      ["기업 수", numberFormat(status.company_count) + " 건"],
+      ["인증 정보", numberFormat(status.certification_count) + " 건"],
+      ["등록 정책", numberFormat(status.policy_count) + " 종"]
+    ];
+
+    var tbody = el("status-table");
+    clear(tbody);
+    rows.forEach(function (row) {
+      var tr = document.createElement("tr");
+      tr.appendChild(make("th", null, row[0]));
+      tr.appendChild(make("td", null, row[1]));
+      tbody.appendChild(tr);
+    });
+
+    text(el("status-note"), status.purchase_count === 0
+      ? "업로드된 구매 데이터가 없습니다. 데이터를 적재하기 전까지 달성률은 계산되지 않습니다."
+      : "선택한 연도(" + (status.requested_year || "-") + ")는 아직 조회 조건으로 사용되지 않습니다.");
+  }
+
+  // ------------------------------------------------------------ 정책 카드
+  function policyCard(item, display) {
+    var card = make("div", "policy");
+
+    var head = make("div", "policy-head");
+    head.appendChild(make("span", "policy-name", item.policy_name));
+    head.appendChild(make("span", "policy-code", item.policy_code));
+    var onHold = !!display && display.development_status === "ON_HOLD";
+    if (display) {
+      head.appendChild(make("span", onHold ? "chip" : "chip chip-ready", display.development_label));
+    }
+    card.appendChild(head);
+
+    var value = make("div", "policy-value");
+    var state = make("div", "policy-state");
+    if (onHold) {
+      value.className += " st-HOLD";
+      text(value, "—");
+      state.className += " st-HOLD";
+      text(state, "계산 보류");
+    } else if (item.achievement_rate === null) {
+      value.className += " st-TARGET_RATE_NOT_SET";
+      text(value, "—");
+      state.className += " st-TARGET_RATE_NOT_SET";
+      text(state, item.status_label);
+    } else {
+      value.className += " st-" + item.status;
+      text(value, item.achievement_rate + "%");
+      state.className += " st-" + item.status;
+      text(state, "달성률 · " + item.status_label);
+    }
+    card.appendChild(value);
+    card.appendChild(state);
+
+    var dl = document.createElement("dl");
+    [
+      ["목표 구매비율", item.target_rate === null ? "미설정" : item.target_rate + "%"],
+      ["정책 구매액", item.purchase_amount === null
+        ? "미계산" : numberFormat(item.purchase_amount) + " 원"],
+      ["부족률", item.shortage_rate === null ? "-" : item.shortage_rate + "%"]
+    ].forEach(function (pair) {
+      dl.appendChild(make("dt", null, pair[0]));
+      dl.appendChild(make("dd", null, pair[1]));
+    });
+    card.appendChild(dl);
+
+    var reason = "";
+    if (onHold) { reason = display.note; }
+    else if (item.target_rate === null) {
+      reason = "목표율이 등록되지 않아 달성률을 계산하지 않았습니다(0% 아님).";
+    } else if (display && display.note) { reason = display.note; }
+    if (reason) { card.appendChild(make("p", "note", reason)); }
+
+    return card;
+  }
+
+  function renderPolicies(summary, displayMap) {
+    var container = el("policy-cards");
+    clear(container);
+    if (!summary.policies.length) {
+      container.appendChild(make("div", "empty", "표시할 정책이 없습니다. DB 초기화(seed)가 필요합니다."));
+      return;
+    }
+    summary.policies.forEach(function (item) {
+      container.appendChild(policyCard(item, displayMap[item.policy_code]));
+    });
+  }
+
+  // ------------------------------------------------- 차트 1 · 달성률 순위
+  function renderAchievement(summary, displayMap) {
+    var container = el("chart-achievement");
+    clear(container);
+
+    var rows = [];
+    var skipped = 0;
+    summary.policies.forEach(function (item) {
+      var display = displayMap[item.policy_code];
+      if ((display && display.development_status === "ON_HOLD") || item.achievement_rate === null) {
+        skipped += 1;
+        return;
+      }
+      rows.push(item);
+    });
+    rows.sort(function (a, b) {
+      return parseFloat(b.achievement_rate) - parseFloat(a.achievement_rate);
+    });
+
+    if (!rows.length) {
+      container.appendChild(make("div", "empty",
+        "달성률을 계산할 수 있는 정책이 없습니다 (목표율 미설정 또는 계산 보류)."));
+      if (skipped) {
+        container.appendChild(make("p", "foot-note",
+          "표시 제외 " + skipped + "종 — 목표율 미설정 또는 계산 보류."));
+      }
+      return;
+    }
+
+    var maxRate = rows.reduce(function (acc, item) {
+      return Math.max(acc, parseFloat(item.achievement_rate));
+    }, 0) || 1;
+
+    var table = make("table", "rank");
+    var thead = document.createElement("thead");
+    var htr = document.createElement("tr");
+    ["#", "정책", "달성 정도", "달성률"].forEach(function (label, index) {
+      var th = make("th", index === 3 ? "val" : null, label);
+      htr.appendChild(th);
+    });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    var tbody = document.createElement("tbody");
+    rows.forEach(function (item, index) {
+      var color = cssVar("--" + item.status.toLowerCase()) || cssVar("--accent");
+      var tr = document.createElement("tr");
+      tr.appendChild(make("td", "idx", ("0" + (index + 1)).slice(-2)));
+      tr.appendChild(make("td", null, item.policy_name));
+
+      var barCell = make("td", "bar-cell");
+      var track = make("div", "track");
+      var fill = make("span");
+      fill.style.width = Math.max(3, (parseFloat(item.achievement_rate) / maxRate) * 100) + "%";
+      fill.style.background = color;
+      track.appendChild(fill);
+      barCell.appendChild(track);
+      tr.appendChild(barCell);
+
+      var valCell = make("td", "val");
+      var pill = make("span", "pill", item.achievement_rate + "%");
+      pill.style.color = color;
+      valCell.appendChild(pill);
+      tr.appendChild(valCell);
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    container.appendChild(table);
+
+    if (skipped) {
+      container.appendChild(make("p", "foot-note",
+        "표시 제외 " + skipped + "종 — 목표율 미설정 또는 계산 보류."));
+    }
+  }
+
+  // ------------------------------------------------- 차트 2 · 적재 건수
+  function renderVolume(status) {
+    var container = el("chart-volume");
+    clear(container);
+
+    var bars = [
+      { label: "구매", value: status.purchase_count, key: "--accent" },
+      { label: "기업", value: status.company_count, key: "--accent" },
+      { label: "인증", value: status.certification_count, key: "--accent" },
+      { label: "매칭", value: status.matched_purchase_count, key: "--unset" }
+    ];
+    if (!bars.some(function (bar) { return bar.value > 0; })) {
+      container.appendChild(make("div", "empty", "적재된 데이터가 없습니다."));
+      return;
+    }
+
+    var width = 320, height = 190, base = 150, slot = width / bars.length;
+    var maxValue = bars.reduce(function (a, b) { return Math.max(a, b.value); }, 0) || 1;
+    var chart = svg("svg", {
+      viewBox: "0 0 " + width + " " + height, width: "100%", height: String(height),
+      role: "img", "aria-label": "적재 데이터 건수 막대 차트"
+    });
+    chart.style.marginTop = "14px";
+
+    bars.forEach(function (bar, index) {
+      var barWidth = 26;
+      var x = index * slot + (slot - barWidth) / 2;
+      var color = cssVar(bar.key);
+      chart.appendChild(svg("rect", {
+        x: String(x), y: "18", rx: "6",
+        width: String(barWidth), height: String(base - 18), fill: cssVar("--track")
+      }));
+      var h = Math.max(3, (bar.value / maxValue) * (base - 18));
+      chart.appendChild(svg("rect", {
+        x: String(x), y: String(base - h), rx: "6",
+        width: String(barWidth), height: String(h), fill: color
+      }));
+
+      var value = svg("text", {
+        x: String(x + barWidth / 2), y: String(base - h - 8), "font-size": "11",
+        "text-anchor": "middle", fill: cssVar("--text")
+      });
+      value.textContent = numberFormat(bar.value);
+      chart.appendChild(value);
+
+      var label = svg("text", {
+        x: String(x + barWidth / 2), y: String(base + 18), "font-size": "11",
+        "text-anchor": "middle", fill: cssVar("--muted")
+      });
+      label.textContent = bar.label;
+      chart.appendChild(label);
+    });
+    container.appendChild(chart);
+    container.appendChild(make("p", "foot-note", "전체 데이터 기준 (기간 필터 미적용)"));
+  }
+
+  // ------------------------------------------------- 차트 3 · 매칭률 게이지
+  function renderGauge(status) {
+    var container = el("chart-gauge");
+    clear(container);
+
+    if (!status.purchase_count) {
+      container.appendChild(make("div", "empty", "구매 데이터가 없습니다."));
+      return;
+    }
+
+    var ratio = status.matched_purchase_count / status.purchase_count;
+    var percent = Math.round(ratio * 1000) / 10;
+    var arc = Math.PI * 70;
+
+    var chart = svg("svg", {
+      viewBox: "0 0 200 118", width: "100%", height: "150",
+      role: "img", "aria-label": "기업 매칭률 게이지 " + percent + "%"
+    });
+    chart.style.marginTop = "10px";
+    var path = "M 30 100 A 70 70 0 0 1 170 100";
+    chart.appendChild(svg("path", {
+      d: path, fill: "none", stroke: cssVar("--track"),
+      "stroke-width": "16", "stroke-linecap": "round"
+    }));
+    chart.appendChild(svg("path", {
+      d: path, fill: "none", stroke: cssVar("--accent"),
+      "stroke-width": "16", "stroke-linecap": "round",
+      "stroke-dasharray": (arc * ratio) + " " + arc
+    }));
+
+    var value = svg("text", {
+      x: "100", y: "95", "font-size": "30", "font-weight": "700",
+      "text-anchor": "middle", fill: cssVar("--text")
+    });
+    value.textContent = percent + "%";
+    chart.appendChild(value);
+    container.appendChild(chart);
+
+    var legend = make("div", "legend");
+    [["매칭 완료", status.matched_purchase_count, "--accent"],
+     ["미매칭", status.unmatched_purchase_count, "--unset"]].forEach(function (item) {
+      var span = make("span");
+      var dot = make("i");
+      dot.style.background = cssVar(item[2]);
+      span.appendChild(dot);
+      span.appendChild(document.createTextNode(item[0] + " " + numberFormat(item[1]) + "건"));
+      legend.appendChild(span);
+    });
+    container.appendChild(legend);
+  }
+
+  // ------------------------------------------------------------------ 로드
+  var lastData = null;
+
+  function draw(status, summary, displayMap) {
+    renderKpi(status);
+    renderStatusTable(status);
+    renderPolicies(summary, displayMap);
+    renderAchievement(summary, displayMap);
+    renderVolume(status);
+    renderGauge(status);
+    text(el("footer-note"),
+      "정책별 개발 상태는 docs/DECISIONS.md 의 결정을 그대로 표시합니다. "
+      + "연도별 집계 · 중복 적재 방지는 미구현 상태입니다.");
+  }
+
+  /** 테마를 바꾸면 SVG 색상 변수를 다시 읽어야 하므로 마지막 데이터로 다시 그린다. */
+  function redraw() {
+    if (lastData) { draw(lastData[0], lastData[1], lastData[2]); }
+  }
+
+  function load() {
+    var year = el("year-select").value;
+    el("error-box").hidden = true;
+
+    Promise.all([
+      fetchJson("/dashboard/data-status?year=" + encodeURIComponent(year)),
+      fetchJson("/dashboard/summary"),
+      fetchJson("/dashboard/policy-display")
+    ]).then(function (results) {
+      var displayMap = {};
+      results[2].items.forEach(function (item) { displayMap[item.policy_code] = item; });
+      lastData = [results[0], results[1], displayMap];
+      draw(results[0], results[1], displayMap);
+    }).catch(function (err) {
+      var box = el("error-box");
+      box.hidden = false;
+      text(box, "데이터를 불러오지 못했습니다: " + err.message);
+    });
+  }
+
+  initTheme();
+  buildYearOptions();
+  load();
+})();
+</script>
+</body>
+</html>
