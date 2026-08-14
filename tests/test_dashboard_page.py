@@ -227,10 +227,24 @@ class TestExistingEndpointsUnchanged:
         body = client.get("/dashboard/summary?year=2026").json()
         assert set(body) == {"total_purchase_amount", "policies"}
 
-    def test_summary_has_no_period_fields(self, client: TestClient) -> None:
-        """요약 API 에는 기간 관련 필드를 추가하지 않았다."""
-        body = client.get("/dashboard/summary").json()
-        assert "requested_year" not in body
+    def test_summary_without_year_explains_why(self, client: TestClient) -> None:
+        """연도 미지정 400 응답은 **사유를 본문에 담는다**(D-27).
+
+        .. note::
+            이 테스트는 원래 ``assert "requested_year" not in body`` 였습니다.
+            D-27 도입 후 연도 없는 호출이 400 을 반환하면서 본문이
+            ``{"detail": ...}`` 가 되었고, 그 결과 단언이 **항상 참**이 되어
+            아무것도 검증하지 못했습니다. 통과 여부만 같을 뿐 의미가 없었으므로
+            실제 의도(연도를 요구하며 그 이유를 알려준다)를 검증하도록 바꿉니다.
+
+            계산 결과 기대값은 건드리지 않았습니다.
+        """
+        response = client.get("/dashboard/summary")
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "year" in detail
+        assert "D-27" in detail
 
     def test_policies_still_returns_200(self, client: TestClient) -> None:
         assert client.get("/policies").status_code == 200
@@ -239,3 +253,67 @@ class TestExistingEndpointsUnchanged:
         """관리자 토큰 미설정 앱에서는 쓰기 API 가 503 이다(D-14)."""
         response = client.put("/policies/SMALL_BUSINESS/target-rate", json={"target_rate": "50"})
         assert response.status_code == 503
+
+
+class TestThemeRegression:
+    """테마 전환 시 차트 색상이 따라오는지 정적으로 검증합니다.
+
+    **배경**: SVG 차트는 그리는 시점에 ``getComputedStyle`` 로 읽은 색을 속성값으로
+    **구워 넣습니다.** 따라서 ``data-theme`` 만 바꾸고 다시 그리지 않으면, CSS 로
+    칠해지는 카드·배경만 밝아지고 **차트는 이전 테마 색을 유지**합니다. 그 상태에서는
+    라이트 모드에서 막대 위 숫자와 게이지 값이 배경에 묻혀 읽히지 않습니다.
+
+    실제 토글 버튼은 ``redraw()`` 를 호출하므로 현재는 정상 동작합니다. 이 테스트는
+    그 호출이 나중에 빠지는 것을 막습니다. 브라우저 없이 확인할 수 있도록 화면
+    스크립트의 구조만 검사합니다.
+    """
+
+    @staticmethod
+    def _script() -> str:
+        from procurement.web.page import read_index_html
+
+        return read_index_html()
+
+    def test_theme_toggle_redraws_charts(self) -> None:
+        """테마를 바꾸면 반드시 다시 그린다.
+
+        ``applyTheme(next)`` 뒤에 ``redraw()`` 가 없으면 차트가 이전 테마 색으로
+        남습니다.
+        """
+        html = self._script()
+        start = html.index('el("theme-toggle").addEventListener')
+        handler = html[start : start + 500]
+
+        assert "applyTheme(next)" in handler
+        assert "redraw()" in handler, (
+            "테마 토글이 redraw() 를 호출하지 않으면 차트가 이전 테마 색으로 남습니다."
+        )
+
+    def test_charts_read_colors_from_theme_variables(self) -> None:
+        """차트 색을 하드코딩하지 않고 테마 변수에서 읽는다."""
+        html = self._script()
+
+        for token in ("--text", "--muted", "--track", "--accent"):
+            assert 'cssVar("' + token + '")' in html, f"{token} 을 테마 변수로 읽지 않습니다."
+
+    def test_both_themes_define_every_chart_color(self) -> None:
+        """라이트·다크 두 테마 모두 차트가 쓰는 색 토큰을 정의한다.
+
+        한쪽에만 정의하면 다른 테마에서 빈 문자열이 되어 SVG 가 기본 검정으로
+        칠해집니다.
+        """
+        html = self._script()
+        dark = html[html.index(':root[data-theme="dark"]') :]
+        dark = dark[: dark.index("}")]
+        light = html[html.index(':root[data-theme="light"]') :]
+        light = light[: light.index("}")]
+
+        for token in ("--text", "--muted", "--track", "--accent"):
+            assert token in dark, f"다크 테마에 {token} 정의가 없습니다."
+            assert token in light, f"라이트 테마에 {token} 정의가 없습니다."
+
+    def test_theme_choice_is_persisted(self) -> None:
+        """선택한 테마를 저장해 다음 방문에 유지한다."""
+        html = self._script()
+        assert "localStorage.setItem(THEME_KEY" in html
+        assert "localStorage.getItem(THEME_KEY" in html

@@ -8,6 +8,7 @@ DB 초기화·정책 seed·Health Check·CLI 동작과 **멱등성**을 검증�
 from __future__ import annotations
 
 import sqlite3
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from procurement.database.bootstrap import (
     verify_bootstrap,
 )
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.purchase_repository import PurchaseRepository
+from procurement.models import Purchase
 
 #: 확정된 MVP 정책 코드 (PM 확정 — 변경하지 않음)
 EXPECTED_CODES = {"SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP", "GREEN"}
@@ -218,6 +221,105 @@ class TestCli:
     def test_no_command_prints_help(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main([]) == 0
         assert "init" in capsys.readouterr().out
+
+
+class TestRunRefusesStaleSchema:
+    """``run`` 은 DB 스키마를 먼저 점검하고, 문제가 있으면 서버를 띄우지 않습니다.
+
+    **배경**: ``run`` 은 ``migrate_schema()`` 를 호출하지 않습니다(``init`` 만 합니다).
+    구 버전에서 만든 DB 를 그대로 두고 실행하면 조회 시점에 ``purchase.batch_id``
+    컬럼이 없어 ``IndexError`` 가 나고, 대시보드가 **HTTP 500** 으로 실패합니다.
+    그 시점에는 원인이 화면에 드러나지 않아 운영자가 조치를 알 수 없습니다.
+
+    따라서 기동 전에 점검해 **500 대신 안내 메시지**를 내도록 했습니다.
+    ``run`` 이 DB 를 자동으로 바꾸지는 않습니다.
+    """
+
+    @staticmethod
+    def _make_legacy_db(path: Path) -> None:
+        """``purchase.batch_id`` 가 없는 구 스키마 DB 를 만듭니다."""
+        bootstrap(path)
+        with sqlite3.connect(path) as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_purchase_batch")
+            conn.execute("ALTER TABLE purchase DROP COLUMN batch_id")
+
+    def test_run_refuses_when_db_is_missing(
+        self, db_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """DB 가 없으면 서버를 띄우지 않고 조치를 안내한다."""
+        assert main(["run", "--db", str(db_path)]) == 1
+        assert "python -m procurement init" in capsys.readouterr().out
+
+    def test_run_refuses_on_stale_schema(
+        self, db_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """구 스키마이면 500 대신 사유와 조치를 출력하고 기동하지 않는다."""
+        self._make_legacy_db(db_path)
+
+        assert main(["run", "--db", str(db_path)]) == 1
+
+        out = capsys.readouterr().out
+        assert "batch_id" in out
+        assert "python -m procurement init" in out
+        assert "서버를 시작하지 않았습니다" in out
+
+    def test_run_does_not_modify_the_database(self, db_path: Path) -> None:
+        """점검만 하고 DB 를 바꾸지 않는다(자동 마이그레이션 금지)."""
+        self._make_legacy_db(db_path)
+        before = _purchase_columns(db_path)
+
+        main(["run", "--db", str(db_path)])
+
+        assert _purchase_columns(db_path) == before
+        assert "batch_id" not in _purchase_columns(db_path)
+
+    def test_run_does_not_delete_existing_rows(self, db_path: Path) -> None:
+        """기존 데이터를 삭제하지 않는다."""
+        bootstrap(db_path)
+        PurchaseRepository(db_path).insert(
+            Purchase(
+                business_no="1234567890",
+                company_name="테스트업체",
+                contract_date=date(2026, 1, 1),
+                payment_date=date(2026, 1, 31),
+                amount=Decimal("1000"),
+            )
+        )
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_purchase_batch")
+            conn.execute("ALTER TABLE purchase DROP COLUMN batch_id")
+
+        main(["run", "--db", str(db_path)])
+
+        with sqlite3.connect(db_path) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM purchase").fetchone()[0] == 1
+
+    def test_init_recovers_and_then_run_passes_the_check(
+        self, db_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``init`` 으로 복구하면 ``run`` 의 점검을 통과한다(health/init 과 일관).
+
+        서버가 실제로 뜨는지는 확인 대상이 아니므로 ``uvicorn.run`` 을 대역으로
+        바꿔 기동 자체는 건너뜁니다.
+        """
+        self._make_legacy_db(db_path)
+        assert main(["run", "--db", str(db_path)]) == 1
+
+        assert main(["init", "--db", str(db_path)]) == 0
+        assert main(["health", "--db", str(db_path)]) == 0
+
+        started: list[str] = []
+        import uvicorn
+
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **k: started.append("ran"))
+        assert main(["run", "--db", str(db_path)]) == 0
+        assert started == ["ran"]
+
+
+def _purchase_columns(path: Path) -> set[str]:
+    """purchase 테이블의 컬럼 이름 집합을 반환합니다."""
+    with sqlite3.connect(path) as conn:
+        return {row[1] for row in conn.execute("PRAGMA table_info(purchase)")}
 
 
 class TestDashboardAfterBootstrap:

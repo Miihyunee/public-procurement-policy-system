@@ -5,7 +5,7 @@ Entry point for ``python -m procurement``.
 
 Usage:
     python -m procurement init      # DB 초기화 + 정책 등록 + 상태 점검
-    python -m procurement run       # FastAPI 개발 서버 실행
+    python -m procurement run       # DB 스키마 점검 후 FastAPI 개발 서버 실행
     python -m procurement health    # 초기화 상태만 점검
 
     # Swagger(OpenAPI) 문서: http://127.0.0.1:8000/docs
@@ -42,6 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="FastAPI 개발 서버를 실행합니다.")
     run_parser.add_argument("--host", default=_DEFAULT_HOST, help="바인딩 주소")
     run_parser.add_argument("--port", type=int, default=_DEFAULT_PORT, help="포트")
+    run_parser.add_argument("--db", type=Path, default=None, help="DB 파일 경로")
 
     health_parser = subparsers.add_parser("health", help="초기화 상태를 점검합니다.")
     health_parser.add_argument("--db", type=Path, default=None, help="DB 파일 경로")
@@ -66,8 +67,39 @@ def _run_health(db_path: Path | None) -> int:
     return 0 if report.healthy else 1
 
 
-def _run_server(host: str, port: int) -> int:
-    """FastAPI 개발 서버를 실행합니다."""
+def _run_server(host: str, port: int, db_path: Path | None = None) -> int:
+    """FastAPI 개발 서버를 실행합니다.
+
+    **서버를 띄우기 전에 DB 스키마를 먼저 점검합니다.** 구(舊) 버전에서 만든 DB 를
+    그대로 두고 실행하면, 조회 시점에 ``purchase.batch_id`` 컬럼이 없어
+    ``IndexError`` 가 나고 대시보드가 **HTTP 500** 으로 실패합니다. 그 시점에는
+    원인이 화면에 드러나지 않아 운영자가 무엇을 해야 할지 알 수 없습니다.
+
+    따라서 점검에 실패하면 **서버를 시작하지 않고** 원인과 조치를 출력합니다.
+
+    .. note::
+        이 함수는 **DB 를 변경하지 않습니다.** 점검만 하고, 마이그레이션이
+        필요하면 ``python -m procurement init`` 을 안내합니다. 서버 기동 과정에서
+        스키마를 자동으로 바꾸면 운영자가 모르는 사이에 DB 가 변경됩니다.
+
+    Args:
+        host: 바인딩 주소.
+        port: 포트.
+        db_path: 점검할 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        정상 기동 후 종료는 ``0``, 점검 실패로 기동하지 않으면 ``1``.
+    """
+    report = verify_bootstrap(db_path)
+    if not report.healthy:
+        print(report.format_report())
+        print(
+            "\n서버를 시작하지 않았습니다. DB 상태를 먼저 정리하세요."
+            "\n  python -m procurement init"
+            "\n\n위 명령은 누락된 테이블·컬럼만 보완하며, 기존 데이터를 삭제하지 않습니다."
+        )
+        return 1
+
     import uvicorn
 
     uvicorn.run("procurement.app:app", host=host, port=port)
@@ -91,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "health":
         return _run_health(args.db)
     if args.command == "run":
-        return _run_server(args.host, args.port)
+        return _run_server(args.host, args.port, args.db)
 
     parser.print_help()
     return 0

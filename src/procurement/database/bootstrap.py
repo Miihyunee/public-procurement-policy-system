@@ -333,8 +333,8 @@ def verify_bootstrap(db_path: str | Path | None = None) -> HealthReport:
                 passed=False,
                 detail=(
                     f"누락된 컬럼: {missing_columns}. 이전 버전에서 만든 DB 로 보입니다. "
-                    "CREATE TABLE IF NOT EXISTS 는 기존 테이블에 컬럼을 추가하지 않으므로, "
-                    "DB 파일을 새로 만들거나 수동으로 컬럼을 추가해야 합니다."
+                    "'python -m procurement init' 을 실행하면 누락된 컬럼만 추가하며, "
+                    "기존 데이터는 삭제하지 않습니다."
                 ),
             )
         )
