@@ -83,8 +83,10 @@ MVP_POLICY_SEEDS: tuple[PolicySeed, ...] = (
     PolicySeed(
         policy_code="STARTUP",
         policy_name="창업기업",
-        evaluation_basis="CONTRACT_DATE",
-        description="창업기업제품 우선구매(계약일 기준)",
+        # 2026-08-14 고객 확정: 결의일자와 계약일자 중 하나라도 인증 유효기간에
+        # 해당하면 인정한다(OR 조건). 계약일 단독 기준이 아니다.
+        evaluation_basis="PAYMENT_OR_CONTRACT_DATE",
+        description="창업기업제품 우선구매(두 날짜 중 하나라도 인증기간에 해당하면 인정)",
     ),
     PolicySeed(
         policy_code="GREEN",
@@ -236,6 +238,53 @@ def migrate_schema(db_path: str | Path | None = None) -> list[str]:
     return added
 
 
+#: 고객 확정으로 판정 기준이 바뀐 정책. ``(정책코드, 이전 값, 새 값)``.
+#:
+#: ``seed_policies()`` 는 **이미 존재하는 정책을 건너뛰므로**, 기존 DB 의 값은
+#: seed 상수를 고쳐도 그대로 남는다. 확정된 업무규칙이 기존 DB 에서만 적용되지
+#: 않는 상태를 막기 위해 명시적으로 갱신한다.
+_UPDATED_EVALUATION_BASIS: tuple[tuple[str, str, str], ...] = (
+    # 2026-08-14 고객 확정 — 창업기업은 결의일자 OR 계약일자로 판정한다.
+    ("STARTUP", "CONTRACT_DATE", "PAYMENT_OR_CONTRACT_DATE"),
+)
+
+
+def migrate_policy_evaluation_basis(db_path: str | Path | None = None) -> list[str]:
+    """고객 확정으로 바뀐 정책 판정 기준을 기존 DB 에 반영합니다(멱등).
+
+    **이전 값과 정확히 일치하는 행만** 갱신합니다. 운영자가 다른 값으로 바꿔 둔
+    경우에는 건드리지 않습니다.
+
+    .. note::
+        판정 기준(``evaluation_basis``)은 시스템이 소유하는 값입니다. 관리 API
+        (``PolicyAdminService``)는 ``target_rate`` 만 변경하므로, 이 갱신이
+        운영자가 설정한 값을 덮어쓰지 않습니다.
+
+        구매·인증 데이터는 **전혀 건드리지 않습니다.**
+
+    Args:
+        db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        이번 호출에서 실제로 갱신한 항목 목록(``"정책코드: 이전→새값"`` 형식).
+    """
+    path = resolve_db_path(db_path)
+    if "policy" not in _read_schema(path):
+        return []
+
+    updated: list[str] = []
+    with sqlite3.connect(path) as conn:
+        for policy_code, old_value, new_value in _UPDATED_EVALUATION_BASIS:
+            cursor = conn.execute(
+                "UPDATE policy SET evaluation_basis = ? "
+                "WHERE policy_code = ? AND evaluation_basis = ?",
+                (new_value, policy_code, old_value),
+            )
+            if cursor.rowcount:
+                updated.append(f"{policy_code}: {old_value}→{new_value}")
+    return updated
+
+
 def seed_policies(db_path: str | Path | None = None) -> list[str]:
     """MVP 정책 5종을 등록합니다(멱등).
 
@@ -358,6 +407,8 @@ def bootstrap(db_path: str | Path | None = None, *, seed: bool = True) -> Health
     init_db(db_path)
     if seed:
         seed_policies(db_path)
+        # seed 는 기존 정책을 건너뛰므로, 확정으로 바뀐 판정 기준은 따로 반영한다.
+        migrate_policy_evaluation_basis(db_path)
     return verify_bootstrap(db_path)
 
 

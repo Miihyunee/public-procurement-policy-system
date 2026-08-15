@@ -21,6 +21,7 @@ from procurement.database.bootstrap import (
     MVP_POLICY_SEEDS,
     bootstrap,
     init_db,
+    migrate_policy_evaluation_basis,
     seed_policies,
     verify_bootstrap,
 )
@@ -89,13 +90,29 @@ class TestSeedPolicies:
             assert policy.target_rate is None
 
     def test_evaluation_basis_matches_policy_definition(self, db_path: Path) -> None:
-        """창업기업만 계약일 기준, 나머지는 지급일 기준입니다."""
+        """창업기업만 두 날짜 OR 기준, 나머지는 지급일 기준입니다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-14 고객 확정.
+
+                창업기업은 결의일자와 계약일자가 기업 인증 유효기간에 해당할
+                경우 모두 실적으로 인정한다.
+
+            이전에는 ``CONTRACT_DATE``(계약일 **단독**) 였으나, 확정 규칙은 두
+            날짜에 대한 **OR 조건**이므로 계약일 단독으로는 표현할 수 없습니다.
+            (계약일이 기간 밖이고 다른 날짜만 안에 있는 구매를 놓칩니다.)
+
+            테스트를 통과시키려고 바꾼 것이 아니라, **업무규칙 자체가 바뀌어**
+            기대값이 달라진 경우입니다. 근거: ``DECISIONS.md`` §0.6.
+
+            나머지 정책의 기준은 **변경되지 않았습니다.**
+        """
         init_db(db_path)
         seed_policies(db_path)
         repository = PolicyRepository(db_path)
         startup = repository.find_by_policy_code("STARTUP")
         assert startup is not None
-        assert startup.evaluation_basis == "CONTRACT_DATE"
+        assert startup.evaluation_basis == "PAYMENT_OR_CONTRACT_DATE"
         for code in EXPECTED_CODES - {"STARTUP"}:
             policy = repository.find_by_policy_code(code)
             assert policy is not None
@@ -221,6 +238,97 @@ class TestCli:
     def test_no_command_prints_help(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main([]) == 0
         assert "init" in capsys.readouterr().out
+
+
+class TestEvaluationBasisMigration:
+    """확정으로 바뀐 판정 기준이 **기존 DB 에도** 반영되는지 검증합니다.
+
+    ``seed_policies()`` 는 이미 존재하는 정책을 건너뛰므로, seed 상수만 고치면
+    기존 DB 는 옛 기준값(``CONTRACT_DATE``)에 머뭅니다. 그러면 같은 코드가
+    DB 에 따라 다른 결과를 내므로 명시적으로 갱신합니다.
+    """
+
+    @staticmethod
+    def _set_basis(path: Path, policy_code: str, value: str) -> None:
+        with sqlite3.connect(path) as conn:
+            conn.execute(
+                "UPDATE policy SET evaluation_basis = ? WHERE policy_code = ?",
+                (value, policy_code),
+            )
+
+    @staticmethod
+    def _basis(path: Path, policy_code: str) -> str:
+        policy = PolicyRepository(path).find_by_policy_code(policy_code)
+        assert policy is not None
+        return policy.evaluation_basis
+
+    def test_legacy_startup_row_is_updated(self, db_path: Path) -> None:
+        """구 DB 의 STARTUP 이 OR 기준으로 갱신된다."""
+        bootstrap(db_path)
+        self._set_basis(db_path, "STARTUP", "CONTRACT_DATE")
+
+        updated = migrate_policy_evaluation_basis(db_path)
+
+        assert updated == ["STARTUP: CONTRACT_DATE→PAYMENT_OR_CONTRACT_DATE"]
+        assert self._basis(db_path, "STARTUP") == "PAYMENT_OR_CONTRACT_DATE"
+
+    def test_migration_is_idempotent(self, db_path: Path) -> None:
+        bootstrap(db_path)
+        self._set_basis(db_path, "STARTUP", "CONTRACT_DATE")
+
+        assert migrate_policy_evaluation_basis(db_path)
+        assert migrate_policy_evaluation_basis(db_path) == []
+
+    def test_other_policies_are_untouched(self, db_path: Path) -> None:
+        """STARTUP 외 정책의 기준은 건드리지 않는다."""
+        bootstrap(db_path)
+        self._set_basis(db_path, "STARTUP", "CONTRACT_DATE")
+
+        migrate_policy_evaluation_basis(db_path)
+
+        for code in EXPECTED_CODES - {"STARTUP"}:
+            assert self._basis(db_path, code) == "PAYMENT_DATE"
+
+    def test_unexpected_value_is_not_overwritten(self, db_path: Path) -> None:
+        """이전 값과 다르면 건드리지 않는다(운영자 설정 보호)."""
+        bootstrap(db_path)
+        self._set_basis(db_path, "STARTUP", "PAYMENT_DATE")
+
+        assert migrate_policy_evaluation_basis(db_path) == []
+        assert self._basis(db_path, "STARTUP") == "PAYMENT_DATE"
+
+    def test_bootstrap_applies_the_migration(self, db_path: Path) -> None:
+        """``init`` 경로에서 자동으로 반영된다."""
+        bootstrap(db_path)
+        self._set_basis(db_path, "STARTUP", "CONTRACT_DATE")
+
+        bootstrap(db_path)
+
+        assert self._basis(db_path, "STARTUP") == "PAYMENT_OR_CONTRACT_DATE"
+
+    def test_missing_policy_table_is_safe(self, tmp_path: Path) -> None:
+        """정책 테이블이 없어도 예외 없이 빈 목록을 반환한다."""
+        assert migrate_policy_evaluation_basis(tmp_path / "empty.db") == []
+
+    def test_purchase_and_certification_data_are_untouched(self, db_path: Path) -> None:
+        """구매·인증 데이터는 전혀 건드리지 않는다."""
+        bootstrap(db_path)
+        PurchaseRepository(db_path).insert(
+            Purchase(
+                business_no="1234567890",
+                company_name="테스트업체",
+                contract_date=date(2026, 1, 1),
+                payment_date=date(2026, 1, 31),
+                amount=Decimal("1000"),
+            )
+        )
+        self._set_basis(db_path, "STARTUP", "CONTRACT_DATE")
+
+        migrate_policy_evaluation_basis(db_path)
+
+        rows = PurchaseRepository(db_path).find_all()
+        assert len(rows) == 1
+        assert rows[0].amount == Decimal("1000")
 
 
 class TestRunRefusesStaleSchema:

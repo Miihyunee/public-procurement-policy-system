@@ -20,18 +20,22 @@ from procurement.calculators.rules.base import PolicyRule, RuleContext
 from procurement.calculators.rules.date_rules import (
     CONTRACT_DATE,
     PAYMENT_DATE,
+    PAYMENT_OR_CONTRACT_DATE,
     ContractDateRule,
     DateBasisRule,
     PaymentDateRule,
+    PaymentOrContractDateRule,
 )
 from procurement.calculators.rules.registry import RuleRegistry, build_default_registry
 
 __all__ = [
     "CONTRACT_DATE",
     "PAYMENT_DATE",
+    "PAYMENT_OR_CONTRACT_DATE",
     "ContractDateRule",
     "DateBasisRule",
     "PaymentDateRule",
+    "PaymentOrContractDateRule",
     "PolicyRule",
     "RuleContext",
     "RuleRegistry",

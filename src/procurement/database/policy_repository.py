@@ -49,7 +49,10 @@ CREATE TABLE IF NOT EXISTS policy (
 _REQUIRED_FIELDS = ("policy_code", "policy_name")
 
 # evaluation_basis 허용 값 (MVP). VENDOR_EXISTENCE 는 이번 범위에 포함하지 않는다.
-ALLOWED_EVALUATION_BASIS = ("PAYMENT_DATE", "CONTRACT_DATE")
+#
+# PAYMENT_OR_CONTRACT_DATE 는 2026-08-14 고객 확정 규칙(창업기업)이며, 구매의 두
+# 날짜 중 하나라도 인증 유효기간에 해당하면 인정한다는 뜻이다.
+ALLOWED_EVALUATION_BASIS = ("PAYMENT_DATE", "CONTRACT_DATE", "PAYMENT_OR_CONTRACT_DATE")
 
 #: 목표율 상한.
 #:
