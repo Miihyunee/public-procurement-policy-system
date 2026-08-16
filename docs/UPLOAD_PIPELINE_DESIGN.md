@@ -22,7 +22,7 @@
 | 사업자번호 정규화 | `matchers/business_no.py` | ✅ **재사용 중** (새로 만들지 않음) |
 | 행 적재 | `importers/purchase_importer.py` | ✅ 매핑된 행을 받아 저장 |
 | 배치 적재 | `importers/batch_import_service.py` | ✅ 월별 누적 · `ACTIVE`/`SUPERSEDED` |
-| 창업기업 OR 판정 | `calculators/rules/date_rules.py` | ✅ `PaymentOrContractDateRule` |
+| 창업기업 OR 판정 | `calculators/rules/date_rules.py` | ✅ `ResolutionOrContractDateRule` |
 | 음수 상계 | `core/offsetting.py` | ✅ 로직만 (연결 안 됨) |
 | 구매유형 매핑 | `core/purchase_type.py` | ✅ 확정 3건만 (연결 안 됨) |
 | Electron 생명주기 | `electron/backend.js` | ✅ 검증 8/8 |
@@ -175,56 +175,67 @@ openpyxl 이 만든 파일을 소박한 stdlib 리더로 읽어 봤다.
 
 ---
 
-# 4. 🔴 결의일자 결정 지점 (§32 3순위)
+# 4. ✅ 결의일자 결정 — B안 채택 (2026-08-15 PM 최종 결정)
 
-## 4.1 지금 정확히 어디가 막혀 있는가
+> `resolution_date` 필드를 신설한다. 기존 `payment_date` 를 결의일자로 재정의하지 않는다.
+>
+> Excel `결의일자` → `Purchase.resolution_date`
+> Excel `계약일자` → `Purchase.contract_date`
+
+## 4.1 반영 결과
 
 ```
 표준 Excel "결의일자"
       │
       ▼
- validation.py  →  values["resolution_date"]      ← ✅ 여기까지 구현됨
+ validation.py  →  values["resolution_date"]      ← ✅ 구현됨
       │
       ▼
  ┌─────────────────────────────────────┐
- │  Mapping 계층 — 아직 만들지 않음     │  ← 🔴 여기서 막힌다
- │  resolution_date → Purchase 의 ???  │
+ │  Mapping 계층 — 아직 만들지 않음     │  ← 남은 작업(§4.3)
  └─────────────────────────────────────┘
       │
       ▼
- PurchaseImporter.import_rows()  ← ✅ 이미 있음. payment_date / contract_date 를 받는다
+ PurchaseImporter.import_rows()  ← ✅ resolution_date 를 읽는다(2026-08-15 추가)
 ```
 
-검증 계층은 값을 **`resolution_date` 라는 중립적인 키**로 담아 둔다. 어느 물리
-필드에 넣을지 정하지 않았으므로, 이 키는 **표준 양식의 컬럼 이름일 뿐**이며
-DB 필드를 뜻하지 않는다.
+검증 계층이 만드는 키 5개가 **모두** 적재 계층 키와 이름까지 일치하게 되었다.
+Mapping 계층은 새 변환기가 아니라 **얇은 연결자**면 된다.
 
-## 4.2 선택지
-
-| 안 | 변경 범위 | 결과 |
-|---|---|---|
-| **A** `payment_date` 재사용 | Mapping 1줄 | 스키마 무변경. **필드 이름이 실제 의미와 어긋남** |
-| **B** `resolution_date` 신설 | 모델 · 스키마 · 마이그레이션 · `PeriodFilter` 허용값 · `offsetting.date_of` · 테스트 | 의미가 정확. **지금이 최적기** |
-| **C** `payment_date` 의미 재정의 | 문서만 | 나중에 진짜 지급일이 필요해지면 재작업 |
-
-**B 를 택할 경우 함께 바뀌는 곳** (실측):
+## 4.2 실제로 바뀐 곳
 
 | 파일 | 변경 |
 |---|---|
-| `models/purchase.py` | 필드 추가 |
-| `database/purchase_repository.py` | 컬럼 · `_row_to_purchase` · SQL |
-| `database/bootstrap.py` | `_ADDED_COLUMNS` 에 마이그레이션 추가 |
-| `core/period.py` | `ALLOWED_DATE_FIELDS` 에 추가 |
-| `calculators/rules/date_rules.py` | OR 규칙이 볼 날짜 재검토 |
-| `core/offsetting.py` | `date_of` 허용값 |
-| `importers/purchase_importer.py` | 행 키 추가 |
+| `models/purchase.py` | `resolution_date: date \| None = None` 추가 |
+| `database/purchase_repository.py` | 컬럼 · INSERT · `_row_to_purchase` |
+| `database/bootstrap.py` | `_ADDED_COLUMNS` · `_REQUIRED_SCHEMA` · STARTUP seed · 기준값 마이그레이션 |
+| `core/period.py` | `ALLOWED_DATE_FIELDS` 에 `resolution_date` 추가 |
+| `core/config/settings.py` | `PURCHASE_PERIOD_DATE_FIELD` 허용값 추가 |
+| `calculators/rules/date_rules.py` | `PaymentOrContractDateRule` → **`ResolutionOrContractDateRule`** |
+| `database/policy_repository.py` | 허용 기준값에 `RESOLUTION_OR_CONTRACT_DATE` 추가(구 값 유지) |
+| `core/offsetting.py` | `date_of` 허용값 · 값 없는 행은 오류로 보고 |
+| `importers/purchase_importer.py` | 행 키 `resolution_date`(선택) 추가 |
 
-> ⚠️ **B 는 창업기업 OR 규칙에도 영향이 있다.** 현재 규칙은 "모델의 두 날짜를
-> 모두 본다" 는 전제인데, 날짜 필드가 셋이 되면 **어느 둘을 볼지 다시 정해야
-> 한다.** 고객 확정 문구는 "결의일자 OR 계약일자" 이므로 B 에서는
-> `resolution_date` 와 `contract_date` 가 대상이 된다.
+**창업기업 OR 규칙이 함께 바뀌었다** — 사전에 예고한 대로다. 고객 확정 문구가
+"결의일자 OR 계약일자" 이므로, 결의일자가 별도 필드가 된 이상 규칙 대상도
+`resolution_date` · `contract_date` 가 된다. `payment_date` 는 더 이상 보지 않는다.
 
-**PM 승인 없이 A·B·C 어느 것도 구현하지 않았다.**
+> ⚠️ `resolution_date` 가 비어 있는 **기존 행**은 계약일자만으로 판정한다.
+> 없는 값을 `payment_date` 로 대체하지 않는다(PM 금지 사항).
+
+## 4.3 🔴 남은 결정 — 업로드 시 `payment_date` 를 무엇으로 채우는가
+
+표준 양식에는 **지급일 컬럼이 없는데** 적재 계층은 `payment_date` 를 **필수**로
+요구한다. Mapping 계층을 만들려면 이것부터 정해야 한다.
+
+| 안 | 내용 | 영향 |
+|---|---|---|
+| **1** | 표준 양식에 지급일 컬럼 추가 | 양식 변경 = 고객 확인 필요 |
+| **2** | `payment_date` 를 선택 항목(NULL 허용)으로 | 스키마 · 기존 계산(일반 정책 판정 기준일) 영향 |
+| **3** | 업로드 경로에서만 다른 날짜로 채움 | 확정되지 않은 규칙이 생김 |
+
+⛔ **어느 것도 임의로 고르지 않았다.** `tests/test_upload_importer_seam.py`
+(`TestTheRemainingOpenPoint`) 가 이 지점을 실행 가능한 형태로 고정한다.
 
 ---
 
@@ -234,7 +245,7 @@ DB 필드를 뜻하지 않는다.
 |---|---|
 | openpyxl 설치 | PM 승인 대기 (§12) — 임시 환경에서 **실험만** |
 | 엑셀 어댑터 · 양식 다운로드 | 위와 동일 |
-| Mapping 계층 | 결의일자 필드 미확정 |
+| Mapping 계층 | 결의일자 필드는 확정됨. **지급일 처리 미확정**(§4.3) |
 | 업로드 API · 화면 | 위 둘에 종속 |
 | 중복 판정 | 기준 미확정 (§18) |
 | 음수 저장 제약 | 승인 대기 (§7) |
@@ -248,7 +259,7 @@ DB 필드를 뜻하지 않는다.
 |---|---|---|
 | 1 | openpyxl 추가 + 엑셀 어댑터 (읽기) | **승인 ①** |
 | 2 | 양식 다운로드 (`GET /uploads/template`) | 승인 ① |
-| 3 | Mapping 계층 | **승인 ②** (결의일자 필드) |
+| 3 | Mapping 계층 | **승인 ②** (지급일 처리 §4.3) |
 | 4 | 업로드 API (`POST /uploads/purchases`) | 1 · 3 |
 | 5 | Electron 파일 선택 + 결과 화면 | 4 |
 

@@ -43,6 +43,9 @@ from decimal import Decimal
 
 from procurement.models.purchase import Purchase
 
+#: 상계 순서를 가릴 때 허용하는 날짜 필드.
+_ALLOWED_DATE_FIELDS: tuple[str, ...] = ("resolution_date", "payment_date", "contract_date")
+
 
 @dataclass(frozen=True, kw_only=True)
 class OffsetPair:
@@ -104,29 +107,43 @@ def offset_negative_purchases(
     Args:
         purchases: 판정 대상 구매 목록.
         date_of: "이전/이후" 를 가릴 때 사용할 날짜 필드 이름.
-            ``"payment_date"`` 또는 ``"contract_date"``.
+            ``"resolution_date"`` · ``"payment_date"`` · ``"contract_date"``
+            중 하나.
 
-            **기본값을 두지 않습니다.** 어느 날짜가 결의일자인지 확정되지
-            않았으므로(W-1-1) 호출자가 명시해야 합니다.
+            **기본값을 두지 않습니다.** 상계 판정을 어느 날짜 기준으로 할지는
+            고객 확정 문구에 없으므로 호출자가 명시해야 합니다.
+
+            .. warning::
+                ``"resolution_date"`` 를 지정하면 그 값이 ``None`` 인 행
+                (필드 도입 이전 데이터)은 순서를 가릴 수 없으므로
+                :class:`ValueError` 를 냅니다. 없는 날짜를 다른 날짜로
+                대체하지 않습니다.
 
     Returns:
         :class:`OffsetResult`. ``remaining`` 이 계산에 사용할 목록입니다.
 
     Raises:
-        ValueError: ``date_of`` 가 허용되지 않는 필드명인 경우.
+        ValueError: ``date_of`` 가 허용되지 않는 필드명이거나, 대상 구매 중
+            그 날짜 값이 비어 있는 행이 있는 경우.
 
     Examples:
         >>> # A기업 +100,000 (3/1) 과 A기업 -100,000 (3/10) 은 상계되어 둘 다 빠진다.
     """
-    if date_of not in ("payment_date", "contract_date"):
-        raise ValueError(
-            f"date_of 는 'payment_date' 또는 'contract_date' 여야 합니다: {date_of!r}"
-        )
+    if date_of not in _ALLOWED_DATE_FIELDS:
+        allowed = " · ".join(repr(name) for name in _ALLOWED_DATE_FIELDS)
+        raise ValueError(f"date_of 는 {allowed} 중 하나여야 합니다: {date_of!r}")
 
     items = list(purchases)
 
     def sort_key(purchase: Purchase) -> tuple[date, int]:
-        return (getattr(purchase, date_of), purchase.purchase_id or 0)
+        basis = getattr(purchase, date_of)
+        if basis is None:
+            raise ValueError(
+                f"{date_of} 값이 없는 구매가 있어 상계 순서를 가릴 수 없습니다"
+                f"(purchase_id={purchase.purchase_id})."
+            )
+        assert isinstance(basis, date)
+        return (basis, purchase.purchase_id or 0)
 
     positives = sorted((p for p in items if p.amount > 0), key=sort_key)
     negatives = sorted((p for p in items if p.amount < 0), key=sort_key)

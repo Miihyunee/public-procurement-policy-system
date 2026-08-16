@@ -66,7 +66,11 @@ class TestMigrateSchema:
         assert "batch_id" in _columns(legacy_db)
 
     def test_reports_added_columns(self, legacy_db: Path) -> None:
-        assert migrate_schema(legacy_db) == ["purchase.batch_id"]
+        assert migrate_schema(legacy_db) == [
+            "purchase.batch_id",
+            # 2026-08-15 PM 결정 — 결의일자 별도 필드 신설.
+            "purchase.resolution_date",
+        ]
 
     def test_is_idempotent(self, legacy_db: Path) -> None:
         migrate_schema(legacy_db)

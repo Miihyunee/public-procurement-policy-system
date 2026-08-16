@@ -85,8 +85,8 @@ MVP_POLICY_SEEDS: tuple[PolicySeed, ...] = (
         policy_name="창업기업",
         # 2026-08-14 고객 확정: 결의일자와 계약일자 중 하나라도 인증 유효기간에
         # 해당하면 인정한다(OR 조건). 계약일 단독 기준이 아니다.
-        evaluation_basis="PAYMENT_OR_CONTRACT_DATE",
-        description="창업기업제품 우선구매(두 날짜 중 하나라도 인증기간에 해당하면 인정)",
+        evaluation_basis="RESOLUTION_OR_CONTRACT_DATE",
+        description="창업기업제품 우선구매(결의일자·계약일자 중 하나라도 인증기간에 해당하면 인정)",
     ),
     PolicySeed(
         policy_code="GREEN",
@@ -107,6 +107,7 @@ _REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
         "business_no",
         "contract_date",
         "payment_date",
+        "resolution_date",
         "amount",
         "batch_id",
     ),
@@ -205,6 +206,9 @@ def init_db(db_path: str | Path | None = None) -> None:
 #: 않으므로 ``ALTER TABLE`` 로 보완한다. (테이블, 컬럼, 컬럼 정의)
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("purchase", "batch_id", "INTEGER"),
+    # 2026-08-15 PM 결정 — 결의일자를 payment_date 에 섞지 않고 별도 필드로 둔다.
+    # 기존 행은 NULL 이 되며, 값이 없다는 사실이 그대로 보존된다.
+    ("purchase", "resolution_date", "DATE"),
 )
 
 
@@ -245,7 +249,10 @@ def migrate_schema(db_path: str | Path | None = None) -> list[str]:
 #: 않는 상태를 막기 위해 명시적으로 갱신한다.
 _UPDATED_EVALUATION_BASIS: tuple[tuple[str, str, str], ...] = (
     # 2026-08-14 고객 확정 — 창업기업은 결의일자 OR 계약일자로 판정한다.
-    ("STARTUP", "CONTRACT_DATE", "PAYMENT_OR_CONTRACT_DATE"),
+    ("STARTUP", "CONTRACT_DATE", "RESOLUTION_OR_CONTRACT_DATE"),
+    # 2026-08-15 PM 결정 — 결의일자가 resolution_date 라는 별도 필드로 확정되어,
+    # 임시로 쓰던 PAYMENT_OR_CONTRACT_DATE(=지급일 OR 계약일)를 대체한다.
+    ("STARTUP", "PAYMENT_OR_CONTRACT_DATE", "RESOLUTION_OR_CONTRACT_DATE"),
 )
 
 

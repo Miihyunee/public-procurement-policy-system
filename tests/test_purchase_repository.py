@@ -78,6 +78,11 @@ class TestCreateTable:
 
         ``batch_id`` 는 월별 누적 적재(Import Batch) 도입으로 추가된 컬럼이며
         NULL 을 허용합니다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-15 PM 결정으로 결의일자를 담는
+            ``resolution_date`` 컬럼이 신설되었습니다. ``payment_date`` 를
+            결의일자로 재정의하지 않았으므로 기존 컬럼은 그대로입니다.
         """
         names = [row["name"] for row in repo.execute("PRAGMA table_info(purchase)")]
         assert names == [
@@ -87,11 +92,17 @@ class TestCreateTable:
             "company_name",
             "contract_date",
             "payment_date",
+            "resolution_date",
             "amount",
             "batch_id",
             "created_at",
             "updated_at",
         ]
+
+    def test_resolution_date_allows_null(self, repo: PurchaseRepository) -> None:
+        """``resolution_date`` 는 기존 행 보호를 위해 NULL 을 허용합니다."""
+        cols = {row["name"]: row for row in repo.execute("PRAGMA table_info(purchase)")}
+        assert cols["resolution_date"]["notnull"] == 0
 
     def test_batch_id_allows_null(self, repo: PurchaseRepository) -> None:
         """batch_id 는 배치 없이 적재된 행을 위해 NULL 을 허용합니다."""

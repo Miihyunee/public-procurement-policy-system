@@ -322,11 +322,20 @@ class TestNotWiredIntoStorage:
                 for name in names:
                     assert name.split(".")[0] in allowed_roots, f"{module.__name__}: {name}"
 
-    def test_resolution_date_has_no_model_field_yet(self) -> None:
-        """``Purchase`` 에 ``resolution_date`` 필드를 만들지 않았다."""
+    def test_resolution_date_now_has_a_model_field(self) -> None:
+        """``Purchase.resolution_date`` 가 존재하고 **선택 항목**이다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-15 PM 최종 결정(B안)으로 결의일자
+            전용 필드가 신설되었습니다. 이전에는 어느 필드에 넣을지 미확정이라
+            "필드를 만들지 않았다" 를 고정하고 있었습니다.
+
+            기본값이 ``None`` 이어야 필드 도입 이전 데이터가 보호됩니다.
+        """
         import dataclasses
 
         from procurement.models import Purchase
 
-        names = {f.name for f in dataclasses.fields(Purchase)}
-        assert "resolution_date" not in names
+        fields = {f.name: f for f in dataclasses.fields(Purchase)}
+        assert "resolution_date" in fields
+        assert fields["resolution_date"].default is None

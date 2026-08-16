@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS purchase (
     company_name TEXT NOT NULL,
     contract_date DATE NOT NULL,
     payment_date DATE NOT NULL,
+    resolution_date DATE,
     amount NUMERIC NOT NULL,
     batch_id INTEGER,
     created_at DATETIME NOT NULL,
@@ -141,8 +142,8 @@ class PurchaseRepository(BaseRepository):
         sql = (
             "INSERT INTO purchase "
             "(business_no, company_id, company_name, contract_date, payment_date, "
-            "amount, batch_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "resolution_date, amount, batch_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         params = (
             purchase.business_no,
@@ -150,6 +151,7 @@ class PurchaseRepository(BaseRepository):
             purchase.company_name,
             _to_db_date(purchase.contract_date),
             _to_db_date(purchase.payment_date),
+            _to_db_date(purchase.resolution_date) if purchase.resolution_date else None,
             _to_db_amount(purchase.amount),
             purchase.batch_id,
             _to_db(created_at),
@@ -167,6 +169,7 @@ class PurchaseRepository(BaseRepository):
             company_name=purchase.company_name,
             contract_date=purchase.contract_date,
             payment_date=purchase.payment_date,
+            resolution_date=purchase.resolution_date,
             amount=purchase.amount,
             batch_id=purchase.batch_id,
             created_at=created_at,
@@ -360,6 +363,9 @@ class PurchaseRepository(BaseRepository):
             company_name=row["company_name"],
             contract_date=_from_db_date(row["contract_date"]),
             payment_date=_from_db_date(row["payment_date"]),
+            resolution_date=(
+                _from_db_date(row["resolution_date"]) if row["resolution_date"] else None
+            ),
             amount=_from_db_amount(row["amount"]),
             batch_id=row["batch_id"],
             created_at=_from_db(row["created_at"]),

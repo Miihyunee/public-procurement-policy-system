@@ -112,7 +112,7 @@ class TestSeedPolicies:
         repository = PolicyRepository(db_path)
         startup = repository.find_by_policy_code("STARTUP")
         assert startup is not None
-        assert startup.evaluation_basis == "PAYMENT_OR_CONTRACT_DATE"
+        assert startup.evaluation_basis == "RESOLUTION_OR_CONTRACT_DATE"
         for code in EXPECTED_CODES - {"STARTUP"}:
             policy = repository.find_by_policy_code(code)
             assert policy is not None
@@ -269,8 +269,8 @@ class TestEvaluationBasisMigration:
 
         updated = migrate_policy_evaluation_basis(db_path)
 
-        assert updated == ["STARTUP: CONTRACT_DATE→PAYMENT_OR_CONTRACT_DATE"]
-        assert self._basis(db_path, "STARTUP") == "PAYMENT_OR_CONTRACT_DATE"
+        assert updated == ["STARTUP: CONTRACT_DATE→RESOLUTION_OR_CONTRACT_DATE"]
+        assert self._basis(db_path, "STARTUP") == "RESOLUTION_OR_CONTRACT_DATE"
 
     def test_migration_is_idempotent(self, db_path: Path) -> None:
         bootstrap(db_path)
@@ -304,7 +304,7 @@ class TestEvaluationBasisMigration:
 
         bootstrap(db_path)
 
-        assert self._basis(db_path, "STARTUP") == "PAYMENT_OR_CONTRACT_DATE"
+        assert self._basis(db_path, "STARTUP") == "RESOLUTION_OR_CONTRACT_DATE"
 
     def test_missing_policy_table_is_safe(self, tmp_path: Path) -> None:
         """정책 테이블이 없어도 예외 없이 빈 목록을 반환한다."""

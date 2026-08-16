@@ -34,9 +34,16 @@ PAYMENT_DATE = "payment_date"
 #: 계약일 기준
 CONTRACT_DATE = "contract_date"
 
+#: 결의일자 — **일반 정책의 구매실적 산정 기준일** (2026-08-14 고객 확정).
+#:
+#: 2026-08-15 PM 결정으로 ``payment_date`` 와 분리된 별도 필드가 되었습니다.
+RESOLUTION_DATE = "resolution_date"
+
 #: 기간 판정에 사용할 수 있는 날짜 컬럼. ``purchase`` 테이블의 실제 컬럼명이며,
 #: SQL 에 직접 끼워 넣기 전에 반드시 이 집합으로 검증합니다.
-ALLOWED_DATE_FIELDS: frozenset[str] = frozenset({PAYMENT_DATE, CONTRACT_DATE})
+ALLOWED_DATE_FIELDS: frozenset[str] = frozenset(
+    {PAYMENT_DATE, CONTRACT_DATE, RESOLUTION_DATE}
+)
 
 
 class PeriodValidationError(ValueError):

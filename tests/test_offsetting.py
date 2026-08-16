@@ -228,13 +228,41 @@ class TestEdgeCases:
         assert offset_negative_purchases([positive, negative], date_of=FIELD).pairs == []
 
     def test_date_field_must_be_given_explicitly(self) -> None:
-        """``date_of`` 는 기본값이 없다 — 결의일자 컬럼이 미확정이기 때문(W-1-1)."""
+        """``date_of`` 는 기본값이 없다 — 상계 기준 날짜가 확정되지 않았다."""
         with pytest.raises(TypeError):
             offset_negative_purchases([])  # type: ignore[call-arg]
 
     def test_unknown_date_field_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="date_of"):
-            offset_negative_purchases([], date_of="resolution_date")
+            offset_negative_purchases([], date_of="created_at")
+
+    def test_resolution_date_is_now_an_allowed_field(self) -> None:
+        """결의일자 기준 상계도 가능하다(2026-08-15 필드 신설).
+
+        .. note::
+            **기대값이 바뀐 이유** — 이전에는 ``resolution_date`` 라는 필드
+            자체가 없어 거부 대상이었습니다. 필드가 생겼으므로 호출자가
+            선택할 수 있는 값이 되었습니다.
+        """
+        positive = _p("100000", 1)
+        negative = _p("-100000", 10)
+        positive.resolution_date = positive.contract_date
+        negative.resolution_date = negative.contract_date
+
+        result = offset_negative_purchases(
+            [positive, negative], date_of="resolution_date"
+        )
+
+        assert len(result.pairs) == 1
+        assert result.remaining == []
+
+    def test_missing_resolution_date_is_reported_not_guessed(self) -> None:
+        """⛔ 결의일자가 없는 행을 다른 날짜로 대체하지 않는다."""
+        positive = _p("100000", 1)
+        negative = _p("-100000", 10)
+
+        with pytest.raises(ValueError, match="resolution_date"):
+            offset_negative_purchases([positive, negative], date_of="resolution_date")
 
     def test_contract_date_can_be_used_as_ordering_field(self) -> None:
         """계약일 기준으로도 판정할 수 있다(호출자가 선택)."""

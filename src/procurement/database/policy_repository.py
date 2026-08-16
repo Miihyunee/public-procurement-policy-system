@@ -50,9 +50,19 @@ _REQUIRED_FIELDS = ("policy_code", "policy_name")
 
 # evaluation_basis 허용 값 (MVP). VENDOR_EXISTENCE 는 이번 범위에 포함하지 않는다.
 #
-# PAYMENT_OR_CONTRACT_DATE 는 2026-08-14 고객 확정 규칙(창업기업)이며, 구매의 두
-# 날짜 중 하나라도 인증 유효기간에 해당하면 인정한다는 뜻이다.
-ALLOWED_EVALUATION_BASIS = ("PAYMENT_DATE", "CONTRACT_DATE", "PAYMENT_OR_CONTRACT_DATE")
+# RESOLUTION_OR_CONTRACT_DATE 는 2026-08-14 고객 확정 규칙(창업기업)이며,
+# 결의일자(resolution_date) 또는 계약일자 중 하나라도 인증 유효기간에 해당하면
+# 인정한다는 뜻이다.
+#
+# 구 값 PAYMENT_OR_CONTRACT_DATE 는 결의일자가 별도 필드로 확정되기 전에 쓰던
+# 이름이며, migrate_policy_evaluation_basis() 가 갱신한다. 갱신 전 DB 도 읽을 수
+# 있어야 하므로 허용 목록에는 남겨 둔다(신규 등록에 쓰지 않는다).
+ALLOWED_EVALUATION_BASIS = (
+    "PAYMENT_DATE",
+    "CONTRACT_DATE",
+    "RESOLUTION_OR_CONTRACT_DATE",
+    "PAYMENT_OR_CONTRACT_DATE",
+)
 
 #: 목표율 상한.
 #:

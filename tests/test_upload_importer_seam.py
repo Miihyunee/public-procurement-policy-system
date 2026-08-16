@@ -86,22 +86,36 @@ class TestTheTwoLayersFit:
         """``PurchaseImporter`` 가 읽는 키 (코드에서 추출).
 
         이 목록이 바뀌면 Mapping 계층도 바뀌어야 하므로 여기서 먼저 깨집니다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-15 PM 최종 결정(B안)으로
+            ``resolution_date`` 가 신설되어 적재 계층이 이 키를 읽습니다.
         """
         assert _importer_row_keys() == {
             "business_no",
             "company_name",
             "contract_date",
             "payment_date",
+            "resolution_date",
             "amount",
         }
 
-    def test_four_of_five_keys_already_match(self) -> None:
-        """검증 결과의 키 5개 중 **4개는 이름까지 그대로 통한다.**
+    def test_all_validated_keys_now_reach_storage(self) -> None:
+        """검증 결과의 키 5개가 **모두** 이름 그대로 적재 계층에 통한다.
 
-        따라서 Mapping 계층은 새 변환기가 아니라 **얇은 연결자**면 된다.
+        .. note::
+            **기대값이 바뀐 이유** — 이전에는 4개만 통하고 ``resolution_date``
+            가 갈 곳이 없었습니다(= PM 결정 지점). 결정이 내려져 필드가
+            생겼으므로 이제 5개 모두 통합니다.
         """
-        shared = _validated_keys() & _importer_row_keys()
-        assert shared == {"business_no", "company_name", "contract_date", "amount"}
+        assert _validated_keys() <= _importer_row_keys()
+        assert _validated_keys() == {
+            "business_no",
+            "company_name",
+            "contract_date",
+            "resolution_date",
+            "amount",
+        }
 
     def test_validated_types_are_what_the_importer_accepts(self) -> None:
         """검증이 만든 값의 타입이 적재 계층이 받는 타입과 맞는다."""
@@ -127,34 +141,35 @@ class TestTheTwoLayersFit:
         assert again.value == validated == "2208162517"
 
 
-class TestTheOnlyMissingLink:
-    """🔴 맞물리지 않는 지점은 **정확히 하나**다 — 그것이 PM 결정 사항이다."""
+class TestTheRemainingOpenPoint:
+    """🔴 아직 값을 채워 줄 수 없는 항목은 **정확히 하나**다 — PM 결정 사항이다."""
 
-    def test_exactly_one_validated_key_has_no_destination(self) -> None:
-        """검증이 만드는 키 중 **갈 곳이 없는 것은 `resolution_date` 하나**뿐이다."""
-        orphans = _validated_keys() - _importer_row_keys()
-        assert orphans == {"resolution_date"}
+    def test_no_validated_key_is_orphaned_anymore(self) -> None:
+        """검증이 만드는 키 중 갈 곳이 없는 것은 **더 이상 없다**."""
+        assert _validated_keys() - _importer_row_keys() == set()
 
-    def test_exactly_one_importer_key_has_no_source(self) -> None:
-        """적재 계층이 받는 키 중 **채워 줄 값이 없는 것은 `payment_date` 하나**뿐이다."""
-        unfilled = _importer_row_keys() - _validated_keys()
-        assert unfilled == {"payment_date"}
+    def test_payment_date_still_has_no_source_in_the_standard_form(self) -> None:
+        """표준 양식에는 **지급일 컬럼이 없다.**
 
-    def test_the_decision_is_a_one_to_one_choice(self) -> None:
-        """즉 남은 결정은 **1:1 연결 하나**다.
+        그런데 적재 계층은 ``payment_date`` 를 **필수**로 요구합니다. 즉 업로드
+        경로를 실제로 연결하려면 다음 중 하나를 PM 이 정해야 합니다.
 
-        ``resolution_date`` (표준 양식의 결의일자) 를
-        ``payment_date`` 에 넣을 것인지(A안),
-        새 필드를 만들 것인지(B안),
-        기존 필드의 의미를 바꿀 것인지(C안).
+        1. 표준 양식에 지급일 컬럼을 추가한다
+        2. ``payment_date`` 를 선택 항목으로 바꾼다(NULL 허용)
+        3. 업로드 경로에서만 다른 날짜로 채운다
 
-        ⛔ **이 테스트는 셋 중 어느 것도 고르지 않는다.** 결정이 하나로
-        좁혀졌다는 사실만 고정한다.
+        ⛔ **이 테스트는 셋 중 어느 것도 고르지 않는다.** 결정이 필요하다는
+        사실만 고정한다. ``payment_date`` 를 결의일자로 대체하는 선택지는
+        2026-08-15 PM 결정으로 이미 배제되었다.
         """
-        orphans = _validated_keys() - _importer_row_keys()
-        unfilled = _importer_row_keys() - _validated_keys()
+        assert _importer_row_keys() - _validated_keys() == {"payment_date"}
 
-        assert len(orphans) == len(unfilled) == 1
+    def test_payment_date_is_still_required_by_storage(self) -> None:
+        """지급일이 비면 행이 실패한다(= 위 결정 없이는 업로드가 통하지 않는다)."""
+        from procurement.importers.purchase_importer import _parse_date
+
+        _, error = _parse_date(None, "지급일")
+        assert error is not None
 
     def test_mapping_layer_does_not_exist_yet(self) -> None:
         """Mapping 계층을 아직 만들지 않았다.

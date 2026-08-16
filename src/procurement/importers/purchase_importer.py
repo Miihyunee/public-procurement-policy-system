@@ -182,6 +182,8 @@ class PurchaseImporter:
 
         - ``business_no`` (필수), ``amount`` (필수)
         - ``contract_date`` (필수), ``payment_date`` (필수)
+        - ``resolution_date`` (**선택**) — 결의일자. 표준 업로드 양식에서
+          들어옵니다. 없으면 ``None`` 으로 저장하며, 기존 동작과 동일합니다.
         - ``company_name`` (없으면 ``"(미상)"`` 으로 대체하고 경고)
 
         한 행이 실패해도 중단하지 않고 다음 행을 계속 처리합니다.
@@ -240,6 +242,16 @@ class PurchaseImporter:
         if error is not None:
             return self._failed(row_number, [*messages, error], business_no)
 
+        # 결의일자는 선택 항목이다. 값이 없으면 None 으로 두고, 있는데 형식이
+        # 틀리면 조용히 버리지 않고 실패로 처리한다.
+        raw_resolution_date = row.get("resolution_date")
+        resolution_date: date | None = None
+        # datetime 은 date 의 하위형이므로 date 검사 하나로 둘 다 걸린다.
+        if isinstance(raw_resolution_date, date) or _clean_text(raw_resolution_date):
+            resolution_date, error = _parse_date(raw_resolution_date, "결의일자")
+            if error is not None:
+                return self._failed(row_number, [*messages, error], business_no)
+
         amount, error = _parse_amount(row.get("amount"))
         if error is not None:
             return self._failed(row_number, [*messages, error], business_no)
@@ -272,6 +284,7 @@ class PurchaseImporter:
                     company_name=company_name,
                     contract_date=contract_date,
                     payment_date=payment_date,
+                    resolution_date=resolution_date,
                     amount=amount,
                     company_id=company_id,
                     batch_id=batch_id,

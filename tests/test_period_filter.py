@@ -17,6 +17,7 @@ from procurement.core.period import (
     ALLOWED_DATE_FIELDS,
     CONTRACT_DATE,
     PAYMENT_DATE,
+    RESOLUTION_DATE,
     PeriodFilter,
     PeriodValidationError,
 )
@@ -94,8 +95,18 @@ class TestForYear:
 class TestAllowedFields:
     """허용 목록."""
 
-    def test_only_two_fields_allowed(self) -> None:
-        assert ALLOWED_DATE_FIELDS == frozenset({PAYMENT_DATE, CONTRACT_DATE})
+    def test_only_confirmed_fields_allowed(self) -> None:
+        """허용 필드는 셋이다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-15 PM 결정으로 결의일자
+            (``resolution_date``)가 별도 필드로 신설되었습니다. 연도 귀속을
+            결의일자로 나눌 수 있어야 하므로 허용 목록에 추가되었습니다.
+            기존 두 값은 제거하지 않았습니다.
+        """
+        assert ALLOWED_DATE_FIELDS == frozenset(
+            {PAYMENT_DATE, CONTRACT_DATE, RESOLUTION_DATE}
+        )
 
     def test_describe_mentions_date_field(self) -> None:
         period = PeriodFilter.for_year(2026, CONTRACT_DATE)
