@@ -26,6 +26,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { startBackend } = require("../electron/backend");
+const { fileNameFromDisposition, TEMPLATE_PATH } = require("../electron/uploads");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 
@@ -90,6 +91,64 @@ async function main() {
 
   const policies = await fetch(`${base}/policies`);
   results.push(report(policies.ok, "정책 API 응답", `HTTP ${policies.status}`));
+
+  // --- 업로드 경로 ---------------------------------------------------
+  //
+  // Electron 이 실제로 하는 일(양식 내려받아 저장 → 그 파일 경로를 백엔드에
+  // 넘겨 검증)을 GUI 없이 그대로 재현한다. 업무 판정은 전부 백엔드가 한다.
+  const templateResponse = await fetch(`${base}${TEMPLATE_PATH}`);
+  const templateBytes = Buffer.from(await templateResponse.arrayBuffer());
+  const templateName = fileNameFromDisposition(
+    templateResponse.headers.get("content-disposition"),
+  );
+  results.push(
+    report(
+      templateResponse.ok && templateBytes.subarray(0, 2).toString() === "PK",
+      "표준 양식 다운로드",
+      `${templateName} · ${templateBytes.length.toLocaleString()} bytes`,
+    ),
+  );
+
+  const savedTemplate = path.join(userDataDir, templateName);
+  fs.writeFileSync(savedTemplate, templateBytes);
+
+  const validation = await fetch(`${base}/uploads/purchases/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_path: savedTemplate }),
+  });
+  const validationBody = await validation.json();
+  results.push(
+    report(
+      validation.ok && validationBody.ok === true,
+      "내려받은 양식이 검증을 통과",
+      `총 ${validationBody.total_rows}행 · 정상 ${validationBody.valid_rows}행`,
+    ),
+  );
+  results.push(
+    report(
+      validationBody.stored === false && Boolean(validationBody.storage_note),
+      "검증만 수행하고 저장하지 않음",
+      validationBody.storage_note || "",
+    ),
+  );
+
+  const brokenPath = path.join(userDataDir, "broken.xlsx");
+  fs.writeFileSync(brokenPath, "not an excel file");
+  const brokenResult = await (
+    await fetch(`${base}/uploads/purchases/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_path: brokenPath }),
+    })
+  ).json();
+  results.push(
+    report(
+      Array.isArray(brokenResult.file_errors) && brokenResult.file_errors.length > 0,
+      "잘못된 파일을 오류로 안내",
+      (brokenResult.file_errors || [""])[0].slice(0, 40) + "...",
+    ),
+  );
 
   const dbFile = path.join(userDataDir, "database", "procurement.db");
   results.push(

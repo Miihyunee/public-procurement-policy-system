@@ -20,9 +20,10 @@
 "use strict";
 
 const path = require("node:path");
-const { app, BrowserWindow, dialog, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 
 const { startBackend } = require("./backend");
+const { saveTemplate, selectExcelFile } = require("./uploads");
 
 /** 개발 모드 여부. 배포본에서는 번들된 백엔드 실행파일을 사용한다. */
 const isDev = !app.isPackaged;
@@ -115,6 +116,21 @@ function showStartupFailure(error) {
   );
 }
 
+/**
+ * 업로드 관련 IPC 핸들러를 등록한다.
+ *
+ * 렌더러에는 **파일 대화상자 두 개**만 열어 준다. 엑셀 해석·검증·저장은 전부
+ * Python 백엔드가 하며, 여기서 업무 로직을 구현하지 않는다.
+ *
+ * @param {number} port 백엔드 포트.
+ */
+function registerUploadHandlers(port) {
+  ipcMain.handle("uploads:saveTemplate", () =>
+    saveTemplate({ port, dialog, window: mainWindow }),
+  );
+  ipcMain.handle("uploads:selectFile", () => selectExcelFile({ dialog, window: mainWindow }));
+}
+
 app.whenReady().then(async () => {
   try {
     backend = await startBackend(backendConfig());
@@ -124,6 +140,7 @@ app.whenReady().then(async () => {
     return;
   }
 
+  registerUploadHandlers(backend.port);
   createWindow(backend.port);
 
   app.on("activate", () => {

@@ -10,15 +10,32 @@
  *
  *     `contextIsolation: true` · `nodeIntegration: false` · `sandbox: true`
  *     설정과 함께 동작한다.
+ *
+ *     업로드 기능 때문에 **파일 대화상자 두 개**만 추가로 노출한다. 파일
+ *     시스템·프로세스 자체를 여는 것이 아니라, 미리 정해진 동작만 요청할 수
+ *     있는 함수다. 고른 파일의 **경로만** 화면으로 돌아오며 파일 내용은
+ *     넘기지 않는다. 엑셀 해석·검증은 전부 Python 백엔드가 한다.
  */
 
 "use strict";
 
-const { contextBridge } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("procurementApp", {
   /** 데스크톱 앱에서 실행 중인지 여부. 화면이 필요하면 참고할 수 있다. */
   isDesktop: true,
+  /**
+   * 표준 업로드 양식을 저장할 위치를 고르고 저장한다.
+   *
+   * @returns {Promise<{saved: boolean, path?: string, message?: string}>}
+   */
+  saveTemplate: () => ipcRenderer.invoke("uploads:saveTemplate"),
+  /**
+   * 업로드할 엑셀 파일을 고른다. **경로만** 돌려준다.
+   *
+   * @returns {Promise<{selected: boolean, path?: string, name?: string}>}
+   */
+  selectUploadFile: () => ipcRenderer.invoke("uploads:selectFile"),
   /** Electron 버전(진단용). */
   versions: {
     electron: process.versions.electron,

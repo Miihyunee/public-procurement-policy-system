@@ -29,9 +29,11 @@ FastAPI 애플리케이션과 **의존성 조립(composition root)** 을 정의�
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from pydantic import BaseModel, Field
 
 from procurement.admin import (
     PolicyAdminService,
@@ -55,6 +57,9 @@ from procurement.database.company_repository import CompanyRepository
 from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.purchase_repository import PurchaseRepository
+from procurement.uploads.template import TEMPLATE_FILE_NAME, build_template_bytes
+from procurement.uploads.upload_response import UploadResponseModel, build_upload_response
+from procurement.uploads.upload_service import UploadService
 from procurement.web import (
     AchievementLevelsResponseModel,
     PolicyDisplayResponseModel,
@@ -180,6 +185,24 @@ def _require_period(year: int | None, date_field: str | None) -> PeriodFilter:
     return PeriodFilter.for_year(year, date_field)
 
 
+#: ``.xlsx`` 의 MIME 타입.
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+class UploadRequestModel(BaseModel):
+    """업로드 검증 요청.
+
+    Attributes:
+        file_path: 검증할 ``.xlsx`` 파일의 **로컬 경로**. 데스크톱 앱이 파일
+            선택 대화상자에서 얻은 경로를 그대로 넘깁니다.
+    """
+
+    file_path: str = Field(
+        min_length=1,
+        description="검증할 .xlsx 파일의 로컬 경로",
+    )
+
+
 def create_app(
     db_path: str | Path | None = None,
     admin_token: str | None = None,
@@ -205,6 +228,7 @@ def create_app(
         엔드포인트가 등록된 :class:`fastapi.FastAPI` 인스턴스.
     """
     dashboard_api = build_dashboard_api(db_path)
+    upload_service = UploadService()
     policy_admin = build_policy_admin(db_path)
     date_field = (
         period_date_field
@@ -326,6 +350,51 @@ def create_app(
         호출해 채웁니다.
         """
         return HTMLResponse(read_index_html())
+
+    @app.get(
+        "/uploads/template",
+        summary="표준 업로드 양식(.xlsx) 내려받기",
+        tags=["uploads"],
+        response_class=Response,
+    )
+    def download_upload_template() -> Response:
+        """표준 업로드 양식 엑셀 파일을 반환합니다.
+
+        컬럼 정의는 :mod:`procurement.uploads.format` 하나만 참조하므로, 양식
+        파일과 검증 규칙이 서로 어긋날 수 없습니다.
+
+        ⛔ 업무규칙이 확정되지 않은 컬럼(예산과목·구매유형 등)은 양식에 넣지
+        않습니다. 칸이 있으면 사용자가 채우고, 그 값을 시스템이 해석하게 되어
+        확정되지 않은 규칙이 생기기 때문입니다.
+        """
+        quoted = quote(TEMPLATE_FILE_NAME)
+        return Response(
+            content=build_template_bytes(),
+            media_type=XLSX_MEDIA_TYPE,
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8\'\'{quoted}"},
+        )
+
+    @app.post(
+        "/uploads/purchases/validate",
+        response_model=UploadResponseModel,
+        summary="표준 업로드 파일 검증 (저장하지 않음)",
+        tags=["uploads"],
+    )
+    def validate_purchase_upload(payload: UploadRequestModel) -> UploadResponseModel:
+        """올린 엑셀 파일을 읽어 **모든 행을 검증**하고 결과를 반환합니다.
+
+        ⛔ **저장하지 않습니다.** 표준 양식에는 지급일 항목이 없는데 적재
+        계층은 ``payment_date`` 를 필수로 요구합니다. 이 칸을 무엇으로 채울지는
+        업무규칙 결정 사항이므로, 임시로 다른 날짜를 넣어 저장하지 않습니다.
+
+        검증은 "전부 검증 → 전부 저장" 원칙에 따라 **전체 행을 먼저** 수행하며,
+        일부 행만 먼저 저장하는 경로를 만들지 않았습니다.
+
+        파일은 **경로로 전달**받습니다. 백엔드는 데스크톱 앱이 띄운
+        ``127.0.0.1`` 전용 프로세스이고 파일은 같은 PC 에 있으므로, 파일 본문을
+        네트워크로 다시 실어 보내지 않습니다.
+        """
+        return build_upload_response(upload_service.validate_file(payload.file_path))
 
     @app.get(
         "/policies",

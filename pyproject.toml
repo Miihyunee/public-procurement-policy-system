@@ -31,6 +31,9 @@ dependencies = [
     "python-dotenv>=1.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    # 표준 업로드 양식 .xlsx 읽기·쓰기 (2026-08-16 PM 승인 §11).
+    # 순수 파이썬 패키지라 폐쇄망에서도 wheel 하나로 설치된다.
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -71,6 +74,13 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 mypy_path = "src"
+
+# openpyxl 은 타입 스텁을 제공하지 않는다. 스텁 패키지(types-openpyxl)를 새
+# 의존성으로 추가하는 대신 이 모듈만 예외로 둔다. 우리 코드의 strict 검사는
+# 그대로 유지되며, 어댑터 경계에서 값 타입을 직접 좁혀 쓰고 있다.
+[[tool.mypy.overrides]]
+module = ["openpyxl.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

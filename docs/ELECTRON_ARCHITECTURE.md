@@ -114,12 +114,19 @@ $ node scripts/verify-backend.js
   [OK] 기존 화면 그대로 재사용 — 차트 컨테이너 확인
   [OK] 외부 리소스 미사용 — 오프라인·폐쇄망에서도 동작
   [OK] 정책 API 응답 — HTTP 200
+  [OK] 표준 양식 다운로드 — 구매실적_표준양식.xlsx · 6,404 bytes
+  [OK] 내려받은 양식이 검증을 통과 — 총 1행 · 정상 1행
+  [OK] 검증만 수행하고 저장하지 않음
+  [OK] 잘못된 파일을 오류로 안내
   [OK] DB 가 사용자 데이터 디렉터리에 생성됨 — database/procurement.db
   [OK] 설치 디렉터리를 오염시키지 않음
   [OK] 종료 시 백엔드 정리
 
-결과: 8/8 통과
+결과: 12/12 통과
 ```
+
+업로드 4건은 Electron 이 실제로 하는 일(양식을 내려받아 저장 → 그 경로를
+백엔드에 넘겨 검증)을 GUI 없이 그대로 재현한 것이다.
 
 ## 3.1 🔴 검증 과정에서 드러난 요건 — 최초 실행 처리
 
@@ -154,6 +161,7 @@ F-1 기능이 의도대로 동작한 것이다. 다만 **데스크톱 사용자�
 | `electron/backend.js` | 백엔드 생명주기 (포트·DB경로·init·기동·정리) | ❌ **없음** |
 | `electron/main.js` | Electron 결합 (창·메뉴·오류 안내) | ✅ |
 | `electron/preload.js` | 렌더러 노출 최소화 | ✅ |
+| `electron/uploads.js` | 파일 대화상자 · 양식 저장 (업무 로직 없음) | ✅ (주입식) |
 | `scripts/verify-backend.js` | 헤드리스 검증 | ❌ 없음 |
 
 **`backend.js` 가 Electron 을 import 하지 않는 이유**: 가장 깨지기 쉬운 부분
@@ -165,10 +173,34 @@ F-1 기능이 의도대로 동작한 것이다. 다만 **데스크톱 사용자�
 contextIsolation: true    nodeIntegration: false    sandbox: true
 ```
 
-preload 는 진단용 버전 정보만 노출한다. 화면이 파일 시스템·프로세스에 접근할
-이유가 없다 — 데이터는 전부 localhost HTTP 로 오간다.
+preload 가 노출하는 것은 **네 가지뿐**이다.
+
+| 키 | 역할 |
+|---|---|
+| `isDesktop` | 데스크톱 실행 여부(화면이 브라우저 모드와 구분) |
+| `saveTemplate()` | 표준 양식 저장 위치를 고르고 저장 |
+| `selectUploadFile()` | 업로드할 파일을 고르고 **경로만** 반환 |
+| `versions` | 진단용 버전 정보 |
+
+⛔ `ipcRenderer` 자체를 노출하지 않는다(임의 채널 호출 방지). 파일 시스템·프로세스를
+여는 것이 아니라 **미리 정해진 동작만** 요청할 수 있다. 파일 **내용**은 렌더러로
+넘어가지 않으며, 엑셀 해석·검증은 전부 Python 이 한다.
 
 외부 링크는 `setWindowOpenHandler` 로 기본 브라우저에 넘긴다.
+
+## 4.1.1 업로드 경로
+
+```text
+렌더러 [파일 선택]  →  preload.selectUploadFile()  →  main: dialog.showOpenDialog
+                                                          ↓ 경로 문자열
+렌더러 [검증 실행]  →  POST /uploads/purchases/validate {file_path}
+                                                          ↓
+                        Python: excel_adapter → validation → 결과 JSON
+```
+
+파일 본문을 네트워크로 다시 실어 보내지 않는다. 백엔드가 같은 PC 의
+`127.0.0.1` 전용 자식 프로세스이기 때문이다(선택 근거: `UPLOAD_PIPELINE_DESIGN.md`
+§4.5.1).
 
 ## 4.2 오류 안내
 
@@ -204,12 +236,17 @@ preload 는 진단용 버전 정보만 노출한다. 화면이 파일 시스템�
 
 | 항목 | 상태 |
 |---|---|
-| 백엔드 생명주기 | ✅ **검증 완료** (8/8) |
+| 백엔드 생명주기 | ✅ **검증 완료** (12/12) |
+| 업로드 API · 양식 다운로드 | ✅ **검증 완료** — 실제 백엔드 프로세스 대상 |
+| 업로드 화면 렌더링 | ✅ **검증 완료** — 헤드리스 브라우저로 두 테마 확인 |
+| Electron IPC 구조 | 🟡 **정적 검증만** — preload 노출 범위·보안 설정을 테스트로 고정 |
 | `npm install` | ❌ **미수행** — Electron 바이너리 미설치 |
-| Electron 창 실제 표시 | ❌ **미검증** — 현재 환경은 헤드리스 Linux |
+| Electron 창 실제 표시 · 파일 대화상자 | ❌ **미검증** — 현재 환경은 헤드리스 Linux |
 | **Windows 동작** | ❌ **미검증** — Windows 환경 없음 |
 
-**"Electron 앱이 동작한다" 고 표현하지 않는다.** 검증된 것은 백엔드 계층뿐이다.
+**"Electron 앱이 동작한다" 고 표현하지 않는다.** 검증된 것은 백엔드 계층과
+화면 렌더링이며, **Electron 바이너리를 띄운 실행은 여전히 미검증**이다.
+`dialog.showOpenDialog` / `showSaveDialog` 는 실제로 호출해 보지 못했다.
 
 ## 5.3 알려진 이식성 고려사항
 
