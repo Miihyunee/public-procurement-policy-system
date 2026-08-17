@@ -166,6 +166,17 @@ class TestRendererUsesBackendOnly:
         assert "file_path: uploadPath" in source
         assert "FileReader" not in source
 
+    def test_screen_does_not_duplicate_backend_sentences(self) -> None:
+        """⛔ 저장 여부 설명은 **백엔드가 소유**한다.
+
+        화면이 같은 문장을 따로 갖고 있으면, 실제 UI 에서 백엔드 문장과 겹쳐
+        두 번 표시됩니다(2026-08-17 실기동 검증에서 발견).
+        """
+        source = _read(INDEX_HTML)
+
+        assert "오류가 있어 저장하지 않았습니다" not in source
+        assert "storage_note" in source
+
     def test_browser_mode_degrades_gracefully(self) -> None:
         """데스크톱이 아니면 버튼을 막고 안내한다(브라우저에서 열었을 때)."""
         source = _read(INDEX_HTML)
