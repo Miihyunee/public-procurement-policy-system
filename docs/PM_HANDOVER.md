@@ -23,13 +23,13 @@
 | 항목 | 상태 |
 |---|---|
 | 계산 엔진 · 대시보드 | ✅ 동작함 |
-| 데스크톱 앱 구조 | ✅ 백엔드 생명주기 검증 완료 (실제 Electron 실행은 미검증) |
+| 데스크톱 앱 구조 | ✅ **실제 Electron 기동 검증 완료** (Linux/Xvfb). Windows 는 미검증 |
 | 표준 엑셀 업로드 | ✅ **저장·계산까지 연결됨** (2026-08-17) |
 | 실제 운영 데이터 | ❌ 아직 없음 (샘플만 분석) |
-| **남은 것** | 실제 Electron 실행 검증 · 운영 데이터 · 고객 확인 사항 |
+| **남은 것** | Windows 검증 · 운영 데이터 · 고객 확인 사항 · push 승인 |
 
-**품질 게이트는 전부 통과 상태입니다** — pytest 1082 · ruff · mypy strict ·
-Electron 백엔드 검증 14/14.
+**품질 게이트는 전부 통과 상태입니다** — pytest 1083 · ruff · mypy strict ·
+Electron 백엔드 검증 14/14 · Electron 실기동 smoke 6/6.
 
 ---
 
@@ -53,56 +53,66 @@ Electron 백엔드 검증 14/14.
 |---|---|
 | **W-1-2** — "결의일자 기준" 이 인증 판정까지 포함하는가 | 🔴 **고객 확인.** 포함하면 달성률 숫자가 바뀜 |
 | 결의일자 미기재 행 UI 안내 | 🟡 backlog (계산 무변경) |
-| 실제 Electron 실행 · Windows 검증 | 🟡 환경 필요 |
+| **Windows 검증** | 🔴 환경 필요 — Linux 결과로 대체하지 않음 |
 | **push 승인** | 🔴 PM |
 
-# 3. 현재 코드 상태 (실측)
+# 3. 현재 코드 상태 (실측 · 2026-08-17)
 
 | 항목 | 값 |
 |---|---|
 | 작업 브랜치 | `claude/period-filter-import-batch` |
-| 로컬 HEAD | `703e57f` |
+| 로컬 HEAD | `31a6001` |
 | 추적 원격 브랜치 | `origin/claude/period-filter-import-batch` = `12f11e4` |
 | `origin/main` | `ca23f82` |
-| **미푸시 커밋 (추적 브랜치 기준)** | **9개** |
-| `origin/main` 과의 차이 | **26개** |
+| **미푸시 커밋 (추적 브랜치 기준)** | **12개** |
+| `origin/main` 과의 차이 | **29개** |
+| 원격이 앞선 커밋 | **0개** (충돌 위험 없음) |
 | 작업 트리 | clean |
 
 > ⚠️ **"미푸시" 를 셀 때 기준을 반드시 밝힙니다.** 이 브랜치는 자기 원격
-> 브랜치(`origin/claude/period-filter-import-batch`)에 이미 17개가 푸시되어
-> 있고, 그 위에 **9개가 로컬에만** 있습니다. 반면 `origin/main` 에는 대시보드
-> 까지만 병합되어 있어 **26개 차이**입니다. 두 숫자는 세는 대상이 다릅니다.
+> 브랜치에 이미 17개가 푸시되어 있고, 그 위에 **12개가 로컬에만** 있습니다.
+> 반면 `origin/main` 에는 대시보드까지만 병합되어 있어 **29개 차이**입니다.
 >
 > 확인 명령:
 > ```bash
-> git rev-list --count @{u}..HEAD          # 9  ← 미푸시
-> git rev-list --count origin/main..HEAD   # 26 ← main 과의 차이
+> git rev-list --count @{u}..HEAD          # 12 ← 미푸시
+> git rev-list --count origin/main..HEAD   # 29 ← main 과의 차이
 > ```
 
-## 3.1 미푸시 커밋 9개 (추적 브랜치 기준)
+## 3.1 미푸시 커밋 12개 (추적 브랜치 기준)
 
-| 커밋 | 내용 |
-|---|---|
-| `b12fc85` | 구 스키마 DB 로 실행 시 500 나던 문제 방지 |
-| `58752aa` | 창업기업 두 날짜 OR 판정 · 음수 상계 로직 |
-| `bf7c1ff` | **Electron 데스크톱 전환 기반 구조** |
-| `54fcdbe` | 표준 업로드 양식 정의 · 행 단위 검증 |
-| `49f6b8f` | 문서 — 남은 구현 목록과 결정 지점 |
-| `057283f` | 검증↔적재 이음매 고정 테스트 |
-| `84ebfee` | **`resolution_date` 신설** (§2.1 충돌 대상) |
-| `ff96059` | **표준 Excel 업로드 — 어댑터·양식·API·Electron 연결** |
-| `703e57f` | 이 인수인계 문서 |
+| 커밋 | 분류 | 내용 |
+|---|---|---|
+| `b12fc85` | 기능 | 구 스키마 DB 로 실행 시 500 나던 문제 방지 |
+| `58752aa` | 기능 | 창업기업 두 날짜 OR 판정 · 음수 상계 로직 |
+| `bf7c1ff` | 기능 | **Electron 데스크톱 전환 기반 구조** |
+| `54fcdbe` | 기능 | 표준 업로드 양식 정의 · 행 단위 검증 |
+| `49f6b8f` | 문서 | 남은 구현 목록과 결정 지점 |
+| `057283f` | 테스트 | 검증↔적재 이음매 고정 |
+| `84ebfee` | 기능 | **`resolution_date` 신설** |
+| `ff96059` | 기능 | **표준 Excel 업로드 — 어댑터·양식·API·Electron 연결** |
+| `703e57f` | 문서 | 이 인수인계 문서 |
+| `193394c` | 문서 | 미푸시 기준 명확화 · 결의일자 연결 실측 |
+| `2692750` | 기능 | **업로드 → DB 저장 → 계산 E2E 연결** |
+| `31a6001` | 기능 | 업로드 안내 문구 중복 수정 (실기동에서 발견) |
 
-> 위 9개가 푸시되기 전에는 **Electron 도 업로드도 어느 원격 브랜치에도
+> 위 12개가 푸시되기 전에는 **Electron 도 업로드도 어느 원격 브랜치에도
 > 없습니다.**
 
 ## 3.2 품질 게이트 (매번 이대로 유지)
 
 ```bash
-.venv/bin/pytest -q          # 1053 passed
+.venv/bin/pytest -q          # 1083 passed
 .venv/bin/ruff check .       # All checks passed
 .venv/bin/mypy -p procurement && .venv/bin/mypy tests   # strict, 통과
-node scripts/verify-backend.js                          # 12/12 통과
+node scripts/verify-backend.js                          # 14/14 통과
+```
+
+**Electron 실기동 확인** (GUI 없는 환경에서는 Xvfb 사용):
+
+```bash
+npm install
+PROCUREMENT_PYTHON=.venv/bin/python xvfb-run -a npm start
 ```
 
 ---
@@ -121,7 +131,7 @@ node scripts/verify-backend.js                          # 12/12 통과
 | ⑥ | **다중 정책 중복 인정** — 한 거래가 여러 정책에 잡혀도 분모는 1회만 | ✅ 검증 완료 |
 | ⑦ | **구매유형 3건 확정** — 도서인쇄비·소모성물품구입비 → `GOODS`, 임차료 → `SERVICE` | 🟡 매핑만 (계산 미연결) |
 
-**표준 업로드 양식 = 5개 컬럼 (확정)**
+**표준 업로드 양식 = 6개 컬럼 (확정)**
 
 ```
 결의일자 | 계약일자 | 지급일 | 기업명 | 사업자등록번호 | 계
@@ -168,7 +178,7 @@ FastAPI  →  ApiService  →  DataService  →  Calculator  →  Rule Engine
 | **Mapping 계층** | ✅ | `uploads/mapping.py` |
 | **업로드 검증 API** | ✅ | `POST /uploads/purchases/validate` |
 | **업로드 저장 API** | ✅ | `POST /uploads/purchases` |
-| Electron 앱 | 🟡 백엔드 검증만 | `electron/` |
+| Electron 앱 | ✅ 실기동 검증 (Linux) · Windows 미검증 | `electron/` |
 | 음수 상계 연결 | ❌ 저장 제약 해제 대기 | `core/offsetting.py` |
 
 ## 5.3 지금 실제로 되는 것

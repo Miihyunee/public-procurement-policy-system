@@ -232,7 +232,7 @@ preload 가 노출하는 것은 **네 가지뿐**이다.
 
 > 지시서 §30 "지금 당장 배포 설정을 확정하지 말고" 에 따라 넣지 않았다.
 
-## 5.2 ⚠️ 실제 Electron 실행은 **미검증**
+## 5.2 Electron 실행 검증 상태
 
 | 항목 | 상태 |
 |---|---|
@@ -247,7 +247,21 @@ preload 가 노출하는 것은 **네 가지뿐**이다.
 | 재시작 후 DB 유지 | ✅ 실기동 확인 |
 | 포트 충돌 회피 | ✅ 2개 인스턴스 동시 기동 확인 |
 | 대화상자 **조작** | 🟡 자동화 불가 — 이 환경에 `xdotool` 없음 |
-| **Windows 동작** | ❌ **미검증** — Windows 환경 없음 |
+| **Windows 동작** | ❌ **NOT VERIFIED** — Windows 환경 없음 |
+
+### Windows 에서 반드시 확인해야 할 항목
+
+Linux 에서 통과했다는 이유로 아래를 통과로 표시하지 않는다.
+
+| 항목 | 왜 다를 수 있는가 |
+|---|---|
+| Windows Python 실행 | `python` / `py` 런처 · 가상환경 경로 규칙이 다르다 |
+| subprocess 종료 동작 | Windows 에 `SIGTERM` 이 없다. 현재 코드는 `SIGTERM` 후 `SIGKILL` 순서를 쓴다 |
+| 경로 처리 | 구분자 · 드라이브 문자 · 공백/한글 경로 |
+| SQLite userData 경로 | `%APPDATA%` 아래로 바뀐다 |
+| Electron 설치/패키징 | electron-builder 미도입 — 배포 방식 자체가 미결정 |
+| native file dialog | GTK 가 아니라 Windows 공용 대화상자 |
+| 앱 종료 lifecycle | `window-all-closed` · `before-quit` 동작 차이 |
 
 ### 실기동 검증 방법 (2026-08-17)
 
