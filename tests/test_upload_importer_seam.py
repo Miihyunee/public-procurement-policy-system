@@ -3,25 +3,26 @@ tests.test_upload_importer_seam
 
 **표준 업로드 검증 계층과 기존 적재 계층 사이의 이음매(seam)** 를 고정합니다.
 
-목표 구조에서 두 계층은 아직 연결되어 있지 않습니다::
+두 계층은 이제 Mapping 계층으로 연결되어 있습니다::
 
-    표준 Excel → Validation → [ Mapping — 미구현 ] → PurchaseImporter → DB
-                  ↑ 구현됨                              ↑ 구현됨(기존)
+    표준 Excel → Validation → Mapping → PurchaseImporter → DB
+                  ↑ 구현       ↑ 구현    ↑ 기존 재사용
 
-이 파일은 **Mapping 계층을 만들기 전에** 다음을 검증합니다.
+이 파일은 **이음매의 계약**을 고정합니다.
 
 1. 두 계층이 실제로 맞물리는가 (키 이름·타입이 통하는가)
-2. 맞물리지 **않는** 지점이 정확히 어디인가 (= PM 결정이 필요한 곳)
+2. 맞물리지 **않는** 지점이 남아 있지 않은가
 
 .. note::
-    **구현이 아니라 계약 검증입니다.** 업무규칙·계산·DB 스키마를 건드리지 않고,
-    기존 코드가 이미 가진 성질만 확인합니다. 나중에 어느 한쪽이 바뀌면 여기서
-    먼저 깨지므로, 실제 연결 작업 때 어긋남을 미리 잡을 수 있습니다.
+    **계약 검증입니다.** 업무규칙·계산·DB 스키마를 건드리지 않고, 기존 코드가
+    이미 가진 성질만 확인합니다. 어느 한쪽이 바뀌면 여기서 먼저 깨지므로,
+    두 계층이 조용히 어긋나는 일을 막습니다.
 
-.. warning::
-    ⛔ **결의일자를 어느 물리 필드에 넣을지 결정하지 않습니다.**
-    아래 :class:`TestTheOnlyMissingLink` 가 그 결정이 필요한 지점을 **실행 가능한
-    형태로** 드러낼 뿐입니다.
+.. note::
+    **이력** — 2026-08-17 PM 결정 전까지 이 파일은 "결의일자를 어느 물리 필드에
+    넣을지" 와 "지급일을 무엇으로 채울지" 라는 **미해결 결정 지점**을 실행 가능한
+    형태로 고정하고 있었습니다. 두 결정이 모두 내려져(``resolution_date`` 신설 ·
+    표준 양식에 ``지급일`` 추가) 해당 단언은 실제 연결 검증으로 대체했습니다.
 """
 
 from __future__ import annotations
@@ -32,8 +33,6 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-import pytest
-
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.importers.batch_import_service import BatchImportService
 from procurement.importers.purchase_importer import PurchaseImporter
@@ -42,6 +41,7 @@ from procurement.uploads import header_row, validate_rows
 #: 표준 양식 정상 행 한 건.
 GOOD_ROW: dict[str, object] = {
     "결의일자": "2026-03-15",
+    "지급일": "2026-04-01",
     "계약일자": "2026-02-20",
     "기업명": "한빛산업개발",
     "사업자등록번호": "220-81-62517",
@@ -86,10 +86,6 @@ class TestTheTwoLayersFit:
         """``PurchaseImporter`` 가 읽는 키 (코드에서 추출).
 
         이 목록이 바뀌면 Mapping 계층도 바뀌어야 하므로 여기서 먼저 깨집니다.
-
-        .. note::
-            **기대값이 바뀐 이유** — 2026-08-15 PM 최종 결정(B안)으로
-            ``resolution_date`` 가 신설되어 적재 계층이 이 키를 읽습니다.
         """
         assert _importer_row_keys() == {
             "business_no",
@@ -100,19 +96,20 @@ class TestTheTwoLayersFit:
             "amount",
         }
 
-    def test_all_validated_keys_now_reach_storage(self) -> None:
-        """검증 결과의 키 5개가 **모두** 이름 그대로 적재 계층에 통한다.
+    def test_all_six_keys_match_by_name(self) -> None:
+        """검증 결과의 키 6개가 **이름까지 그대로** 적재 계층에 통한다.
 
         .. note::
-            **기대값이 바뀐 이유** — 이전에는 4개만 통하고 ``resolution_date``
-            가 갈 곳이 없었습니다(= PM 결정 지점). 결정이 내려져 필드가
-            생겼으므로 이제 5개 모두 통합니다.
+            **기대값이 바뀐 이유** — 2026-08-17 PM 결정으로 표준 양식에
+            ``지급일`` 이 추가되면서 마지막 빈칸이 채워졌습니다. 이제 Mapping
+            계층은 새 변환기가 아니라 **얇은 연결자**입니다.
         """
-        assert _validated_keys() <= _importer_row_keys()
+        assert _validated_keys() == _importer_row_keys()
         assert _validated_keys() == {
             "business_no",
             "company_name",
             "contract_date",
+            "payment_date",
             "resolution_date",
             "amount",
         }
@@ -141,45 +138,53 @@ class TestTheTwoLayersFit:
         assert again.value == validated == "2208162517"
 
 
-class TestTheRemainingOpenPoint:
-    """🔴 아직 값을 채워 줄 수 없는 항목은 **정확히 하나**다 — PM 결정 사항이다."""
+class TestMappingIsAThinConnector:
+    """✅ 남은 결정 지점이 없다 — Mapping 은 값을 바꾸지 않는다."""
 
-    def test_no_validated_key_is_orphaned_anymore(self) -> None:
-        """검증이 만드는 키 중 갈 곳이 없는 것은 **더 이상 없다**."""
+    def test_no_key_is_orphaned(self) -> None:
+        """양쪽 키 집합이 정확히 일치한다(고아 키·빈칸 없음)."""
         assert _validated_keys() - _importer_row_keys() == set()
+        assert _importer_row_keys() - _validated_keys() == set()
 
-    def test_payment_date_still_has_no_source_in_the_standard_form(self) -> None:
-        """표준 양식에는 **지급일 컬럼이 없다.**
+    def test_mapping_passes_values_through_unchanged(self) -> None:
+        """⛔ Mapping 은 값을 **그대로** 넘긴다.
 
-        그런데 적재 계층은 ``payment_date`` 를 **필수**로 요구합니다. 즉 업로드
-        경로를 실제로 연결하려면 다음 중 하나를 PM 이 정해야 합니다.
-
-        1. 표준 양식에 지급일 컬럼을 추가한다
-        2. ``payment_date`` 를 선택 항목으로 바꾼다(NULL 허용)
-        3. 업로드 경로에서만 다른 날짜로 채운다
-
-        ⛔ **이 테스트는 셋 중 어느 것도 고르지 않는다.** 결정이 필요하다는
-        사실만 고정한다. ``payment_date`` 를 결의일자로 대체하는 선택지는
-        2026-08-15 PM 결정으로 이미 배제되었다.
+        여기서 값을 고치면 검증 규칙이 두 곳에 생기고, 어느 쪽이 진짜인지 알
+        수 없게 됩니다.
         """
-        assert _importer_row_keys() - _validated_keys() == {"payment_date"}
+        from procurement.uploads.mapping import to_import_row
 
-    def test_payment_date_is_still_required_by_storage(self) -> None:
-        """지급일이 비면 행이 실패한다(= 위 결정 없이는 업로드가 통하지 않는다)."""
-        from procurement.importers.purchase_importer import _parse_date
+        row = validate_rows([GOOD_ROW]).rows[0]
+        mapped = to_import_row(row)
 
-        _, error = _parse_date(None, "지급일")
-        assert error is not None
+        assert mapped == {key: row.values[key] for key in mapped}
 
-    def test_mapping_layer_does_not_exist_yet(self) -> None:
-        """Mapping 계층을 아직 만들지 않았다.
+    def test_mapping_invents_nothing(self) -> None:
+        """⛔ 검증이 만들지 않은 키를 Mapping 이 새로 만들지 않는다."""
+        from procurement.uploads.mapping import to_import_row
 
-        승인 후 만들면 이 테스트를 삭제하고 실제 매핑 테스트로 대체합니다.
-        """
-        import importlib
+        row = validate_rows([GOOD_ROW]).rows[0]
 
-        with pytest.raises(ModuleNotFoundError):
-            importlib.import_module("procurement.uploads.mapping")
+        assert set(to_import_row(row)) <= set(row.values)
+
+    def test_importer_accepts_the_mapped_row(self, tmp_path: Path) -> None:
+        """매핑 결과를 기존 Importer 가 그대로 받아 저장한다."""
+        from procurement.database.company_repository import CompanyRepository
+        from procurement.uploads.mapping import to_import_rows
+
+        db_path = tmp_path / "seam-import.db"
+        purchase_repo = PurchaseRepository(db_path)
+        purchase_repo.create_table()
+        company_repo = CompanyRepository(db_path)
+        company_repo.create_table()
+
+        report = validate_rows([GOOD_ROW])
+        result = PurchaseImporter(purchase_repo, company_repo).import_rows(
+            to_import_rows(report.rows)
+        )
+
+        assert result.stored_count == 1
+        assert purchase_repo.count() == 1
 
 
 class TestExistingStorageIsReusable:
@@ -235,6 +240,22 @@ class TestNoBusinessRuleChange:
 
         assert not [name for name in imported if "database" in name]
 
-    def test_standard_form_still_has_only_confirmed_columns(self) -> None:
-        """표준 양식 컬럼이 늘어나지 않았다(미확정 컬럼 유입 방지)."""
-        assert header_row() == ("결의일자", "계약일자", "기업명", "사업자등록번호", "계")
+    def test_standard_form_has_only_confirmed_columns(self) -> None:
+        """표준 양식에 **확정 컬럼만** 있다(미확정 컬럼 유입 방지).
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-17 PM 결정으로 ``지급일`` 이
+            추가되었습니다. 확정되지 않은 컬럼(예산과목·구매유형 등)은 여전히
+            들어 있지 않습니다.
+        """
+        from procurement.uploads import PENDING_COLUMNS
+
+        assert header_row() == (
+            "결의일자",
+            "계약일자",
+            "지급일",
+            "기업명",
+            "사업자등록번호",
+            "계",
+        )
+        assert not set(header_row()) & set(PENDING_COLUMNS)

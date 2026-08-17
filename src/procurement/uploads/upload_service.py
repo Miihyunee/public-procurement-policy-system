@@ -5,56 +5,64 @@ procurement.uploads.upload_service
 
 ::
 
-    .xlsx  →  excel_adapter  →  머리글 검증  →  행 검증  →  [ Mapping — 미구현 ]  →  적재
+    .xlsx  →  excel_adapter  →  머리글 검증  →  행 검증  →  mapping  →  BatchImportService
+                                                                            ↓
+                                                          PurchaseImporter → Repository
 
-이 서비스는 위 흐름에서 **검증까지**를 담당하며, 각 단계를 새로 만들지 않고
-기존 모듈을 호출만 합니다.
-
-.. warning::
-    ⛔ **아직 저장하지 않습니다.**
-
-    표준 양식에는 지급일 컬럼이 없는데 :class:`PurchaseImporter` 는
-    ``payment_date`` 를 **필수**로 요구합니다. 이 칸을 무엇으로 채울지는
-    PM 결정 사항이므로, 임시로 다른 날짜를 넣어 저장하지 않습니다.
-
-    저장이 승인되면 :meth:`UploadService.validate_file` 결과의
-    ``report.rows`` 를 그대로 기존
-    :class:`~procurement.importers.batch_import_service.BatchImportService`
-    에 넘기면 됩니다. **새 적재 로직을 만들 필요가 없습니다.**
+이 서비스는 각 단계를 **새로 만들지 않고 호출만** 합니다. 특히 저장은 기존
+:class:`~procurement.importers.batch_import_service.BatchImportService` 를 그대로
+사용하므로, 업로드 경로와 기존 적재 경로가 **같은 저장 로직**을 공유합니다.
 
 .. note::
-    "전부 검증 → 전부 저장" 원칙(지시서 §14)에 따라, 검증과 저장을 한 단계씩
-    분리해 두었습니다. 오류가 하나라도 있으면 저장 단계로 넘어가지 않습니다
-    (:attr:`UploadResult.storable`).
+    **"전부 검증 → 전부 저장"** 원칙(지시서 §14)을 구조로 강제합니다.
+
+    - :meth:`UploadService.validate_file` — 검증만. DB 를 건드리지 않습니다.
+    - :meth:`UploadService.import_file` — 검증 후 **오류가 하나도 없을 때만**
+      저장합니다. 오류가 있으면 :class:`BatchImportService` 를 **호출조차 하지
+      않으므로** DB 에 아무 변화가 없습니다.
+
+    일부 행만 먼저 저장하는 경로는 만들지 않았습니다.
+
+.. warning::
+    ⛔ **대상 기간은 호출자가 지정합니다.** 파일 내용에서 유추하지 않습니다.
+    어느 날짜로 연도를 나눌지는 운영자 설정 사항이며(D-24), 파일에서 추론하면
+    확정되지 않은 규칙이 생깁니다.
 """
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
+from procurement.importers.batch_import_service import BatchImportResult, BatchImportService
 from procurement.uploads.excel_adapter import ExcelReadError, WorkbookRead, read_standard_workbook
+from procurement.uploads.mapping import to_import_rows
 from procurement.uploads.validation import ValidationReport, validate_headers, validate_rows
 
-#: 저장이 막혀 있는 이유. 화면·API 응답에 그대로 노출해 "왜 저장되지 않았는가" 를
-#: 사용자와 PM 이 같은 문장으로 보게 한다.
-STORAGE_PENDING_REASON: str = (
-    "검증만 수행했습니다. 표준 양식에 지급일 항목이 없어 저장 단계는 "
-    "업무규칙 확정 후 연결됩니다."
+#: 검증만 수행했을 때의 설명. 화면·API 응답에 그대로 노출한다.
+VALIDATION_ONLY_NOTE: str = "검증만 수행했습니다. 저장하지 않았습니다."
+
+#: 오류 때문에 저장하지 않았을 때의 설명.
+NOT_STORED_NOTE: str = (
+    "오류가 있어 저장하지 않았습니다. 한 행이라도 오류가 있으면 정상 행도 "
+    "저장하지 않습니다."
 )
 
 
 @dataclass(frozen=True, kw_only=True)
 class UploadResult:
-    """업로드 검증 결과.
+    """업로드 처리 결과.
 
     Attributes:
         file_name: 올린 파일명.
         file_errors: 파일 단위 오류(읽기 실패·머리글 누락 등). 비어 있으면 정상.
         report: 행 단위 검증 결과. 파일 단위 오류가 있으면 ``None``.
         sheet_name: 읽은 시트 이름.
-        stored: 실제로 저장했는지 여부. **현재는 항상 ``False``** 입니다.
-        storage_note: 저장하지 않은 이유(또는 저장 결과 설명).
+        stored: 실제로 저장했는지 여부.
+        storage_note: 저장 여부에 대한 설명.
+        batch: 저장에 성공했을 때의 배치 적재 결과. 저장하지 않았으면 ``None``.
     """
 
     file_name: str
@@ -62,7 +70,8 @@ class UploadResult:
     report: ValidationReport | None = None
     sheet_name: str = ""
     stored: bool = False
-    storage_note: str = STORAGE_PENDING_REASON
+    storage_note: str = VALIDATION_ONLY_NOTE
+    batch: BatchImportResult | None = None
 
     @property
     def ok(self) -> bool:
@@ -73,8 +82,7 @@ class UploadResult:
     def storable(self) -> bool:
         """저장 단계로 넘어갈 수 있는 상태인지 여부.
 
-        "전부 검증 → 전부 저장" 원칙에 따라, 오류가 하나라도 있으면 ``False``
-        입니다. ``True`` 라고 해서 지금 저장되는 것은 아닙니다(승인 대기).
+        "전부 검증 → 전부 저장" 원칙에 따라, 오류가 하나라도 있으면 ``False``.
         """
         return self.ok
 
@@ -93,15 +101,35 @@ class UploadResult:
         """오류가 있는 행 수."""
         return self.report.error_row_count if self.report is not None else 0
 
+    @property
+    def stored_rows(self) -> int:
+        """실제로 DB 에 저장된 행 수. 저장하지 않았으면 0."""
+        return self.batch.report.stored_count if self.batch is not None else 0
+
+    @property
+    def batch_id(self) -> int | None:
+        """저장된 배치 ID. 저장하지 않았으면 ``None``."""
+        return self.batch.batch.batch_id if self.batch is not None else None
+
 
 class UploadService:
-    """표준 Excel 업로드를 읽고 검증합니다.
+    """표준 Excel 업로드를 읽고 검증하며, 요청 시 기존 적재 계층으로 저장합니다.
 
-    상태를 갖지 않으므로 요청마다 새로 만들거나 재사용해도 무방합니다.
+    Args:
+        batch_import_service: 저장에 사용할 기존
+            :class:`BatchImportService`. ``None`` 이면 :meth:`import_file` 을
+            쓸 수 없고 검증만 가능합니다(저장 계층 없이 검증만 하는 용도).
     """
 
+    def __init__(self, batch_import_service: BatchImportService | None = None) -> None:
+        """서비스를 초기화합니다."""
+        self._batch_import_service = batch_import_service
+
+    # ------------------------------------------------------------------
+    # 검증 전용
+    # ------------------------------------------------------------------
     def validate_file(self, source: str | Path) -> UploadResult:
-        """파일을 읽어 머리글과 모든 행을 검증합니다.
+        """파일을 읽어 머리글과 모든 행을 검증합니다. **저장하지 않습니다.**
 
         오류가 있어도 예외를 던지지 않고 **결과로 돌려줍니다.** 사용자에게
         무엇이 잘못되었는지 한 번에 보여주기 위함입니다.
@@ -110,8 +138,63 @@ class UploadService:
             source: 읽을 ``.xlsx`` 파일 경로.
 
         Returns:
-            :class:`UploadResult`.
+            :class:`UploadResult`. ``stored`` 는 항상 ``False`` 입니다.
         """
+        return self._read_and_validate(source)
+
+    # ------------------------------------------------------------------
+    # 검증 + 저장
+    # ------------------------------------------------------------------
+    def import_file(
+        self,
+        source: str | Path,
+        *,
+        period_start: date,
+        period_end: date,
+    ) -> UploadResult:
+        """파일을 검증하고, **오류가 하나도 없을 때만** 저장합니다.
+
+        저장은 기존 :class:`BatchImportService` 가 수행하므로, 업로드 경로가
+        별도의 저장 로직을 갖지 않습니다. 같은 기간의 이전 배치는 기존 규칙대로
+        대체(``SUPERSEDED``)됩니다(D-25).
+
+        Args:
+            source: 읽을 ``.xlsx`` 파일 경로.
+            period_start: 대상 기간 시작일. **호출자가 지정합니다.**
+            period_end: 대상 기간 종료일. **호출자가 지정합니다.**
+
+        Returns:
+            :class:`UploadResult`. 저장했으면 ``stored`` 가 ``True`` 이고
+            ``batch`` 에 적재 결과가 담깁니다.
+
+        Raises:
+            UploadStorageUnavailableError: 저장 계층 없이 생성된 경우.
+        """
+        if self._batch_import_service is None:
+            raise UploadStorageUnavailableError(
+                "저장 계층이 연결되지 않아 업로드를 저장할 수 없습니다."
+            )
+
+        result = self._read_and_validate(source)
+        if not result.storable:
+            # ⛔ 오류가 있으면 적재 계층을 **호출하지 않는다.** DB 는 그대로다.
+            return _with_note(result, NOT_STORED_NOTE)
+
+        assert result.report is not None  # storable 이 보장
+        batch = self._batch_import_service.import_batch(
+            to_import_rows(result.report.rows),
+            file_name=result.file_name,
+            period_start=period_start,
+            period_end=period_end,
+            file_hash=_file_hash(source),
+        )
+        return _stored(result, batch)
+
+    # ------------------------------------------------------------------
+    # 내부
+    # ------------------------------------------------------------------
+    def _read_and_validate(self, source: str | Path) -> UploadResult:
+        """읽기 → 머리글 검증 → 행 검증을 수행합니다."""
         file_name = Path(source).name
 
         try:
@@ -138,6 +221,46 @@ class UploadService:
         )
 
 
+class UploadStorageUnavailableError(RuntimeError):
+    """저장 계층 없이 저장을 시도했을 때 발생합니다."""
+
+
+def _with_note(result: UploadResult, note: str) -> UploadResult:
+    """저장 설명만 바꾼 결과를 만듭니다."""
+    return UploadResult(
+        file_name=result.file_name,
+        file_errors=result.file_errors,
+        report=result.report,
+        sheet_name=result.sheet_name,
+        stored=False,
+        storage_note=note,
+    )
+
+
+def _stored(result: UploadResult, batch: BatchImportResult) -> UploadResult:
+    """저장 결과를 반영한 결과를 만듭니다."""
+    lines = [f"배치 #{batch.batch.batch_id} 로 {batch.report.stored_count:,}건을 저장했습니다."]
+    if batch.replaced and batch.superseded_batch is not None:
+        lines.append(
+            f"같은 기간의 이전 배치 #{batch.superseded_batch.batch_id} 는 "
+            "계산에서 제외됩니다."
+        )
+    if batch.duplicate_of is not None:
+        lines.append(
+            f"⚠️ 내용이 같은 파일이 배치 #{batch.duplicate_of.batch_id} 로 "
+            "이미 올라와 있습니다."
+        )
+    return UploadResult(
+        file_name=result.file_name,
+        file_errors=result.file_errors,
+        report=result.report,
+        sheet_name=result.sheet_name,
+        stored=True,
+        storage_note=" ".join(lines),
+        batch=batch,
+    )
+
+
 def _to_validation_rows(workbook: WorkbookRead) -> list[dict[str, object]]:
     """읽은 행을 검증 계층이 받는 형태로 넘깁니다.
 
@@ -145,3 +268,15 @@ def _to_validation_rows(workbook: WorkbookRead) -> list[dict[str, object]]:
     손대지 않습니다 — 여기서 값을 고치면 검증 규칙이 두 곳에 생깁니다.
     """
     return workbook.rows
+
+
+def _file_hash(source: str | Path) -> str:
+    """파일 내용 해시를 만듭니다(같은 파일 재업로드 감지용).
+
+    감지되어도 **적재를 막지 않고 경고만** 남깁니다(기존 규칙 유지).
+    """
+    digest = hashlib.sha256()
+    with Path(source).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

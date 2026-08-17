@@ -31,6 +31,8 @@ from procurement.uploads import (
 #: 정상 행 한 건.
 GOOD_ROW: dict[str, object] = {
     "결의일자": "2026-03-15",
+    # 2026-08-17 PM 결정 — 표준 양식에 지급일이 추가되었다(6컬럼).
+    "지급일": "2026-04-01",
     "계약일자": "2026-02-20",
     "기업명": "한빛산업개발",
     "사업자등록번호": "220-81-62517",
@@ -50,7 +52,14 @@ class TestStandardColumns:
 
     def test_confirmed_columns_only(self) -> None:
         """2026-08-14 고객 확정 5개."""
-        assert header_row() == ("결의일자", "계약일자", "기업명", "사업자등록번호", "계")
+        assert header_row() == (
+            "결의일자",
+            "계약일자",
+            "지급일",
+            "기업명",
+            "사업자등록번호",
+            "계",
+        )
 
     def test_amount_column_is_the_vat_included_total(self) -> None:
         """금액 컬럼은 `계`(VAT 포함 총액)다. 공급가액이 아니다."""

@@ -150,6 +150,34 @@ async function main() {
     ),
   );
 
+  // 저장 경로 — 양식을 채워 올리면 실제로 DB 에 들어가는가.
+  // 업무 판정은 전부 백엔드가 하며, 여기서는 흐름만 확인한다.
+  const filledPath = path.join(userDataDir, "filled.xlsx");
+  fs.writeFileSync(filledPath, templateBytes);
+  const imported = await (
+    await fetch(`${base}/uploads/purchases`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_path: filledPath, year: 2026 }),
+    })
+  ).json();
+  results.push(
+    report(
+      imported.stored === true && imported.stored_rows > 0,
+      "업로드 → DB 저장",
+      `배치 #${imported.batch_id} · ${imported.stored_rows}건`,
+    ),
+  );
+
+  const stored = await (await fetch(`${base}/dashboard/data-status?year=2026`)).json();
+  results.push(
+    report(
+      stored.purchase_count === imported.stored_rows,
+      "저장된 데이터가 조회 경로에 반영됨",
+      `구매 ${stored.purchase_count}건`,
+    ),
+  );
+
   const dbFile = path.join(userDataDir, "database", "procurement.db");
   results.push(
     report(

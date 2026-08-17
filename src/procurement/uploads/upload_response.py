@@ -55,6 +55,8 @@ class UploadResponseModel(BaseModel):
         total_rows: 읽은 데이터 행 수.
         valid_rows: 오류 없이 통과한 행 수.
         error_rows: 오류가 있는 행 수.
+        stored_rows: 실제로 DB 에 저장된 행 수. 저장하지 않았으면 0.
+        batch_id: 저장된 배치 ID. 저장하지 않았으면 ``null``.
         file_errors: 파일 단위 오류(읽기 실패·머리글 누락 등).
         issues: 행 단위 문제 목록.
         truncated: 문제가 너무 많아 목록을 잘랐는지 여부.
@@ -71,6 +73,8 @@ class UploadResponseModel(BaseModel):
     total_rows: int
     valid_rows: int
     error_rows: int
+    stored_rows: int
+    batch_id: int | None
     file_errors: tuple[str, ...]
     issues: tuple[UploadIssueResponseModel, ...]
     truncated: bool
@@ -105,6 +109,8 @@ def build_upload_response(result: UploadResult) -> UploadResponseModel:
         total_rows=result.total_rows,
         valid_rows=result.valid_rows,
         error_rows=result.error_rows,
+        stored_rows=result.stored_rows,
+        batch_id=result.batch_id,
         file_errors=result.file_errors,
         issues=tuple(
             UploadIssueResponseModel(

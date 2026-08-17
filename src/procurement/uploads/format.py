@@ -67,6 +67,16 @@ STANDARD_COLUMNS: Final[tuple[StandardColumn, ...]] = (
         example="2026-02-20",
     ),
     StandardColumn(
+        key="payment_date",
+        header="지급일",
+        required=True,
+        description=(
+            "대금 지급일(지출완료일)입니다. **결의일자와 다른 날짜**이며, "
+            "중소기업·여성기업·장애인기업 인증 유효기간 판정에 사용합니다."
+        ),
+        example="2026-04-01",
+    ),
+    StandardColumn(
         key="company_name",
         header="기업명",
         required=True,

@@ -27,7 +27,14 @@ from procurement.uploads.excel_adapter import (
 from procurement.uploads.format import header_row
 
 HEADERS = list(header_row())
-GOOD_ROW = [date(2026, 3, 15), date(2026, 2, 20), "한빛산업개발", "220-81-62517", 54648000]
+GOOD_ROW = [
+    date(2026, 3, 15),
+    date(2026, 2, 20),
+    date(2026, 4, 1),
+    "한빛산업개발",
+    "220-81-62517",
+    54648000,
+]
 
 
 def _write(path: Path, rows: list[list[object]], *, headers: list[object] | None = None) -> Path:
@@ -90,14 +97,21 @@ class TestValueHandling:
 
     def test_datetime_becomes_date(self, tmp_path: Path) -> None:
         """엑셀 날짜는 시각이 붙어 오더라도 날짜로 정리한다."""
-        row = [datetime(2026, 3, 15, 9, 30), date(2026, 2, 20), "A", "2208162517", 1000]
+        row = [
+            datetime(2026, 3, 15, 9, 30),
+            date(2026, 2, 20),
+            date(2026, 4, 1),
+            "A",
+            "2208162517",
+            1000,
+        ]
         result = read_standard_workbook(_write(tmp_path / "a.xlsx", [row]))
 
         assert result.rows[0]["결의일자"] == date(2026, 3, 15)
 
     def test_float_becomes_decimal(self, tmp_path: Path) -> None:
         """실수는 부동소수 오차를 피하려고 Decimal 로 바꾼다."""
-        row = [date(2026, 3, 15), date(2026, 2, 20), "A", "2208162517", 1000.5]
+        row = [date(2026, 3, 15), date(2026, 2, 20), date(2026, 4, 1), "A", "2208162517", 1000.5]
         result = read_standard_workbook(_write(tmp_path / "a.xlsx", [row]))
 
         assert result.rows[0]["계"] == Decimal("1000.5")
@@ -107,14 +121,21 @@ class TestValueHandling:
         assert result.rows[0]["계"] == 54648000
 
     def test_text_is_trimmed(self, tmp_path: Path) -> None:
-        row = [date(2026, 3, 15), date(2026, 2, 20), "  A기업  ", "2208162517", 1000]
+        row = [
+            date(2026, 3, 15),
+            date(2026, 2, 20),
+            date(2026, 4, 1),
+            "  A기업  ",
+            "2208162517",
+            1000,
+        ]
         result = read_standard_workbook(_write(tmp_path / "a.xlsx", [row]))
 
         assert result.rows[0]["기업명"] == "A기업"
 
     def test_blank_cell_becomes_none(self, tmp_path: Path) -> None:
         """빈 셀은 ``None`` 으로 **그대로** 넘긴다(임의 대체 금지)."""
-        row = [date(2026, 3, 15), date(2026, 2, 20), "   ", "2208162517", 1000]
+        row = [date(2026, 3, 15), date(2026, 2, 20), date(2026, 4, 1), "   ", "2208162517", 1000]
         result = read_standard_workbook(_write(tmp_path / "a.xlsx", [row]))
 
         assert result.rows[0]["기업명"] is None

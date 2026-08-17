@@ -87,8 +87,15 @@ class TestNoUnconfirmedColumns:
         finally:
             workbook.close()
 
-    def test_exactly_five_columns(self) -> None:
-        assert len(header_row()) == 5
+    def test_exactly_six_columns(self) -> None:
+        """확정 컬럼은 6개다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-17 PM 결정으로 표준 양식에
+            ``지급일`` 이 추가되었습니다(5 → 6). ``payment_date`` 를 nullable
+            로 바꾸는 대신 양식에서 받기로 한 결정입니다.
+        """
+        assert len(header_row()) == 6
 
 
 class TestRoundTrip:

@@ -1,13 +1,13 @@
 """
 tests.test_upload_api
 
-**업로드 API** 검증 — 양식 다운로드 · 파일 검증.
+**업로드 API** 검증 — 양식 다운로드 · 파일 검증 · 저장.
 
 여기서 가장 중요하게 고정하는 성질:
 
-1. 오류가 하나라도 있으면 **DB 에 아무것도 저장되지 않는다**
-2. 오류가 없어도 **지금은 저장하지 않는다** (업무규칙 미확정 — 응답에 명시)
-3. 오류는 **행 번호 · 항목명 · 내용**으로 돌아온다 (지시서 §15)
+1. 오류가 하나라도 있으면 **DB 에 아무것도 저장되지 않는다** (전부 검증 → 전부 저장)
+2. 검증 API 는 **저장하지 않는다** — 저장은 별도 엔드포인트의 책임이다
+3. 오류는 **행 번호 · 항목명 · 내용**으로 돌아온다
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ VALIDATE_URL = "/uploads/purchases/validate"
 GOOD_ROW: list[object] = [
     date(2026, 3, 15),
     date(2026, 2, 20),
+    date(2026, 4, 1),
     "한빛산업개발",
     "220-81-62517",
     54648000,
@@ -112,7 +113,7 @@ class TestValidateEndpoint:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         """오류는 **행 번호 · 항목명 · 내용**으로 돌아온다."""
-        bad = ["2026.13.45", date(2026, 2, 20), None, "999", "abc"]
+        bad = ["2026.13.45", date(2026, 2, 20), date(2026, 4, 1), None, "999", "abc"]
         path = _excel(tmp_path / "bad.xlsx", [GOOD_ROW, bad])
 
         body = client.post(VALIDATE_URL, json={"file_path": str(path)}).json()
@@ -178,13 +179,13 @@ class TestValidateEndpoint:
         assert body["ok"] is True, body["issues"]
 
 
-class TestNothingIsStored:
-    """⛔ 검증만 하고 저장하지 않는다."""
+class TestValidateEndpointNeverStores:
+    """⛔ 검증 API 는 어떤 경우에도 저장하지 않는다."""
 
     def test_valid_file_does_not_store(
         self, client: TestClient, db_path: Path, tmp_path: Path
     ) -> None:
-        """정상 파일이어도 **저장하지 않는다**(업무규칙 미확정)."""
+        """정상 파일이어도 검증 API 는 **저장하지 않는다**(책임 분리)."""
         path = _excel(tmp_path / "good.xlsx", [GOOD_ROW])
 
         body = client.post(VALIDATE_URL, json={"file_path": str(path)}).json()
@@ -197,17 +198,26 @@ class TestNothingIsStored:
         self, client: TestClient, db_path: Path, tmp_path: Path
     ) -> None:
         """오류가 하나라도 있으면 **정상 행도** 저장되지 않는다."""
-        bad = ["2026.13.45", date(2026, 2, 20), None, "999", "abc"]
+        bad = ["2026.13.45", date(2026, 2, 20), date(2026, 4, 1), None, "999", "abc"]
         path = _excel(tmp_path / "mixed.xlsx", [GOOD_ROW, bad])
 
         client.post(VALIDATE_URL, json={"file_path": str(path)})
 
         assert PurchaseRepository(db_path).count() == 0
 
-    def test_storage_note_explains_why(self, client: TestClient, tmp_path: Path) -> None:
-        """왜 저장되지 않았는지 사용자에게 문장으로 알려 준다."""
+    def test_storage_note_says_validation_only(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """검증 전용 API 임을 사용자에게 문장으로 알려 준다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 이전에는 "지급일 항목이 없어 저장할 수
+            없다" 가 이유였습니다. 2026-08-17 PM 결정으로 그 Blocker 가
+            해소되어 저장은 별도 엔드포인트(``POST /uploads/purchases``)가
+            담당하며, 이 API 는 **검증 전용**으로 남았습니다.
+        """
         path = _excel(tmp_path / "good.xlsx", [GOOD_ROW])
 
         note = client.post(VALIDATE_URL, json={"file_path": str(path)}).json()["storage_note"]
 
-        assert "지급일" in note
+        assert "저장하지 않았습니다" in note

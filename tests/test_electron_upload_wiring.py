@@ -120,9 +120,23 @@ class TestSecuritySettingsPreserved:
 class TestRendererUsesBackendOnly:
     """화면은 백엔드 API 로만 일한다."""
 
-    def test_upload_calls_the_validate_endpoint(self) -> None:
+    def test_upload_calls_the_backend_endpoints(self) -> None:
+        """화면은 검증·저장 모두 백엔드 API 를 호출한다."""
         source = _read(INDEX_HTML)
         assert "/uploads/purchases/validate" in source
+        assert '"/uploads/purchases"' in source
+
+    def test_year_is_sent_from_the_screen(self) -> None:
+        """⛔ 대상 기간은 **화면이 지정**한다. 파일에서 유추하지 않는다."""
+        source = _read(INDEX_HTML)
+        assert "upload-year" in source
+        assert "year: Number(" in source
+
+    def test_screen_does_not_compute_the_period(self) -> None:
+        """연도 → 기간 환산은 백엔드가 한다(화면에 날짜 계산이 없다)."""
+        source = _read(INDEX_HTML)
+        assert "period_start" not in source
+        assert "period_end" not in source
 
     def test_upload_ui_elements_exist(self) -> None:
         source = _read(INDEX_HTML)
@@ -130,6 +144,8 @@ class TestRendererUsesBackendOnly:
             "upload-template",
             "upload-pick",
             "upload-run",
+            "upload-save",
+            "upload-year",
             "upload-summary",
             "upload-issues",
         ):

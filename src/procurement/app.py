@@ -28,6 +28,7 @@ FastAPI 애플리케이션과 **의존성 조립(composition root)** 을 정의�
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
@@ -54,9 +55,14 @@ from procurement.dashboard import DashboardDataService
 from procurement.dashboard.status_service import DataStatusService
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
-from procurement.database.import_batch_repository import ImportBatchRepository
+from procurement.database.import_batch_repository import (
+    ImportBatchRepository,
+    ImportBatchValidationError,
+)
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.purchase_repository import PurchaseRepository
+from procurement.importers.batch_import_service import BatchImportService
+from procurement.importers.purchase_importer import PurchaseImporter
 from procurement.uploads.template import TEMPLATE_FILE_NAME, build_template_bytes
 from procurement.uploads.upload_response import UploadResponseModel, build_upload_response
 from procurement.uploads.upload_service import UploadService
@@ -110,6 +116,28 @@ def build_policy_admin(db_path: str | Path | None = None) -> PolicyAdminService:
     """
     path: str | Path = db_path if db_path is not None else settings.db_file
     return PolicyAdminService(PolicyRepository(path))
+
+
+def build_upload_service(db_path: str | Path | None = None) -> UploadService:
+    """업로드 서비스를 조립합니다(composition root).
+
+    저장은 **기존 적재 계층을 그대로 재사용**합니다. 업로드 전용 저장 로직을
+    만들지 않으므로, 업로드 경로와 기존 경로의 결과가 갈라지지 않습니다::
+
+        UploadService → BatchImportService → PurchaseImporter → Repository
+
+    Args:
+        db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        조립된 :class:`UploadService`.
+    """
+    path: str | Path = db_path if db_path is not None else settings.db_file
+    purchase_repo = PurchaseRepository(path)
+    company_repo = CompanyRepository(path)
+    batch_repo = ImportBatchRepository(path)
+    importer = PurchaseImporter(purchase_repo, company_repo)
+    return UploadService(BatchImportService(importer, batch_repo, purchase_repo))
 
 
 def build_data_status_api(
@@ -203,6 +231,26 @@ class UploadRequestModel(BaseModel):
     )
 
 
+class UploadImportRequestModel(UploadRequestModel):
+    """업로드 저장 요청.
+
+    Attributes:
+        file_path: 저장할 ``.xlsx`` 파일의 로컬 경로.
+        year: 대상 회계연도. **필수입니다.** 이 값으로 대상 기간을
+            ``1/1 ~ 12/31`` (D-23 역년)로 만듭니다.
+
+            ⛔ 파일 내용에서 기간을 유추하지 않습니다. 어느 날짜로 연도를
+            나눌지는 운영자 설정 사항이므로(D-24), 파일에서 추론하면 확정되지
+            않은 규칙이 생깁니다.
+    """
+
+    year: int = Field(
+        ge=1900,
+        le=2999,
+        description="대상 회계연도. 1/1 ~ 12/31 로 환산합니다(D-23).",
+    )
+
+
 def create_app(
     db_path: str | Path | None = None,
     admin_token: str | None = None,
@@ -228,7 +276,7 @@ def create_app(
         엔드포인트가 등록된 :class:`fastapi.FastAPI` 인스턴스.
     """
     dashboard_api = build_dashboard_api(db_path)
-    upload_service = UploadService()
+    upload_service = build_upload_service(db_path)
     policy_admin = build_policy_admin(db_path)
     date_field = (
         period_date_field
@@ -395,6 +443,40 @@ def create_app(
         네트워크로 다시 실어 보내지 않습니다.
         """
         return build_upload_response(upload_service.validate_file(payload.file_path))
+
+    @app.post(
+        "/uploads/purchases",
+        response_model=UploadResponseModel,
+        summary="표준 업로드 파일 검증 후 저장",
+        tags=["uploads"],
+    )
+    def import_purchase_upload(payload: UploadImportRequestModel) -> UploadResponseModel:
+        """올린 엑셀 파일을 검증하고, **오류가 하나도 없을 때만** 저장합니다.
+
+        **"전부 검증 → 전부 저장"** 입니다. 한 행이라도 오류가 있으면 적재
+        계층을 호출조차 하지 않으므로 DB 에 아무 변화가 없으며, 정상 행도
+        저장되지 않습니다. 이때도 200 으로 응답하고 ``stored: false`` 와 오류
+        목록을 돌려줍니다 — 사용자가 무엇을 고쳐야 하는지 한 번에 보게 하기
+        위함입니다.
+
+        대상 기간은 ``year`` 로 받아 ``1/1 ~ 12/31`` (D-23)로 환산합니다.
+        같은 기간의 이전 배치는 기존 규칙대로 대체됩니다(D-25).
+
+        저장은 기존 :class:`BatchImportService` 가 수행합니다. 업로드 전용
+        저장 로직을 만들지 않았습니다.
+        """
+        # 배치의 대상 기간은 **단순 날짜 범위**다. 어느 날짜 컬럼으로 연도를
+        # 나눌지(D-24)와는 별개이므로 PeriodFilter 를 쓰지 않는다 — 여기서
+        # date_field 를 고르면 확정되지 않은 의미가 붙는다.
+        try:
+            result = upload_service.import_file(
+                payload.file_path,
+                period_start=date(payload.year, 1, 1),
+                period_end=date(payload.year, 12, 31),
+            )
+        except ImportBatchValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return build_upload_response(result)
 
     @app.get(
         "/policies",
