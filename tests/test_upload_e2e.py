@@ -350,17 +350,39 @@ class TestApiContract:
 
         assert response.status_code == 422
 
-    def test_reupload_replaces_the_previous_batch(
+    def test_reupload_needs_confirmation(
         self, client: TestClient, db_path: Path, tmp_path: Path
     ) -> None:
-        """같은 기간 재업로드는 **대체**한다(D-25, 기존 규칙 재사용)."""
+        """같은 기간 재업로드는 **확인 없이 교체하지 않는다**(409).
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-18 PM-005 로 "교체 전 사용자 확인"
+            이 확정되었습니다. 그전에는 묻지 않고 교체했습니다. 업무규칙이
+            실제로 바뀐 경우입니다.
+        """
         first = _excel(tmp_path / "first.xlsx", ROWS)
         second = _excel(tmp_path / "second.xlsx", [ROWS[0]])
-
         client.post(IMPORT_URL, json={"file_path": str(first), "year": 2026})
-        body = client.post(IMPORT_URL, json={"file_path": str(second), "year": 2026}).json()
+
+        response = client.post(IMPORT_URL, json={"file_path": str(second), "year": 2026})
+
+        assert response.status_code == 409
+        # 기존 데이터가 그대로 남아 있다.
+        assert len(PurchaseRepository(db_path).find_for_calculation()) == 2
+
+    def test_reupload_replaces_after_confirmation(
+        self, client: TestClient, db_path: Path, tmp_path: Path
+    ) -> None:
+        """확인하면 교체한다 — 이전 배치는 SUPERSEDED (D-25 · PM-012)."""
+        first = _excel(tmp_path / "first.xlsx", ROWS)
+        second = _excel(tmp_path / "second.xlsx", [ROWS[0]])
+        client.post(IMPORT_URL, json={"file_path": str(first), "year": 2026})
+
+        body = client.post(
+            IMPORT_URL,
+            json={"file_path": str(second), "year": 2026, "replace_existing": True},
+        ).json()
 
         assert body["stored"] is True
         # 이전 배치는 SUPERSEDED 가 되어 계산에서 빠진다.
-        found = PurchaseRepository(db_path).find_for_calculation()
-        assert len(found) == 1
+        assert len(PurchaseRepository(db_path).find_for_calculation()) == 1

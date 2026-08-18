@@ -65,7 +65,7 @@ from procurement.importers.batch_import_service import BatchImportService
 from procurement.importers.purchase_importer import PurchaseImporter
 from procurement.uploads.template import TEMPLATE_FILE_NAME, build_template_bytes
 from procurement.uploads.upload_response import UploadResponseModel, build_upload_response
-from procurement.uploads.upload_service import UploadService
+from procurement.uploads.upload_service import ExistingPeriodBatchError, UploadService
 from procurement.web import (
     AchievementLevelsResponseModel,
     PolicyDisplayResponseModel,
@@ -248,6 +248,13 @@ class UploadImportRequestModel(UploadRequestModel):
         ge=1900,
         le=2999,
         description="대상 회계연도. 1/1 ~ 12/31 로 환산합니다(D-23).",
+    )
+    replace_existing: bool = Field(
+        default=False,
+        description=(
+            "같은 기간의 기존 데이터를 교체해도 좋다는 **사용자의 명시적 확인**. "
+            "기본값 false — 확인 없이는 교체하지 않고 409 로 거부합니다(PM-005)."
+        ),
     )
 
 
@@ -449,6 +456,29 @@ def create_app(
         response_model=UploadResponseModel,
         summary="표준 업로드 파일 검증 후 저장",
         tags=["uploads"],
+        responses={
+            409: {
+                "description": (
+                    "같은 기간에 이미 등록된 데이터가 있고 교체 확인이 없는 경우. "
+                    "**DB 는 변경되지 않습니다.** 사용자에게 교체 여부를 물은 뒤 "
+                    "`replace_existing: true` 로 다시 요청하세요."
+                ),
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": {
+                                "code": "EXISTING_PERIOD",
+                                "message": "2026년 데이터가 이미 등록되어 있습니다.",
+                                "existing_batch_id": 1,
+                                "existing_file_name": "2026년_구매실적.xlsx",
+                                "existing_row_count": 1744,
+                                "year": 2026,
+                            }
+                        }
+                    }
+                },
+            }
+        },
     )
     def import_purchase_upload(payload: UploadImportRequestModel) -> UploadResponseModel:
         """올린 엑셀 파일을 검증하고, **오류가 하나도 없을 때만** 저장합니다.
@@ -464,6 +494,15 @@ def create_app(
 
         저장은 기존 :class:`BatchImportService` 가 수행합니다. 업로드 전용
         저장 로직을 만들지 않았습니다.
+
+        ⛔ **같은 기간에 이미 데이터가 있으면 묻지 않고 교체하지 않습니다**
+        (PM-005). ``replace_existing`` 없이 요청하면 **409** 로 거부하며, 이때
+        **DB 는 전혀 변경되지 않습니다.** 화면은 이 응답을 받아 교체 여부를
+        묻고, 사용자가 승인하면 ``replace_existing: true`` 로 다시 요청합니다.
+
+        교체는 **논리 교체**입니다(PM-012). 이전 배치는 물리 삭제하지 않고
+        ``SUPERSEDED`` 로 표시되어 계산에서만 빠지므로, 어떤 파일이
+        사용되었는지 이력이 남습니다.
         """
         # 배치의 대상 기간은 **단순 날짜 범위**다. 어느 날짜 컬럼으로 연도를
         # 나눌지(D-24)와는 별개이므로 PeriodFilter 를 쓰지 않는다 — 여기서
@@ -473,7 +512,20 @@ def create_app(
                 payload.file_path,
                 period_start=date(payload.year, 1, 1),
                 period_end=date(payload.year, 12, 31),
+                replace_existing=payload.replace_existing,
             )
+        except ExistingPeriodBatchError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "EXISTING_PERIOD",
+                    "message": f"{payload.year}년 데이터가 이미 등록되어 있습니다.",
+                    "existing_batch_id": exc.existing.batch_id,
+                    "existing_file_name": exc.existing.file_name,
+                    "existing_row_count": exc.existing.row_count,
+                    "year": payload.year,
+                },
+            ) from exc
         except ImportBatchValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return build_upload_response(result)

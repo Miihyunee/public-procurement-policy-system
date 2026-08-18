@@ -177,6 +177,25 @@ class TestRendererUsesBackendOnly:
         assert "오류가 있어 저장하지 않았습니다" not in source
         assert "storage_note" in source
 
+    def test_screen_asks_before_replacing(self) -> None:
+        """⛔ 같은 기간 재업로드 시 **묻고 나서** 교체한다 (PM-005)."""
+        source = _read(INDEX_HTML)
+
+        assert "EXISTING_PERIOD" in source
+        assert "replace_existing" in source
+        assert "교체하시겠습니까" in source
+
+    def test_screen_does_not_decide_existence_itself(self) -> None:
+        """⛔ "기존 데이터가 있는가" 는 **백엔드가** 판단한다.
+
+        화면이 스스로 배치를 조회해 판단하면 판정이 두 곳에 생깁니다.
+        """
+        source = _read(INDEX_HTML)
+
+        assert "409" in source          # 백엔드 응답을 보고 움직인다
+        assert "import_batch" not in source
+        assert "SUPERSEDED" not in source
+
     def test_browser_mode_degrades_gracefully(self) -> None:
         """데스크톱이 아니면 버튼을 막고 안내한다(브라우저에서 열었을 때)."""
         source = _read(INDEX_HTML)

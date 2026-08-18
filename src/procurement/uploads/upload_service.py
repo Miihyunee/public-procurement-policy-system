@@ -24,6 +24,14 @@ procurement.uploads.upload_service
     일부 행만 먼저 저장하는 경로는 만들지 않았습니다.
 
 .. warning::
+    ⛔ **같은 기간에 이미 등록된 데이터가 있으면 묻지 않고 교체하지 않습니다**
+    (PM-005). 호출자가 ``replace_existing=True`` 로 **명시적으로 확인**해야만
+    교체합니다. 확인이 없으면 :class:`ExistingPeriodBatchError` 를 냅니다.
+
+    확인 여부를 묻는 시점은 **검증을 통과한 뒤**입니다. 오류가 있는 파일로는
+    교체 여부를 물을 이유가 없기 때문입니다.
+
+.. warning::
     ⛔ **대상 기간은 호출자가 지정합니다.** 파일 내용에서 유추하지 않습니다.
     어느 날짜로 연도를 나눌지는 운영자 설정 사항이며(D-24), 파일에서 추론하면
     확정되지 않은 규칙이 생깁니다.
@@ -37,6 +45,7 @@ from datetime import date
 from pathlib import Path
 
 from procurement.importers.batch_import_service import BatchImportResult, BatchImportService
+from procurement.models.import_batch import ImportBatch
 from procurement.uploads.excel_adapter import ExcelReadError, WorkbookRead, read_standard_workbook
 from procurement.uploads.mapping import to_import_rows
 from procurement.uploads.validation import ValidationReport, validate_headers, validate_rows
@@ -151,17 +160,30 @@ class UploadService:
         *,
         period_start: date,
         period_end: date,
+        replace_existing: bool = False,
     ) -> UploadResult:
         """파일을 검증하고, **오류가 하나도 없을 때만** 저장합니다.
 
-        저장은 기존 :class:`BatchImportService` 가 수행하므로, 업로드 경로가
-        별도의 저장 로직을 갖지 않습니다. 같은 기간의 이전 배치는 기존 규칙대로
-        대체(``SUPERSEDED``)됩니다(D-25).
+        처리 순서(PM-006 · PM-007)::
+
+            1. 파일 읽기 · 전체 행 검증
+            2. 오류가 하나라도 있으면 → 저장하지 않고 반환 (기존 데이터 그대로)
+            3. 같은 기간 ACTIVE 배치 확인
+            4. 있는데 replace_existing 이 False → ExistingPeriodBatchError
+            5. 새 배치 저장 → **저장에 성공한 뒤에야** 이전 배치를 SUPERSEDED
+
+        **검증 실패 때문에 기존 정상 데이터가 사라지는 상황은 발생하지
+        않습니다.** 2단계에서 이미 반환하므로 적재 계층을 호출조차 하지 않고,
+        5단계의 무효화는 기존 :class:`BatchImportService` 안에서 새 배치 적재가
+        끝난 뒤에 일어납니다.
 
         Args:
             source: 읽을 ``.xlsx`` 파일 경로.
             period_start: 대상 기간 시작일. **호출자가 지정합니다.**
             period_end: 대상 기간 종료일. **호출자가 지정합니다.**
+            replace_existing: 같은 기간의 기존 데이터를 교체해도 좋다는
+                **사용자의 명시적 확인**. 기본값 ``False`` — 확인 없이는
+                교체하지 않습니다.
 
         Returns:
             :class:`UploadResult`. 저장했으면 ``stored`` 가 ``True`` 이고
@@ -169,6 +191,9 @@ class UploadService:
 
         Raises:
             UploadStorageUnavailableError: 저장 계층 없이 생성된 경우.
+            ExistingPeriodBatchError: 같은 기간에 이미 데이터가 있는데
+                ``replace_existing`` 이 ``False`` 인 경우. **DB 는 변경되지
+                않습니다.**
         """
         if self._batch_import_service is None:
             raise UploadStorageUnavailableError(
@@ -178,7 +203,17 @@ class UploadService:
         result = self._read_and_validate(source)
         if not result.storable:
             # ⛔ 오류가 있으면 적재 계층을 **호출하지 않는다.** DB 는 그대로다.
+            #    교체 여부도 묻지 않는다 — 저장할 수 없는 파일이기 때문이다.
             return _with_note(result, NOT_STORED_NOTE)
+
+        existing = self._batch_import_service.find_active_batch(period_start, period_end)
+        if existing is not None and not replace_existing:
+            # ⛔ 묻지 않고 교체하지 않는다. 여기서 멈추므로 DB 는 그대로다.
+            raise ExistingPeriodBatchError(
+                existing=existing,
+                period_start=period_start,
+                period_end=period_end,
+            )
 
         assert result.report is not None  # storable 이 보장
         batch = self._batch_import_service.import_batch(
@@ -223,6 +258,36 @@ class UploadService:
 
 class UploadStorageUnavailableError(RuntimeError):
     """저장 계층 없이 저장을 시도했을 때 발생합니다."""
+
+
+class ExistingPeriodBatchError(RuntimeError):
+    """같은 기간에 이미 등록된 데이터가 있는데 교체 확인이 없을 때 발생합니다.
+
+    **DB 는 전혀 변경되지 않은 상태**에서 발생합니다. 호출자는 사용자에게
+    교체 여부를 물은 뒤, 승인받으면 ``replace_existing=True`` 로 다시
+    호출하면 됩니다.
+
+    Attributes:
+        existing: 이미 등록되어 있는 ACTIVE 배치.
+        period_start: 대상 기간 시작일.
+        period_end: 대상 기간 종료일.
+    """
+
+    def __init__(
+        self,
+        *,
+        existing: ImportBatch,
+        period_start: date,
+        period_end: date,
+    ) -> None:
+        """오류를 만듭니다."""
+        self.existing = existing
+        self.period_start = period_start
+        self.period_end = period_end
+        super().__init__(
+            f"{period_start.year}년 데이터가 이미 등록되어 있습니다"
+            f"(배치 #{existing.batch_id})."
+        )
 
 
 def _with_note(result: UploadResult, note: str) -> UploadResult:

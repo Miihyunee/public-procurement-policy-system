@@ -1027,6 +1027,20 @@
     }
   }
 
+  // 같은 기간에 이미 데이터가 있을 때 사용자에게 묻는다.
+  //
+  // ⛔ 판단은 **백엔드가** 한다. 화면은 409 를 받고 문장을 보여줄 뿐이며,
+  //    "기존 데이터가 있는가" 를 화면이 스스로 계산하지 않는다.
+  function confirmReplace(detail) {
+    var year = detail && detail.year ? detail.year : "";
+    var rows = detail && detail.existing_row_count ? detail.existing_row_count : 0;
+    return window.confirm(
+      year + "년 데이터가 이미 등록되어 있습니다"
+      + (rows ? " (" + numberFormat(rows) + "건)" : "") + ".\n\n"
+      + "기존 데이터를 새 파일로 교체하시겠습니까?"
+    );
+  }
+
   // 업로드 요청 하나를 보내고 결과를 그린다.
   // 검증과 저장은 **엔드포인트만 다르고** 화면 처리는 같다.
   function sendUpload(url, payload, buttons) {
@@ -1041,15 +1055,36 @@
     })
       .then(function (res) {
         return res.json().then(function (body) {
-          if (!res.ok) {
-            throw new Error(body.detail || ("HTTP " + res.status));
+          // 409 = 같은 기간에 기존 데이터가 있고 교체 확인이 없다는 뜻.
+          // 이 시점에 DB 는 아직 아무것도 바뀌지 않았다.
+          if (res.status === 409 && body.detail && body.detail.code === "EXISTING_PERIOD") {
+            return { needsConfirm: true, detail: body.detail };
           }
-          return body;
+          if (!res.ok) {
+            var message = body.detail;
+            if (message && typeof message === "object") { message = message.message; }
+            throw new Error(message || ("HTTP " + res.status));
+          }
+          return { body: body };
         });
       })
-      .then(function (body) {
-        renderUploadResult(body);
-        if (body.stored) { load(); }   // 저장되었으면 대시보드를 다시 그린다
+      .then(function (outcome) {
+        if (outcome.needsConfirm) {
+          if (!confirmReplace(outcome.detail)) {
+            // [취소] — 아무것도 바꾸지 않는다.
+            uploadNotice("취소했습니다. 기존 데이터를 그대로 두었습니다.");
+            return null;
+          }
+          // [교체] — 사용자의 명시적 확인을 붙여 다시 요청한다.
+          var confirmed = {};
+          Object.keys(payload).forEach(function (key) { confirmed[key] = payload[key]; });
+          confirmed.replace_existing = true;
+          sendUpload(url, confirmed, buttons);
+          return null;
+        }
+        renderUploadResult(outcome.body);
+        if (outcome.body.stored) { load(); }   // 저장되었으면 대시보드를 다시 그린다
+        return null;
       })
       .catch(function (err) {
         uploadNotice("");

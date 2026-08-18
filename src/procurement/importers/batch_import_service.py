@@ -167,6 +167,22 @@ class BatchImportService:
             duplicate_of=duplicate,
         )
 
+    def find_active_batch(self, period_start: date, period_end: date) -> ImportBatch | None:
+        """같은 대상 기간의 ACTIVE 배치를 조회합니다(읽기 전용).
+
+        **교체 전 사용자 확인**(PM-005)을 위해 "이 기간에 이미 등록된 데이터가
+        있는가" 를 묻는 용도입니다. 저장소를 그대로 호출하기만 하며, 아무것도
+        바꾸지 않습니다.
+
+        Args:
+            period_start: 대상 기간 시작일.
+            period_end: 대상 기간 종료일.
+
+        Returns:
+            해당 기간의 ACTIVE 배치. 없으면 ``None``.
+        """
+        return self._batch_repository.find_active_by_period(period_start, period_end)
+
     def find_conflicts(self, period_start: date, period_end: date) -> list[ImportBatch]:
         """같은 기간에 ACTIVE 배치가 2 개 이상 남아 있는지 점검합니다.
 
