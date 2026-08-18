@@ -55,6 +55,7 @@
 
 | 문서 | 내용 |
 |---|---|
+| `PURCHASE_TYPE_CLASSIFICATION_ANALYSIS.md` | **구매유형 수작업 분류 프로세스 분석** — 원본/작업본 실측 |
 | `UPLOAD_PIPELINE_DESIGN.md` | 업로드 파이프라인 설계 · 남은 결정 지점 |
 | `STANDARD_UPLOAD_FORMAT.md` | 표준 양식 컬럼 정의와 근거 |
 | `ELECTRON_ARCHITECTURE.md` | Electron 구조 · 보안 설정 · 미검증 항목 |
