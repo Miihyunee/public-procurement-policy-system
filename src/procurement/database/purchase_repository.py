@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS purchase (
     contract_date DATE NOT NULL,
     payment_date DATE NOT NULL,
     resolution_date DATE,
+    issue_date DATE,
+    description TEXT,
+    budget_account TEXT,
     amount NUMERIC NOT NULL,
     batch_id INTEGER,
     created_at DATETIME NOT NULL,
@@ -91,6 +94,19 @@ def _to_db_amount(value: Decimal) -> str:
 def _from_db_amount(value: object) -> Decimal:
     """SQLite 에서 읽은 금액 값을 Decimal 로 변환합니다."""
     return Decimal(str(value))
+
+
+def _optional(row: sqlite3.Row, column: str) -> str | None:
+    """구(舊) 스키마 DB 에서도 안전하게 컬럼 값을 읽습니다.
+
+    ``ALTER TABLE`` 마이그레이션 전의 DB 를 그대로 열었을 때 컬럼이 없으면
+    :class:`IndexError` 가 납니다. 없는 컬럼은 **값이 없는 것**으로 봅니다.
+    """
+    try:
+        value = row[column]
+    except IndexError:
+        return None
+    return str(value) if value is not None else None
 
 
 class PurchaseRepository(BaseRepository):
@@ -142,8 +158,9 @@ class PurchaseRepository(BaseRepository):
         sql = (
             "INSERT INTO purchase "
             "(business_no, company_id, company_name, contract_date, payment_date, "
-            "resolution_date, amount, batch_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "resolution_date, issue_date, description, budget_account, amount, "
+            "batch_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         params = (
             purchase.business_no,
@@ -152,6 +169,9 @@ class PurchaseRepository(BaseRepository):
             _to_db_date(purchase.contract_date),
             _to_db_date(purchase.payment_date),
             _to_db_date(purchase.resolution_date) if purchase.resolution_date else None,
+            _to_db_date(purchase.issue_date) if purchase.issue_date else None,
+            purchase.description,
+            purchase.budget_account,
             _to_db_amount(purchase.amount),
             purchase.batch_id,
             _to_db(created_at),
@@ -170,6 +190,9 @@ class PurchaseRepository(BaseRepository):
             contract_date=purchase.contract_date,
             payment_date=purchase.payment_date,
             resolution_date=purchase.resolution_date,
+            issue_date=purchase.issue_date,
+            description=purchase.description,
+            budget_account=purchase.budget_account,
             amount=purchase.amount,
             batch_id=purchase.batch_id,
             created_at=created_at,
@@ -366,6 +389,9 @@ class PurchaseRepository(BaseRepository):
             resolution_date=(
                 _from_db_date(row["resolution_date"]) if row["resolution_date"] else None
             ),
+            issue_date=_from_db_date(row["issue_date"]) if _optional(row, "issue_date") else None,
+            description=_optional(row, "description"),
+            budget_account=_optional(row, "budget_account"),
             amount=_from_db_amount(row["amount"]),
             batch_id=row["batch_id"],
             created_at=_from_db(row["created_at"]),

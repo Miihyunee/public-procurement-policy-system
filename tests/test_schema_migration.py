@@ -70,6 +70,10 @@ class TestMigrateSchema:
             "purchase.batch_id",
             # 2026-08-15 PM 결정 — 결의일자 별도 필드 신설.
             "purchase.resolution_date",
+            # 2026-08-20 음수 상계 업무규칙 확정 — 발행일자·적요·예산과목.
+            "purchase.issue_date",
+            "purchase.description",
+            "purchase.budget_account",
         ]
 
     def test_is_idempotent(self, legacy_db: Path) -> None:
@@ -85,6 +89,27 @@ class TestMigrateSchema:
     def test_existing_rows_have_null_batch_id(self, legacy_db: Path) -> None:
         migrate_schema(legacy_db)
         assert PurchaseRepository(legacy_db).find_all()[0].batch_id is None
+
+    def test_adds_the_three_offsetting_columns(self, legacy_db: Path) -> None:
+        """2026-08-20 음수 상계 업무규칙 확정으로 추가된 3컬럼."""
+        migrate_schema(legacy_db)
+        assert {"issue_date", "description", "budget_account"} <= _columns(legacy_db)
+
+    def test_existing_rows_keep_null_in_the_new_columns(self, legacy_db: Path) -> None:
+        """⛔ 기존 행의 새 컬럼을 다른 값으로 채우지 않는다.
+
+        특히 ``issue_date`` 를 ``resolution_date`` 나 ``payment_date`` 로
+        대체하지 않습니다. 값이 없다는 사실이 그대로 보존되어야, 상계 판정에서
+        "발행일자 없음" 으로 보고할 수 있습니다.
+        """
+        migrate_schema(legacy_db)
+        row = PurchaseRepository(legacy_db).find_all()[0]
+
+        assert row.issue_date is None
+        assert row.description is None
+        assert row.budget_account is None
+        # 기존 값은 그대로 남아 있다.
+        assert row.amount == Decimal("1000")
 
     def test_existing_rows_stay_in_calculation(self, legacy_db: Path) -> None:
         """batch_id 가 NULL 인 기존 행은 계산에서 사라지지 않는다."""

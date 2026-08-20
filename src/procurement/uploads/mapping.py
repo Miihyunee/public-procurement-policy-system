@@ -10,7 +10,7 @@ procurement.uploads.mapping
 .. warning::
     ⛔ **업무 판정도, 값 변환도 하지 않습니다.**
 
-    검증 계층이 만드는 키 6개가 적재 계층이 읽는 키와 **이름까지 그대로
+    검증 계층이 만드는 키가 적재 계층이 읽는 키와 **이름까지 그대로
     일치**하므로, 이 모듈이 할 일은 "그대로 넘긴다" 뿐입니다. 여기서 값을
     고치면 검증 규칙이 두 곳에 생기고, 어느 쪽이 진짜인지 알 수 없게 됩니다.
 
@@ -38,9 +38,12 @@ MAPPED_KEYS: Final[tuple[str, ...]] = (
     "resolution_date",
     "contract_date",
     "payment_date",
+    "issue_date",
     "company_name",
     "business_no",
     "amount",
+    "description",
+    "budget_account",
 )
 
 

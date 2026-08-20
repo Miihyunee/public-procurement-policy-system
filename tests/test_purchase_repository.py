@@ -80,9 +80,15 @@ class TestCreateTable:
         NULL 을 허용합니다.
 
         .. note::
-            **기대값이 바뀐 이유** — 2026-08-15 PM 결정으로 결의일자를 담는
-            ``resolution_date`` 컬럼이 신설되었습니다. ``payment_date`` 를
-            결의일자로 재정의하지 않았으므로 기존 컬럼은 그대로입니다.
+            **기대값이 바뀐 이유**
+
+            - 2026-08-15 PM 결정으로 결의일자를 담는 ``resolution_date``
+              컬럼이 신설되었습니다. ``payment_date`` 를 결의일자로 재정의하지
+              않았으므로 기존 컬럼은 그대로입니다.
+            - 2026-08-20 음수 상계 업무규칙 확정으로 세금계산서 발행일자
+              ``issue_date`` 와 담당자가 함께 확인하는 ``description`` ·
+              ``budget_account`` 가 추가되었습니다(`DECISIONS.md` §0.6.3.4).
+              모두 NULL 을 허용해 기존 행을 보존합니다.
         """
         names = [row["name"] for row in repo.execute("PRAGMA table_info(purchase)")]
         assert names == [
@@ -93,6 +99,9 @@ class TestCreateTable:
             "contract_date",
             "payment_date",
             "resolution_date",
+            "issue_date",
+            "description",
+            "budget_account",
             "amount",
             "batch_id",
             "created_at",

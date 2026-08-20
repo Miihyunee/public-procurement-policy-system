@@ -20,6 +20,7 @@ from procurement.uploads import (
     COLUMNS_BY_HEADER,
     PENDING_COLUMNS,
     REQUIRED_HEADERS,
+    REQUIRED_VALUE_HEADERS,
     STANDARD_COLUMNS,
     example_row,
     guide_lines,
@@ -37,6 +38,10 @@ GOOD_ROW: dict[str, object] = {
     "기업명": "한빛산업개발",
     "사업자등록번호": "220-81-62517",
     "계": "54,648,000",
+    # 2026-08-20 음수 상계 업무규칙 확정 — 3컬럼 추가(9컬럼).
+    "신고기준일": "2026-03-10",
+    "적요": "사무용품 구매",
+    "예산과목": "소모성물품구입비",
 }
 
 
@@ -51,7 +56,15 @@ class TestStandardColumns:
     """양식에는 확정된 컬럼만 들어간다."""
 
     def test_confirmed_columns_only(self) -> None:
-        """2026-08-14 고객 확정 5개."""
+        """고객 확정 9개.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-20 음수 상계 업무규칙 확정으로
+            세금계산서 발행일자(``신고기준일``)가 상계 판정에 필요해졌고,
+            담당자가 함께 확인하는 ``적요`` · ``예산과목`` 도 확정 항목이
+            되었습니다(`DECISIONS.md` §0.6.3.4). 세 컬럼 모두 원본 엑셀에
+            이미 존재합니다.
+        """
         assert header_row() == (
             "결의일자",
             "계약일자",
@@ -59,6 +72,9 @@ class TestStandardColumns:
             "기업명",
             "사업자등록번호",
             "계",
+            "신고기준일",
+            "적요",
+            "예산과목",
         )
 
     def test_amount_column_is_the_vat_included_total(self) -> None:
@@ -68,12 +84,24 @@ class TestStandardColumns:
         assert "부가가치세" in column.description
         assert "공급가액이 아닙니다" in column.description
 
-    def test_all_confirmed_columns_are_required(self) -> None:
+    def test_every_column_header_must_be_present(self) -> None:
+        """머리글은 **전부** 있어야 한다 — 9컬럼 모두."""
         assert REQUIRED_HEADERS == header_row()
 
-    @pytest.mark.parametrize(
-        "header", ["예산과목", "구매유형", "적요", "대표자명", "거래구분"]
-    )
+    def test_only_note_and_budget_account_allow_blank_values(self) -> None:
+        """⛔ 적요 · 예산과목만 **값**이 비어 있어도 된다.
+
+        (−) 세금계산서는 실제 지출이 발생하지 않아 예산과목이 공란인 경우가
+        많습니다(실측: 음수 129건 중 128건). 값을 필수로 걸면 상계 대상 자체를
+        받을 수 없습니다. 적요도 실측 2,292행 중 1행이 공란이었습니다.
+        """
+        optional = {c.header for c in STANDARD_COLUMNS if not c.required}
+        assert optional == {"적요", "예산과목"}
+        assert REQUIRED_VALUE_HEADERS == tuple(
+            h for h in header_row() if h not in optional
+        )
+
+    @pytest.mark.parametrize("header", ["구매유형", "대표자명", "거래구분"])
     def test_unconfirmed_columns_are_not_in_the_form(self, header: str) -> None:
         """⛔ 확정되지 않은 컬럼을 양식에 넣지 않는다.
 

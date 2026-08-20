@@ -3,21 +3,47 @@ procurement.core.offsetting
 
 **음수 거래와 원거래(양수)를 짝지어 상계**하는 판정 로직입니다.
 
-2026-08-19 고객 확정(정정) 규칙 — 동일 거래 판별 조건은 **세 가지**입니다.
+2026-08-20 고객 확정 업무규칙 (`DECISIONS.md` §0.6.3.4)::
 
-1. 동일 금액 (양수 금액 == 음수 금액의 절대값)
-2. 동일 기업명
-3. 동일 사업자등록번호
+    ① 동일 기업 + ② 동일 사업자등록번호 + ③ 동일 금액(절대값)  →  후보 확인
+          ↓  후보가 여러 건이면
+    ④ 적요 확인   ⑤ 예산과목 공란 여부 확인   ⑥ 세금계산서 발행일자 확인
+          ↓
+    ⑦ 발행일자가 가장 가까운 (+)/(−) 를 1:1 매칭
+          ↓  발행일자 차이가 동률이면
+    ⑧ 담당자가 G20 에서 지출결의서 조회 가능 여부를 확인해 판단
 
-**날짜는 상계 조건이 아닙니다.** 같은 날이든 다른 날이든, 양수가 음수보다
-앞이든 뒤든 판정에 영향을 주지 않습니다.
+이 모듈이 자동으로 하는 것은 **①②③ 과 ⑦** 입니다.
 
-.. note::
-    **이전 구현과 달라진 점** — 2026-08-14 판에는 "양수 거래가 음수 거래보다
-    이전이어야 한다" 는 네 번째 조건이 있었습니다. 고객 확인 결과 이 조건은
-    확정 기준이 아니었고, 실제로 담당자가 표시한 상계 126쌍 중 30쌍을 놓치는
-    원인이었습니다(같은 날인데 양수가 파일 아래 행 28쌍 · 양수가 나중 날짜
-    2쌍). 날짜 조건을 없애면 126쌍이 모두 재현됩니다.
+.. warning::
+    **⑧ 은 시스템이 판정하지 않습니다.** G20 은 계정이 필요한 외부 프로그램이며
+    우리 시스템은 로그인·조회·자동화를 하지 않습니다. 따라서 발행일자 차이가
+    동률인 건은 **임의로 고르지 않고** :class:`NeedsManualReviewGroup` 으로
+    남겨 담당자가 판단하게 합니다.
+
+.. warning::
+    ⛔ **④⑤ 를 판정 조건으로 쓰지 않습니다.**
+
+    ==================== ==========================================
+    만들지 않는 규칙      근거
+    ==================== ==========================================
+    적요가 같아야 상계    고객: "99.5% 동일하지만 100%는 아니다".
+                          실측에서 적요 완전일치를 필수로 걸면 담당자가
+                          상계한 22행을 놓친다.
+    예산과목 공란 = 상계  고객: "공란이라고 무조건 삭제할 수 없다".
+                          실측 음수 129건 중 128건이 공란이라 판별력이 없다.
+    ==================== ==========================================
+
+    두 값은 :class:`~procurement.models.purchase.Purchase` 에 그대로 보관되어
+    담당자가 눈으로 확인할 수 있게만 합니다.
+
+.. warning::
+    ⛔ **"양수가 음수보다 먼저" 를 필터로 쓰지 않습니다.**
+
+    고객은 업무 흐름상 (+) 발행 → (−) 발행이 일반적이라고 설명했지만, 이는
+    **경향이지 불변식이 아닙니다.** 담당자가 상계 표시한 126쌍 중 2쌍은 (+) 가
+    나중 발행이었고(후보가 하나뿐인 1:1 그룹), 조건으로 넣으면 이를 놓칩니다.
+    판정은 **선후 방향이 아니라 차이의 절대값**으로 합니다.
 
 .. warning::
     **기표번호 · 결의번호 · LN_SQ · GRP_NB 를 식별자로 쓰지 않습니다.**
@@ -29,29 +55,8 @@ procurement.core.offsetting
 
     현재 :class:`~procurement.database.purchase_repository.PurchaseRepository`
     가 ``amount <= 0`` 인 구매의 저장을 거부하므로, **음수 거래는 DB 에 존재할
-    수 없습니다.** 저장 제약(D-003 · C-2 · Issue #49)이 풀리기 전에는 이 로직을
-    붙여도 대상 데이터가 없습니다. 연결 시점은 PM 결정 사항입니다.
-
-    지금 이 모듈을 두는 이유는 확정된 업무규칙을 **검증 가능한 형태로 고정**해,
-    나중에 붙일 때 규칙을 다시 해석하지 않기 위함입니다.
-
-다건 후보 — **아직 규칙이 없습니다**
-------------------------------------
-
-같은 판별 키(기업 · 사업자번호 · 금액)를 가진 양수가 음수보다 **많으면**, 그
-중 어느 것을 소비할지에 따라 **남는 거래가 달라집니다**. 남는 거래의 적요 ·
-예산과목이 달라지므로 이후 구매유형 분류에 영향을 줄 수 있습니다.
-
-이 선택 기준은 고객이 아직 확정하지 않았습니다. 따라서 이 모듈은 **임의의
-순서 규칙(날짜가 가까운 것 · 먼저/나중 · 파일 순서 · 적요 유사도 등)을 만들지
-않고**, 해당 그룹을 :class:`AmbiguousGroup` 으로 **그대로 보고**합니다. 그룹에
-속한 거래는 상계하지 않고 ``remaining`` 에 남습니다.
-
-.. note::
-    양수와 음수의 **개수가 같은** 그룹은 다건이어도 보류 대상이 아닙니다.
-    어느 쪽과 짝을 짓든 그룹 전체가 소비되어 남는 거래가 동일하기 때문입니다
-    (이때 :class:`OffsetPair` 의 조합은 입력 순서를 따르며, 업무적 의미는
-    없습니다). 실제로 담당자가 표시한 126쌍은 전부 이 경우였습니다.
+    수 없습니다**(D-003 · C-2 · Issue #49). 계산 경로 연결은 별도 PM 승인
+    사항입니다(§0.6.3.3 D 단계).
 """
 
 from __future__ import annotations
@@ -73,27 +78,33 @@ class OffsetPair:
     Attributes:
         positive: 원거래로 판단한 양수 구매.
         negative: 그 원거래를 취소하는 것으로 판단한 음수 구매.
+        distance_days: 두 거래의 세금계산서 발행일자 차이(일). 항상 0 이상입니다.
     """
 
     positive: Purchase
     negative: Purchase
+    distance_days: int
 
 
 @dataclass(frozen=True, kw_only=True)
-class AmbiguousGroup:
-    """상계 후보가 여러 건이라 **어느 것을 쓸지 정할 수 없는** 그룹.
+class NeedsManualReviewGroup:
+    """발행일자 차이가 **동률**이라 시스템이 정할 수 없는 건.
 
-    고객이 선택 기준을 확정할 때까지 이 그룹은 상계하지 않고 보고만 합니다.
+    고객 업무규칙상 이때는 담당자가 **G20 에서 지출결의서 조회 가능 여부**를
+    확인해 판단합니다. 우리 시스템은 G20 에 접근하지 않으므로 자동으로 고르지
+    않고 그대로 넘깁니다.
 
     Attributes:
         key: 동일 거래 판별 키 (기업명, 사업자등록번호, 절대금액).
-        positives: 같은 키를 가진 양수 구매 목록.
-        negatives: 같은 키를 가진 음수 구매 목록.
+        negative: 짝을 정하지 못한 음수 구매.
+        candidates: 발행일자 차이가 **똑같이 가장 가까운** 양수 후보들.
+        distance_days: 그 최소 차이(일).
     """
 
     key: MatchKey
-    positives: list[Purchase] = field(default_factory=list)
-    negatives: list[Purchase] = field(default_factory=list)
+    negative: Purchase
+    candidates: list[Purchase] = field(default_factory=list)
+    distance_days: int = 0
 
     @property
     def company_name(self) -> str:
@@ -117,18 +128,21 @@ class OffsetResult:
 
     Attributes:
         remaining: 상계되지 않고 **남은** 구매 목록. 계산에 사용할 대상입니다.
-            보류된 다건 그룹의 거래도 여기에 그대로 남습니다.
+            담당자 확인 대상과 발행일자 결측 건도 여기에 그대로 남습니다.
         pairs: 상계로 맺어진 (양수, 음수) 쌍 목록.
-        unmatched_negatives: 같은 키의 양수가 **하나도 없어** 짝을 찾지 못한 음수
-            구매 목록. 임의로 버리거나 상계하지 않고 **그대로 보고**합니다.
-        ambiguous_groups: 후보가 여러 건이라 선택 기준이 필요한 그룹 목록.
-            상계하지 않았습니다 — 고객 확인 대상입니다.
+        unmatched_negatives: 같은 키의 양수가 **없어** 짝을 찾지 못한 음수.
+            임의로 버리거나 상계하지 않고 **그대로 보고**합니다.
+        needs_manual_review: 발행일자 차이가 동률이라 **담당자 확인이 필요한**
+            건. 상계하지 않았습니다.
+        missing_issue_date: 세금계산서 발행일자가 없어 판정할 수 없는 구매.
+            ⛔ 다른 날짜로 대체하지 않고 그대로 보고합니다.
     """
 
     remaining: list[Purchase] = field(default_factory=list)
     pairs: list[OffsetPair] = field(default_factory=list)
     unmatched_negatives: list[Purchase] = field(default_factory=list)
-    ambiguous_groups: list[AmbiguousGroup] = field(default_factory=list)
+    needs_manual_review: list[NeedsManualReviewGroup] = field(default_factory=list)
+    missing_issue_date: list[Purchase] = field(default_factory=list)
 
 
 def _match_key(purchase: Purchase) -> MatchKey:
@@ -145,22 +159,28 @@ def _match_key(purchase: Purchase) -> MatchKey:
     )
 
 
+def _distance_days(positive: Purchase, negative: Purchase) -> int:
+    """두 거래의 세금계산서 발행일자 차이(일)를 반환합니다.
+
+    **선후 방향은 보지 않습니다.** 절대값만 씁니다.
+    """
+    assert positive.issue_date is not None
+    assert negative.issue_date is not None
+    return abs((positive.issue_date - negative.issue_date).days)
+
+
 def offset_negative_purchases(purchases: Iterable[Purchase]) -> OffsetResult:
     """음수 거래를 동일 거래(양수)와 상계합니다.
 
-    동일 거래 판별 조건(**모두** 만족해야 함):
+    동일 거래 후보 조건(**모두** 만족):
 
     1. 기업명이 같다
     2. 사업자등록번호가 같다
     3. 양수 금액 == 음수 금액의 절대값
 
-    **날짜는 조건이 아닙니다.** 따라서 이 함수는 날짜 필드를 읽지 않으며,
-    ``resolution_date`` 등이 비어 있어도 판정할 수 있습니다.
-
-    같은 키의 양수 개수와 음수 개수가 **다르면**(양수가 하나라도 있는 경우)
-    어느 양수를 소비할지 정할 수 없으므로 **상계하지 않고**
-    :attr:`OffsetResult.ambiguous_groups` 로 보고합니다. 선택 기준은 고객
-    확인 대기 중이며, 임의로 만들지 않습니다.
+    후보 중에서는 **세금계산서 발행일자(``issue_date``) 차이가 가장 작은** 건을
+    1:1 로 맺습니다. 최소 차이인 후보가 **둘 이상이면 상계하지 않고**
+    :attr:`OffsetResult.needs_manual_review` 로 보고합니다(임의 선택 금지).
 
     Args:
         purchases: 판정 대상 구매 목록.
@@ -169,69 +189,129 @@ def offset_negative_purchases(purchases: Iterable[Purchase]) -> OffsetResult:
         :class:`OffsetResult`. ``remaining`` 이 계산에 사용할 목록입니다.
 
     Examples:
-        >>> # A기업 +100,000 과 A기업 -100,000 은 날짜와 무관하게 상계된다.
+        >>> # +1/10 · +1/15 · −1/20 이면 1/15 쪽과 상계된다(5일 차이).
+        >>> # +1/15 · −1/20 · +1/25 이면 둘 다 5일이라 담당자 확인 대상이 된다.
     """
     items = list(purchases)
 
     positives: dict[MatchKey, list[Purchase]] = {}
     negatives: dict[MatchKey, list[Purchase]] = {}
+    missing: list[Purchase] = []
+
     for purchase in items:
-        if purchase.amount > 0:
-            positives.setdefault(_match_key(purchase), []).append(purchase)
-        elif purchase.amount < 0:
-            negatives.setdefault(_match_key(purchase), []).append(purchase)
-        # 금액이 0 인 거래는 상계 대상이 아니므로 그대로 남는다.
+        if purchase.amount == 0:
+            # 금액이 0 인 거래는 상계 대상이 아니므로 그대로 남는다.
+            continue
+        if purchase.issue_date is None:
+            # ⛔ 없는 발행일자를 결의일자·계약일자·지급일로 대체하지 않는다.
+            missing.append(purchase)
+            continue
+        bucket = positives if purchase.amount > 0 else negatives
+        bucket.setdefault(_match_key(purchase), []).append(purchase)
 
     pairs: list[OffsetPair] = []
     unmatched: list[Purchase] = []
-    ambiguous: list[AmbiguousGroup] = []
-    consumed: set[int] = set()
+    review: list[NeedsManualReviewGroup] = []
 
     for key, group_negatives in negatives.items():
-        group_positives = positives.get(key, [])
+        group_pairs, group_review, group_unmatched = _match_group(
+            key, positives.get(key, []), group_negatives
+        )
+        pairs.extend(group_pairs)
+        review.extend(group_review)
+        unmatched.extend(group_unmatched)
 
-        if not group_positives:
-            unmatched.extend(group_negatives)
-            continue
-
-        if len(group_positives) != len(group_negatives):
-            # 어느 양수를 쓸지에 따라 남는 거래가 달라진다 — 기준 미확정.
-            ambiguous.append(
-                AmbiguousGroup(
-                    key=key,
-                    positives=list(group_positives),
-                    negatives=list(group_negatives),
-                )
-            )
-            continue
-
-        # 개수가 같으므로 그룹 전체가 소비된다. 짝의 조합은 입력 순서를 따르며,
-        # 어떻게 조합하든 남는 거래는 동일하다(업무규칙을 만들지 않는다).
-        for positive, negative in zip(group_positives, group_negatives, strict=True):
-            pairs.append(OffsetPair(positive=positive, negative=negative))
-            consumed.add(id(positive))
-            consumed.add(id(negative))
-
-    remaining = [p for p in items if id(p) not in consumed]
+    consumed = {id(pair.positive) for pair in pairs} | {id(pair.negative) for pair in pairs}
+    remaining = [purchase for purchase in items if id(purchase) not in consumed]
 
     return OffsetResult(
         remaining=remaining,
         pairs=pairs,
         unmatched_negatives=unmatched,
-        ambiguous_groups=ambiguous,
+        needs_manual_review=review,
+        missing_issue_date=missing,
     )
+
+
+def _match_group(
+    key: MatchKey,
+    positives: Sequence[Purchase],
+    negatives: Sequence[Purchase],
+) -> tuple[list[OffsetPair], list[NeedsManualReviewGroup], list[Purchase]]:
+    """같은 판별 키를 가진 한 그룹 안에서 짝을 맺습니다.
+
+    **가장 가까운 것부터** 확정합니다. 남은 음수 중 최소 거리가 가장 작은 건을
+    먼저 처리하므로, 처리 순서가 입력 순서에 좌우되지 않습니다.
+
+    최소 거리 후보가 둘 이상인 음수는 **짝을 맺지 않고 빼 둡니다.** 그 음수가
+    쓸 뻔한 양수는 다른 음수가 쓸 수 있도록 남겨 둡니다.
+
+    Args:
+        key: 그룹의 판별 키.
+        positives: 같은 키의 양수 구매.
+        negatives: 같은 키의 음수 구매.
+
+    Returns:
+        ``(맺어진 쌍, 담당자 확인 대상, 짝 없는 음수)``.
+    """
+    available = list(positives)
+    pending = list(negatives)
+    order = {id(negative): index for index, negative in enumerate(negatives)}
+
+    pairs: list[OffsetPair] = []
+    review: list[NeedsManualReviewGroup] = []
+
+    while pending and available:
+        # 남은 음수마다 "가장 가까운 양수까지의 거리" 를 구하고, 그 값이 가장
+        # 작은 음수부터 확정한다. 동점이면 입력 순서로 가른다(결과 안정성).
+        nearest = min(
+            (
+                (
+                    min(_distance_days(positive, negative) for positive in available),
+                    order[id(negative)],
+                    negative,
+                )
+                for negative in pending
+            ),
+            key=lambda scored: (scored[0], scored[1]),
+        )
+        distance, _, negative = nearest
+        closest = [
+            positive for positive in available if _distance_days(positive, negative) == distance
+        ]
+
+        pending.remove(negative)
+
+        if len(closest) > 1:
+            # ⛔ 여기서 고르지 않는다 — 고객 업무규칙상 담당자가 G20 지출결의서
+            # 조회 여부로 판단하는 지점이다(§0.6.3.4 ⑧).
+            review.append(
+                NeedsManualReviewGroup(
+                    key=key,
+                    negative=negative,
+                    candidates=list(closest),
+                    distance_days=distance,
+                )
+            )
+            continue
+
+        partner = closest[0]
+        available.remove(partner)
+        pairs.append(OffsetPair(positive=partner, negative=negative, distance_days=distance))
+
+    return pairs, review, list(pending)
 
 
 def summarize(result: OffsetResult) -> str:
     """상계 결과를 한 줄로 요약합니다(로그·리포트용)."""
-    ambiguous_negatives = sum(len(group.negatives) for group in result.ambiguous_groups)
     return (
         f"상계 {len(result.pairs)}쌍 · 남은 거래 {len(result.remaining)}건 · "
         f"짝 없는 음수 {len(result.unmatched_negatives)}건 · "
-        f"기준 미확정 보류 {len(result.ambiguous_groups)}그룹({ambiguous_negatives}건)"
+        f"담당자 확인 {len(result.needs_manual_review)}건 · "
+        f"발행일자 없음 {len(result.missing_issue_date)}건"
     )
 
 
 def confirmed_match_fields() -> Sequence[str]:
     """고객이 확정한 동일 거래 판별 요소를 반환합니다(문서·테스트용)."""
-    return ("company_name", "business_no", "abs(amount)")
+    return ("company_name", "business_no", "abs(amount)", "nearest issue_date")

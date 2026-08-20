@@ -241,7 +241,7 @@ def _parse_value(
     column: StandardColumn, raw: object, row_number: int
 ) -> tuple[object, RowIssue | None]:
     """컬럼 종류에 맞게 값을 해석합니다."""
-    if column.key in ("resolution_date", "contract_date", "payment_date"):
+    if column.key in ("resolution_date", "contract_date", "payment_date", "issue_date"):
         parsed_date = _parse_date(raw)
         if parsed_date is None:
             return None, RowIssue(

@@ -87,15 +87,18 @@ class TestNoUnconfirmedColumns:
         finally:
             workbook.close()
 
-    def test_exactly_six_columns(self) -> None:
-        """확정 컬럼은 6개다.
+    def test_exactly_nine_columns(self) -> None:
+        """확정 컬럼은 9개다.
 
         .. note::
-            **기대값이 바뀐 이유** — 2026-08-17 PM 결정으로 표준 양식에
-            ``지급일`` 이 추가되었습니다(5 → 6). ``payment_date`` 를 nullable
-            로 바꾸는 대신 양식에서 받기로 한 결정입니다.
+            **기대값이 바뀐 이유**
+
+            - 2026-08-17 PM 결정으로 ``지급일`` 추가 (5 → 6).
+            - 2026-08-20 음수 상계 업무규칙 확정으로 ``신고기준일`` ·
+              ``적요`` · ``예산과목`` 추가 (6 → 9). 세금계산서 발행일자가
+              상계 판정에 필요해졌습니다(`DECISIONS.md` §0.6.3.4).
         """
-        assert len(header_row()) == 6
+        assert len(header_row()) == 9
 
 
 class TestRoundTrip:

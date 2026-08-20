@@ -108,6 +108,9 @@ _REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
         "contract_date",
         "payment_date",
         "resolution_date",
+        "issue_date",
+        "description",
+        "budget_account",
         "amount",
         "batch_id",
     ),
@@ -209,6 +212,12 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # 2026-08-15 PM 결정 — 결의일자를 payment_date 에 섞지 않고 별도 필드로 둔다.
     # 기존 행은 NULL 이 되며, 값이 없다는 사실이 그대로 보존된다.
     ("purchase", "resolution_date", "DATE"),
+    # 2026-08-20 음수 상계 업무규칙 확정(DECISIONS §0.6.3.4) — 세금계산서
+    # 발행일자와 담당자가 함께 확인하는 두 항목을 받는다. 기존 행은 NULL 이
+    # 되며, 값이 없다는 사실이 그대로 보존된다(다른 날짜로 대체하지 않는다).
+    ("purchase", "issue_date", "DATE"),
+    ("purchase", "description", "TEXT"),
+    ("purchase", "budget_account", "TEXT"),
 )
 
 

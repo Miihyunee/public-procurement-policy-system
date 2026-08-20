@@ -42,6 +42,18 @@ class Purchase:
 
             **기존 데이터 보호를 위해 ``None`` 을 허용합니다.** 이 필드가
             도입되기 전에 적재된 행은 값이 없습니다.
+        issue_date: **세금계산서 발행일자**(원본 ``신고기준일``). 음수 거래
+            상계에서 (+)/(−) 를 짝지을 때 이 날짜의 차이가 가장 작은 건을
+            매칭합니다(2026-08-20 고객 확정 · `DECISIONS.md` §0.6.3.4).
+
+            **기존 데이터 보호를 위해 ``None`` 을 허용합니다.** 이 필드가
+            도입되기 전에 적재된 행은 값이 없습니다. ⛔ 값이 없다고 해서
+            ``resolution_date`` 등 다른 날짜로 대체하지 않습니다.
+        description: 적요(거래 내용). 상계 후보를 좁힐 때 **참고**합니다.
+            ⛔ 적요가 다르다는 이유만으로 상계에서 제외하지 않습니다.
+        budget_account: 예산과목. **공란일 수 있습니다.**
+            ⛔ 공란이라고 해서 자동으로 삭제·상계하지 않습니다.
+            ⛔ 구매유형 자동 분류에 사용하지 않습니다(DECISIONS §0.5.3).
         amount: 구매금액 (필수). 0 보다 커야 합니다.
         company_id: Company 테이블 참조 ID. 매칭 후 저장되므로 기본값은 ``None`` 입니다.
         batch_id: 이 행이 들어온 업로드 단위(:class:`ImportBatch`) 참조 ID.
@@ -58,6 +70,9 @@ class Purchase:
     payment_date: date
     amount: Decimal
     resolution_date: date | None = None
+    issue_date: date | None = None
+    description: str | None = None
+    budget_account: str | None = None
     company_id: int | None = None
     batch_id: int | None = None
     purchase_id: int | None = None

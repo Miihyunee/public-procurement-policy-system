@@ -55,6 +55,9 @@ ROWS: list[list[object]] = [
         "한빛산업개발",
         "220-81-62517",
         54648000,
+        date(2026, 3, 10),
+        "사무용품 구매",
+        "소모성물품구입비",
     ],
     [
         date(2026, 5, 10),
@@ -63,11 +66,24 @@ ROWS: list[list[object]] = [
         "가나전자",
         "220-81-62517",
         1000000,
+        date(2026, 5, 8),
+        "부품 구매",
+        "",
     ],
 ]
 
 #: 오류가 섞인 행. 날짜·기업명·사업자번호·금액이 모두 잘못되었다.
-BAD_ROW: list[object] = ["2026.13.45", date(2026, 2, 20), date(2026, 4, 1), None, "999", "abc"]
+BAD_ROW: list[object] = [
+    "2026.13.45",
+    date(2026, 2, 20),
+    date(2026, 4, 1),
+    None,
+    "999",
+    "abc",
+    date(2026, 3, 10),
+    "",
+    "",
+]
 
 
 @pytest.fixture
@@ -229,9 +245,7 @@ class TestReachesTheCalculator:
         period = PeriodFilter.for_year(2026, RESOLUTION_DATE)
 
         assert calculator.calculate_total_purchase(period) == Decimal("55648000")
-        assert calculator.calculate_policy_purchase(policy.policy_id, period) == Decimal(
-            "55648000"
-        )
+        assert calculator.calculate_policy_purchase(policy.policy_id, period) == Decimal("55648000")
 
     def test_dashboard_summary_reflects_the_upload(
         self, client: TestClient, db_path: Path, tmp_path: Path
@@ -240,9 +254,9 @@ class TestReachesTheCalculator:
         path = _excel(tmp_path / "good.xlsx", ROWS)
         client.post(IMPORT_URL, json={"file_path": str(path), "year": 2026})
 
-        status = TestClient(
-            create_app(db_path=db_path, period_date_field=RESOLUTION_DATE)
-        ).get("/dashboard/data-status?year=2026")
+        status = TestClient(create_app(db_path=db_path, period_date_field=RESOLUTION_DATE)).get(
+            "/dashboard/data-status?year=2026"
+        )
 
         assert status.status_code == 200
         assert status.json()["purchase_count"] == 2
@@ -277,9 +291,7 @@ class TestErrorPathStoresNothing:
 
         assert ImportBatchRepository(db_path).find_all() == []
 
-    def test_error_response_still_lists_problems(
-        self, client: TestClient, tmp_path: Path
-    ) -> None:
+    def test_error_response_still_lists_problems(self, client: TestClient, tmp_path: Path) -> None:
         """저장하지 않아도 무엇이 잘못됐는지 그대로 알려 준다."""
         path = _excel(tmp_path / "mixed.xlsx", [*ROWS, BAD_ROW])
 
@@ -318,6 +330,80 @@ class TestErrorPathStoresNothing:
         assert body["stored"] is False
         assert "지급일" in body["file_errors"][0]
         assert PurchaseRepository(db_path).count() == 0
+
+    def test_old_six_column_file_is_rejected(
+        self, client: TestClient, db_path: Path, tmp_path: Path
+    ) -> None:
+        """⛔ 신고기준일·적요·예산과목이 없는 구(舊) 6컬럼 파일은 거부된다.
+
+        2026-08-20 PM 결정 — 세 컬럼은 원본 엑셀에 이미 있고, 신고기준일이
+        음수 상계 판정에 필요하므로 6컬럼 파일을 계속 받지 않습니다.
+        """
+        path = tmp_path / "six-column.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        assert sheet is not None
+        sheet.append(["결의일자", "계약일자", "지급일", "기업명", "사업자등록번호", "계"])
+        sheet.append(
+            [date(2026, 3, 15), date(2026, 2, 20), date(2026, 4, 1), "A기업", "220-81-62517", 1000]
+        )
+        workbook.save(path)
+        workbook.close()
+
+        body = client.post(IMPORT_URL, json={"file_path": str(path), "year": 2026}).json()
+
+        assert body["stored"] is False
+        message = body["file_errors"][0]
+        for header in ("신고기준일", "적요", "예산과목"):
+            assert header in message
+        assert PurchaseRepository(db_path).count() == 0
+
+    def test_blank_note_and_budget_account_are_accepted(
+        self, client: TestClient, db_path: Path, tmp_path: Path
+    ) -> None:
+        """적요·예산과목 **값**이 비어 있어도 저장된다.
+
+        (−) 세금계산서는 실제 지출이 없어 예산과목이 공란인 경우가 많습니다
+        (실측: 음수 129건 중 128건). 값을 필수로 걸면 상계 대상을 받을 수
+        없습니다.
+        """
+        row: list[object] = [
+            date(2026, 3, 15),
+            date(2026, 2, 20),
+            date(2026, 4, 1),
+            "한빛산업개발",
+            "220-81-62517",
+            1000000,
+            date(2026, 3, 10),
+            None,
+            None,
+        ]
+        path = _excel(tmp_path / "blank-optional.xlsx", [row])
+
+        body = client.post(IMPORT_URL, json={"file_path": str(path), "year": 2026}).json()
+
+        assert body["ok"] is True
+        assert body["stored"] is True
+        stored = PurchaseRepository(db_path).find_all()[0]
+        assert stored.issue_date == date(2026, 3, 10)
+        assert stored.description is None
+        assert stored.budget_account is None
+
+    def test_issue_date_is_stored_and_kept_apart(
+        self, client: TestClient, db_path: Path, tmp_path: Path
+    ) -> None:
+        """⛔ 발행일자가 결의일자·계약일자·지급일과 **섞이지 않는다.**"""
+        path = _excel(tmp_path / "good.xlsx", ROWS)
+
+        client.post(IMPORT_URL, json={"file_path": str(path), "year": 2026})
+
+        stored = PurchaseRepository(db_path).find_all()[0]
+        assert stored.issue_date == date(2026, 3, 10)
+        assert stored.resolution_date == date(2026, 3, 15)
+        assert stored.contract_date == date(2026, 2, 20)
+        assert stored.payment_date == date(2026, 4, 1)
+        assert stored.description == "사무용품 구매"
+        assert stored.budget_account == "소모성물품구입비"
 
 
 class TestApiContract:

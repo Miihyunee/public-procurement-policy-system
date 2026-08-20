@@ -46,6 +46,10 @@ GOOD_ROW: dict[str, object] = {
     "기업명": "한빛산업개발",
     "사업자등록번호": "220-81-62517",
     "계": "54,648,000",
+    # 2026-08-20 음수 상계 업무규칙 확정으로 추가된 3컬럼.
+    "신고기준일": "2026-03-10",
+    "적요": "사무용품 구매",
+    "예산과목": "소모성물품구입비",
 }
 
 
@@ -93,16 +97,23 @@ class TestTheTwoLayersFit:
             "contract_date",
             "payment_date",
             "resolution_date",
+            "issue_date",
+            "description",
+            "budget_account",
             "amount",
         }
 
-    def test_all_six_keys_match_by_name(self) -> None:
-        """검증 결과의 키 6개가 **이름까지 그대로** 적재 계층에 통한다.
+    def test_all_keys_match_by_name(self) -> None:
+        """검증 결과의 키가 **이름까지 그대로** 적재 계층에 통한다.
 
         .. note::
-            **기대값이 바뀐 이유** — 2026-08-17 PM 결정으로 표준 양식에
-            ``지급일`` 이 추가되면서 마지막 빈칸이 채워졌습니다. 이제 Mapping
-            계층은 새 변환기가 아니라 **얇은 연결자**입니다.
+            **기대값이 바뀐 이유**
+
+            - 2026-08-17 PM 결정으로 ``지급일`` 이 추가되면서 마지막 빈칸이
+              채워졌습니다. Mapping 계층은 새 변환기가 아니라 **얇은 연결자**
+              입니다.
+            - 2026-08-20 음수 상계 업무규칙 확정으로 ``신고기준일`` ·
+              ``적요`` · ``예산과목`` 이 추가되었습니다(6 → 9).
         """
         assert _validated_keys() == _importer_row_keys()
         assert _validated_keys() == {
@@ -111,6 +122,9 @@ class TestTheTwoLayersFit:
             "contract_date",
             "payment_date",
             "resolution_date",
+            "issue_date",
+            "description",
+            "budget_account",
             "amount",
         }
 
@@ -244,9 +258,12 @@ class TestNoBusinessRuleChange:
         """표준 양식에 **확정 컬럼만** 있다(미확정 컬럼 유입 방지).
 
         .. note::
-            **기대값이 바뀐 이유** — 2026-08-17 PM 결정으로 ``지급일`` 이
-            추가되었습니다. 확정되지 않은 컬럼(예산과목·구매유형 등)은 여전히
-            들어 있지 않습니다.
+            **기대값이 바뀐 이유**
+
+            - 2026-08-17 PM 결정으로 ``지급일`` 추가.
+            - 2026-08-20 음수 상계 업무규칙 확정으로 ``신고기준일`` ·
+              ``적요`` · ``예산과목`` 추가. 확정되지 않은 컬럼(구매유형 ·
+              대표자명 · 거래구분)은 여전히 들어 있지 않습니다.
         """
         from procurement.uploads import PENDING_COLUMNS
 
@@ -257,5 +274,8 @@ class TestNoBusinessRuleChange:
             "기업명",
             "사업자등록번호",
             "계",
+            "신고기준일",
+            "적요",
+            "예산과목",
         )
         assert not set(header_row()) & set(PENDING_COLUMNS)

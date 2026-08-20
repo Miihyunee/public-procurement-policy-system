@@ -184,6 +184,10 @@ class PurchaseImporter:
         - ``contract_date`` (필수), ``payment_date`` (필수)
         - ``resolution_date`` (**선택**) — 결의일자. 표준 업로드 양식에서
           들어옵니다. 없으면 ``None`` 으로 저장하며, 기존 동작과 동일합니다.
+        - ``issue_date`` (**선택**) — 세금계산서 발행일자(``신고기준일``).
+          음수 상계 판정에 사용합니다. 없으면 ``None`` 으로 저장합니다.
+        - ``description`` · ``budget_account`` (**선택**) — 적요 · 예산과목.
+          **판정에 쓰지 않고 그대로 보관**합니다. 공란은 정상입니다.
         - ``company_name`` (없으면 ``"(미상)"`` 으로 대체하고 경고)
 
         한 행이 실패해도 중단하지 않고 다음 행을 계속 처리합니다.
@@ -252,6 +256,19 @@ class PurchaseImporter:
             if error is not None:
                 return self._failed(row_number, [*messages, error], business_no)
 
+        # 발행일자(신고기준일)도 같은 규칙이다 — 없으면 None, 있는데 형식이
+        # 틀리면 실패. ⛔ 없는 값을 다른 날짜로 대체하지 않는다.
+        raw_issue_date = row.get("issue_date")
+        issue_date: date | None = None
+        if isinstance(raw_issue_date, date) or _clean_text(raw_issue_date):
+            issue_date, error = _parse_date(raw_issue_date, "신고기준일")
+            if error is not None:
+                return self._failed(row_number, [*messages, error], business_no)
+
+        # 적요·예산과목은 판정에 쓰지 않고 그대로 보관한다. 공란은 정상이다.
+        description = _clean_text(row.get("description")) or None
+        budget_account = _clean_text(row.get("budget_account")) or None
+
         amount, error = _parse_amount(row.get("amount"))
         if error is not None:
             return self._failed(row_number, [*messages, error], business_no)
@@ -285,6 +302,9 @@ class PurchaseImporter:
                     contract_date=contract_date,
                     payment_date=payment_date,
                     resolution_date=resolution_date,
+                    issue_date=issue_date,
+                    description=description,
+                    budget_account=budget_account,
                     amount=amount,
                     company_id=company_id,
                     batch_id=batch_id,
