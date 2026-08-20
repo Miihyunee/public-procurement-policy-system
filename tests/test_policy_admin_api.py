@@ -81,8 +81,17 @@ class TestListPolicies:
         assert [item["target_rate"] for item in payload["policies"]] == [None] * SEED_POLICY_COUNT
 
     def test_includes_is_active(self, client: TestClient) -> None:
+        """활성 여부가 그대로 노출됩니다 — ``GREEN`` 만 비활성입니다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-14 고객 결정(DECISIONS §0.5.1)으로
+            녹색제품이 이번 MVP 계산 대상에서 제외되었습니다. 목록에서 감추지
+            않는 이유는, 왜 변경되지 않는지를 화면에서 확인할 수 있어야 하기
+            때문입니다.
+        """
         payload = client.get("/policies").json()
-        assert all(item["is_active"] is True for item in payload["policies"])
+        inactive = {item["policy_code"] for item in payload["policies"] if not item["is_active"]}
+        assert inactive == {"GREEN"}
 
     def test_does_not_require_admin_token(self, db_path: Path) -> None:
         """조회는 관리자 인증 대상이 아닙니다(토큰 미설정 환경에서도 동작)."""
@@ -130,9 +139,20 @@ class TestUpdateTargetRate:
         second = _put(client, "SMALL_BUSINESS", {"target_rate": "50"}).json()
         assert first["target_rate"] == second["target_rate"] == "50"
 
-    def test_green_policy_is_updatable(self, client: TestClient) -> None:
-        """녹색제품 정책도 등록 수단은 동일합니다(값은 넣어두지 않습니다)."""
-        assert _put(client, "GREEN", {"target_rate": "10"}).status_code == 200
+    def test_green_policy_target_rate_is_rejected(self, client: TestClient) -> None:
+        """⛔ 비활성 정책(녹색제품)의 목표율은 설정할 수 없습니다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 이전에는 200 이었습니다. 2026-08-14 고객
+            결정(DECISIONS §0.5.1)으로 녹색제품이 계산 대상에서 제외되어
+            ``is_active=False`` 가 되었고, 관리 서비스는 비활성 정책의 목표율
+            변경을 거부합니다. 목표율만 넣으면 달성률이 계산되던 경로가
+            이것으로 막힙니다.
+        """
+        response = _put(client, "GREEN", {"target_rate": "10"})
+
+        assert response.status_code == 422
+        assert "비활성" in response.json()["detail"]
 
 
 class TestUpdateValidation:

@@ -50,12 +50,15 @@ class PolicySeed:
         policy_name: 정책명.
         evaluation_basis: 판정 기준일 유형(``PAYMENT_DATE`` / ``CONTRACT_DATE``).
         description: 정책 설명.
+        is_active: 계산 대상 여부. ``False`` 면 등록은 하되 **계산에서 제외**
+            됩니다(행을 지우지 않으므로 이력이 보존됩니다).
     """
 
     policy_code: str
     policy_name: str
     evaluation_basis: str
     description: str
+    is_active: bool = True
 
 
 #: MVP 대상 정책 5종. 판정 기준일은 ``docs/POLICY_DEFINITION.md`` 를 따릅니다.
@@ -92,7 +95,11 @@ MVP_POLICY_SEEDS: tuple[PolicySeed, ...] = (
         policy_code="GREEN",
         policy_name="녹색제품",
         evaluation_basis="PAYMENT_DATE",
-        description="녹색제품 우선구매(판정 단위는 업무 분석 후 확정)",
+        description="녹색제품 우선구매 — 이번 MVP 계산 대상에서 제외(DECISIONS §0.5.1)",
+        # 2026-08-14 고객 결정 §0.5.1 — 이번 MVP 계산 대상에서 제외한다.
+        # ⛔ 행을 지우지 않는다. 비활성으로 두어 이력을 보존하고, 다시 포함하기로
+        # 하면 관리 화면에서 되살릴 수 있게 한다.
+        is_active=False,
     ),
 )
 
@@ -301,6 +308,52 @@ def migrate_policy_evaluation_basis(db_path: str | Path | None = None) -> list[s
     return updated
 
 
+#: 이번 MVP 계산 대상에서 **제외**하기로 확정된 정책 코드.
+#:
+#: ⛔ 행을 삭제하지 않는다. ``is_active = 0`` 으로만 바꿔 이력을 보존한다.
+OUT_OF_SCOPE_POLICY_CODES: tuple[str, ...] = (
+    # 2026-08-14 고객 결정 (DECISIONS §0.5.1) — 녹색제품은 이번 MVP 계산 대상이
+    # 아니다. seed 에서만 빼면 **기존 DB 의 행은 그대로 계산되므로** 여기서
+    # 비활성으로 바꾼다.
+    "GREEN",
+)
+
+
+def deactivate_out_of_scope_policies(db_path: str | Path | None = None) -> list[str]:
+    """범위에서 제외된 정책을 **비활성**으로 바꿉니다(멱등).
+
+    ``is_active = 0`` 으로만 바꾸므로 정책 행과 관련 이력은 **그대로 남습니다.**
+    비활성 정책은 :meth:`PolicyRepository.find_active` 에 잡히지 않아 대시보드
+    계산 대상에서 빠지고, 관리 API 의 목표율 설정도 거부됩니다
+    (:class:`~procurement.admin.policy_admin.PolicyAdminService`).
+
+    .. warning::
+        ⛔ **삭제하지 않습니다.** 고객이 다시 포함하기로 하면 ``is_active`` 만
+        되돌리면 됩니다. 구매·인증 데이터는 전혀 건드리지 않습니다.
+
+    Args:
+        db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        이번 호출에서 실제로 비활성으로 바꾼 정책 코드 목록. 이미 비활성이면
+        빈 목록.
+    """
+    path = resolve_db_path(db_path)
+    if "policy" not in _read_schema(path):
+        return []
+
+    changed: list[str] = []
+    with sqlite3.connect(path) as conn:
+        for policy_code in OUT_OF_SCOPE_POLICY_CODES:
+            cursor = conn.execute(
+                "UPDATE policy SET is_active = 0 WHERE policy_code = ? AND is_active = 1",
+                (policy_code,),
+            )
+            if cursor.rowcount:
+                changed.append(policy_code)
+    return changed
+
+
 def seed_policies(db_path: str | Path | None = None) -> list[str]:
     """MVP 정책 5종을 등록합니다(멱등).
 
@@ -330,6 +383,7 @@ def seed_policies(db_path: str | Path | None = None) -> list[str]:
                 description=seed.description,
                 evaluation_basis=seed.evaluation_basis,
                 target_rate=None,  # D-004: 임의의 목표율을 입력하지 않는다.
+                is_active=seed.is_active,
             )
         )
         created.append(seed.policy_code)
@@ -423,8 +477,9 @@ def bootstrap(db_path: str | Path | None = None, *, seed: bool = True) -> Health
     init_db(db_path)
     if seed:
         seed_policies(db_path)
-        # seed 는 기존 정책을 건너뛰므로, 확정으로 바뀐 판정 기준은 따로 반영한다.
+        # seed 는 기존 정책을 건너뛰므로, 확정으로 바뀐 값은 따로 반영한다.
         migrate_policy_evaluation_basis(db_path)
+        deactivate_out_of_scope_policies(db_path)
     return verify_bootstrap(db_path)
 
 
@@ -473,8 +528,7 @@ def _check_policy_seed(path: Path, *, seeded_tables_ok: bool) -> HealthCheckItem
             name="정책 seed",
             passed=False,
             detail=(
-                f"누락된 정책: {', '.join(missing)}. "
-                "'python -m procurement init' 을 실행하세요."
+                f"누락된 정책: {', '.join(missing)}. 'python -m procurement init' 을 실행하세요."
             ),
         )
     return HealthCheckItem(

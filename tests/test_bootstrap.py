@@ -19,7 +19,9 @@ from procurement.__main__ import main
 from procurement.app import create_app
 from procurement.database.bootstrap import (
     MVP_POLICY_SEEDS,
+    OUT_OF_SCOPE_POLICY_CODES,
     bootstrap,
+    deactivate_out_of_scope_policies,
     init_db,
     migrate_policy_evaluation_basis,
     seed_policies,
@@ -28,9 +30,17 @@ from procurement.database.bootstrap import (
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Purchase
+from procurement.models.policy import Policy
 
 #: 확정된 MVP 정책 코드 (PM 확정 — 변경하지 않음)
 EXPECTED_CODES = {"SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP", "GREEN"}
+
+#: 대시보드가 계산 대상으로 보는 코드 — ``GREEN`` 은 제외된다.
+#:
+#: 2026-08-14 고객 결정(DECISIONS §0.5.1)으로 녹색제품은 이번 MVP 계산 대상이
+#: 아니므로 ``is_active=False`` 로 seed 되며, ``find_active()`` 에 잡히지 않는다.
+#: 정책 행 자체는 남아 있으므로 ``EXPECTED_CODES`` 는 그대로다.
+ACTIVE_CODES = EXPECTED_CODES - {"GREEN"}
 
 
 @pytest.fixture
@@ -441,7 +451,14 @@ class TestDashboardAfterBootstrap:
         assert response.status_code == 200
 
     def test_seeded_policies_are_shown_as_target_rate_not_set(self, db_path: Path) -> None:
-        """초기화 직후 5종이 모두 '목표율 미설정'으로 표시됩니다(0% 처리 아님)."""
+        """초기화 직후 **활성 4종**이 모두 '목표율 미설정'으로 표시됩니다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-14 고객 결정(DECISIONS §0.5.1)으로
+            녹색제품이 이번 MVP 계산 대상에서 제외되어 ``is_active=False`` 로
+            seed 됩니다. 대시보드는 활성 정책만 보므로 5종 → 4종이 됩니다.
+            정책 행은 삭제하지 않았으므로 ``GET /policies`` 에는 그대로 나옵니다.
+        """
         bootstrap(db_path)
         payload = (
             TestClient(create_app(db_path, period_date_field="payment_date"))
@@ -449,7 +466,7 @@ class TestDashboardAfterBootstrap:
             .json()
         )
         assert payload["total_purchase_amount"] == "0"
-        assert {item["policy_code"] for item in payload["policies"]} == EXPECTED_CODES
+        assert {item["policy_code"] for item in payload["policies"]} == ACTIVE_CODES
         for item in payload["policies"]:
             assert item["target_rate"] is None
             assert item["achievement_rate"] is None
@@ -477,5 +494,140 @@ class TestDashboardAfterBootstrap:
         assert by_code["SMALL_BUSINESS"]["status"] != "TARGET_RATE_NOT_SET"
 
         # 나머지는 여전히 목표율 미설정으로 남는다.
-        for code in EXPECTED_CODES - {"SMALL_BUSINESS"}:
+        for code in ACTIVE_CODES - {"SMALL_BUSINESS"}:
             assert by_code[code]["status"] == "TARGET_RATE_NOT_SET"
+
+
+class TestGreenIsOutOfScope:
+    """🟢 ``GREEN`` 은 이번 MVP 계산 대상에서 제외된다 (DECISIONS §0.5.1).
+
+    확정된 것은 "계산 대상에서 제외" 이고, 처리 방식은 **비활성화**입니다
+    (2026-08-20 PM 결정). ⛔ 행을 삭제하지 않으므로 이력은 그대로 남습니다.
+    """
+
+    def test_green_is_seeded_inactive(self, db_path: Path) -> None:
+        bootstrap(db_path)
+        policy = PolicyRepository(db_path).find_by_policy_code("GREEN")
+
+        assert policy is not None, "행을 지우지 않는다"
+        assert policy.is_active is False
+
+    def test_green_is_not_in_find_active(self, db_path: Path) -> None:
+        """⛔ 계산 대상 조회에 잡히지 않는다."""
+        bootstrap(db_path)
+        codes = {policy.policy_code for policy in PolicyRepository(db_path).find_active()}
+
+        assert "GREEN" not in codes
+        assert codes == ACTIVE_CODES
+
+    def test_green_is_not_in_find_active_with_target_rate(self, db_path: Path) -> None:
+        """목표율을 직접 넣어도 계산 대상 조회에 잡히지 않는다."""
+        bootstrap(db_path)
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.execute("UPDATE policy SET target_rate = '10' WHERE policy_code = 'GREEN'")
+
+        repository = PolicyRepository(db_path)
+        assert "GREEN" not in {
+            policy.policy_code for policy in repository.find_active_with_target_rate()
+        }
+
+    def test_green_stays_in_find_all(self, db_path: Path) -> None:
+        """이력 보존 — 전체 조회에는 그대로 나온다."""
+        bootstrap(db_path)
+        codes = {policy.policy_code for policy in PolicyRepository(db_path).find_all()}
+
+        assert codes == EXPECTED_CODES
+
+    def test_green_is_absent_from_the_dashboard(self, db_path: Path) -> None:
+        """⛔ 대시보드 요약에 나타나지 않는다."""
+        bootstrap(db_path)
+        payload = (
+            TestClient(create_app(db_path, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
+
+        assert "GREEN" not in {item["policy_code"] for item in payload["policies"]}
+
+    def test_target_rate_api_rejects_green(self, db_path: Path) -> None:
+        """⛔ 목표율 설정 경로가 닫혀 있다 — '목표율만 넣으면 계산되던' 경로."""
+        bootstrap(db_path)
+        from procurement.admin.policy_admin import PolicyAdminService
+        from procurement.database.policy_repository import PolicyValidationError
+
+        service = PolicyAdminService(PolicyRepository(db_path))
+        with pytest.raises(PolicyValidationError, match="비활성"):
+            service.set_target_rate("GREEN", "10")
+
+    def test_existing_db_is_migrated(self, db_path: Path) -> None:
+        """⛔ seed 에서만 빼면 **기존 DB 의 행은 계속 계산된다.**
+
+        이미 활성으로 등록되어 있던 DB 도 비활성으로 바뀌어야 합니다.
+        """
+        init_db(db_path)
+        repository = PolicyRepository(db_path)
+        repository.insert(
+            Policy(
+                policy_code="GREEN",
+                policy_name="녹색제품",
+                evaluation_basis="PAYMENT_DATE",
+                is_active=True,
+            )
+        )
+        assert "GREEN" in {policy.policy_code for policy in repository.find_active()}
+
+        changed = deactivate_out_of_scope_policies(db_path)
+
+        assert changed == ["GREEN"]
+        assert "GREEN" not in {policy.policy_code for policy in repository.find_active()}
+
+    def test_migration_is_idempotent(self, db_path: Path) -> None:
+        bootstrap(db_path)
+        assert deactivate_out_of_scope_policies(db_path) == []
+
+    def test_migration_keeps_the_row_and_its_values(self, db_path: Path) -> None:
+        """⛔ 삭제하지 않고, 목표율 등 다른 값도 건드리지 않는다."""
+        init_db(db_path)
+        repository = PolicyRepository(db_path)
+        repository.insert(
+            Policy(
+                policy_code="GREEN",
+                policy_name="녹색제품",
+                evaluation_basis="PAYMENT_DATE",
+                target_rate=Decimal("10"),
+                is_active=True,
+            )
+        )
+
+        deactivate_out_of_scope_policies(db_path)
+        policy = repository.find_by_policy_code("GREEN")
+
+        assert policy is not None
+        assert policy.policy_name == "녹색제품"
+        assert policy.target_rate == Decimal("10")
+        assert policy.is_active is False
+
+    def test_bootstrap_runs_the_migration(self, db_path: Path) -> None:
+        """``bootstrap()`` 한 번으로 기존 DB 도 정리된다."""
+        init_db(db_path)
+        PolicyRepository(db_path).insert(
+            Policy(policy_code="GREEN", policy_name="녹색제품", evaluation_basis="PAYMENT_DATE")
+        )
+
+        bootstrap(db_path)
+
+        policy = PolicyRepository(db_path).find_by_policy_code("GREEN")
+        assert policy is not None and policy.is_active is False
+
+    def test_only_green_is_out_of_scope(self) -> None:
+        """⛔ 다른 정책을 임의로 제외 목록에 넣지 않는다.
+
+        최종 정책 목록(8개 vs 9개)의 불일치는 **아직 미확정**입니다
+        (DECISIONS §0.5.5). 확정 전에는 GREEN 외에 아무것도 비활성화하지
+        않습니다.
+        """
+        assert OUT_OF_SCOPE_POLICY_CODES == ("GREEN",)
+
+    def test_other_seeds_stay_active(self) -> None:
+        inactive = {seed.policy_code for seed in MVP_POLICY_SEEDS if not seed.is_active}
+        assert inactive == {"GREEN"}
