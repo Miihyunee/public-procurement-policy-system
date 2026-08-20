@@ -171,13 +171,19 @@ class TestSingleCandidateIsAutoOffset:
         assert len(offset_negative_purchases([positive, negative]).pairs) == 1
 
     def test_missing_issue_date_does_not_block_a_one_to_one_pair(self) -> None:
-        """발행일자가 없어도 1:1 이면 상계한다 — 판정 조건이 아니기 때문이다.
+        """발행일자가 없어도 1:1 이면 상계한다.
+
+        .. warning::
+            🟡 **내부 판단 · 미확정 예외사항** — 고객이 확정한 규칙이 아닙니다
+            (`DECISIONS.md` §0.6.3.5). 발행일자가 판정 조건이 아니므로 상계를
+            막을 근거가 없다는 **우리 판단**입니다. 실데이터 결측은 0건이므로
+            현재 영향이 없고, 결측 행은 ``missing_issue_date`` 로 항상 보고해
+            나중에 고객 확인이 가능하도록 남깁니다.
 
         .. note::
             **기대값이 바뀐 이유** — 이전 판은 발행일자로 후보를 골랐으므로 값이
-            없으면 판정할 수 없었습니다. 이제 판정에 쓰지 않으므로 상계를 막을
-            근거가 없습니다. 다만 담당자 확인 시 비교 정보가 빠지므로
-            ``missing_issue_date`` 로 따로 알립니다.
+            없으면 판정할 수 없었습니다. 판정에서 발행일자가 빠지면서 그 제약의
+            근거가 사라졌습니다.
         """
         positive = _p("100000", None)
         negative = _p("-100000", None)
