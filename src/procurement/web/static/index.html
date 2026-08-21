@@ -83,6 +83,39 @@
   button.control { cursor: pointer; font-family: inherit; }
   button.control:hover { border-color: var(--accent); color: var(--accent); }
   .control-label { color: var(--muted); }
+  .control-input {
+    background: transparent; border: 0; color: var(--text);
+    font-size: 13px; font-family: inherit; outline: none;
+  }
+  .control-input option { background: var(--card); color: var(--text); }
+
+  /* -------------------------------------------------------- 구매유형 검토 */
+  .rv { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 10px; }
+  .rv-src { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; }
+  .rv-src div { display: flex; gap: 6px; }
+  .rv-key { color: var(--muted); }
+  .rv-desc { font-size: 14.5px; font-weight: 600; margin-bottom: 8px; }
+  .rv-block {
+    margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px;
+  }
+  .rv-cand { display: flex; gap: 10px; align-items: baseline; margin-top: 4px; }
+  .rv-score { font-variant-numeric: tabular-nums; color: var(--accent); }
+  .rv-why { color: var(--muted); font-size: 12.5px; }
+  .rv-pick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+  .rv-opt {
+    cursor: pointer; font-family: inherit; font-size: 13px; padding: 7px 14px;
+    border-radius: 999px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text);
+  }
+  .rv-opt:hover { border-color: var(--accent); color: var(--accent); }
+  .rv-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .rv-note { flex: 1 1 200px; min-width: 160px; }
+  .rv-tag {
+    display: inline-block; font-size: 11.5px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); margin-left: 8px;
+  }
+  .rv-tag-warn { border-color: var(--accent); color: var(--accent); }
+  .rv-done { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
 
   /* -------------------------------------------------------- 업로드 */
   .upload-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
@@ -319,6 +352,42 @@
       <div id="upload-error" class="error" hidden></div>
       <div id="upload-summary" class="upload-summary" hidden></div>
       <div id="upload-issues" class="upload-issues" hidden></div>
+    </section>
+  </div>
+
+  <!-- 5. 구매유형 검토 (DB-2) -->
+  <div class="row" style="margin-top:16px">
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">구매유형 검토</h2>
+          <p class="card-sub">
+            원본을 보고 담당자가 직접 확정합니다. 원본 데이터는 수정되지 않습니다
+          </p>
+        </div>
+        <div id="review-progress" class="card-sub"></div>
+      </div>
+
+      <div class="upload-actions">
+        <span class="control">
+          <span class="control-label">보기</span>
+          <select id="review-filter" class="control-input">
+            <option value="ALL">전체</option>
+            <option value="PENDING">미확정</option>
+            <option value="CONFIRMED">확정됨</option>
+            <option value="AMBIGUOUS">확인 권장</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">확정자</span>
+          <input id="review-actor" class="control-input" type="text" placeholder="이름" />
+        </span>
+        <button id="review-reload" class="control" type="button">새로고침</button>
+      </div>
+
+      <div id="review-notice" class="notice" hidden></div>
+      <div id="review-error" class="error" hidden></div>
+      <div id="review-list" class="upload-summary"></div>
     </section>
   </div>
 
@@ -1147,9 +1216,216 @@
     });
   }
 
+  // ------------------------------------------------- 구매유형 검토 (DB-2)
+  //
+  // ⛔ 이 화면은 업무 판정을 하지 않는다.
+  //    - 선택지 목록은 백엔드가 준다 (/reviews/options)
+  //    - 후보와 점수는 백엔드가 준다. 여기서 계산하지 않는다
+  //    - 점수가 높아도 미리 선택해 두지 않는다 (사실상 자동 확정 방지)
+  //    - 원본은 읽기 전용으로만 그린다
+
+  var reviewOptions = [];
+  var reviewPicks = {};   // purchase_id -> 담당자가 지금 고른 값 (아직 확정 전)
+
+  function reviewNotice(message) {
+    var node = el("review-notice");
+    text(node, message);
+    node.hidden = !message;
+  }
+
+  function reviewError(message) {
+    var node = el("review-error");
+    text(node, message);
+    node.hidden = !message;
+  }
+
+  function reviewField(label, value) {
+    var wrap = make("div");
+    wrap.appendChild(make("span", "rv-key", label));
+    wrap.appendChild(make("span", null, value === null || value === "" ? "-" : String(value)));
+    return wrap;
+  }
+
+  /** 원본 블록 — 읽기 전용. 값을 바꾸는 요소를 만들지 않는다. */
+  function reviewSource(source) {
+    var box = make("div");
+    box.appendChild(make("div", "rv-desc", source.description || "(적요 없음)"));
+    var grid = make("div", "rv-src");
+    grid.appendChild(reviewField("거래처", source.company_name));
+    grid.appendChild(reviewField("사업자번호", source.business_no));
+    grid.appendChild(reviewField("금액", numberFormat(source.amount) + "원"));
+    grid.appendChild(reviewField("결의일자", source.resolution_date));
+    grid.appendChild(reviewField("발행일자", source.issue_date));
+    grid.appendChild(reviewField("예산과목", source.budget_account || "(공란)"));
+    box.appendChild(grid);
+    return box;
+  }
+
+  /** 분석 블록 — 후보와 점수를 보여줄 뿐, 고르지 않는다. */
+  function reviewAnalysis(analysis) {
+    var box = make("div", "rv-block");
+    var head = make("div");
+    if (!analysis.candidates.length) {
+      head.appendChild(make("span", "rv-key",
+        analysis.note || "분석 후보가 없습니다. 원본을 보고 직접 선택하세요."));
+      box.appendChild(head);
+      return box;
+    }
+    head.appendChild(make("span", "rv-key", "분석 후보"));
+    if (analysis.is_ambiguous) {
+      head.appendChild(make("span", "rv-tag rv-tag-warn", "확인 권장 — 후보가 갈립니다"));
+    }
+    box.appendChild(head);
+    analysis.candidates.forEach(function (candidate, index) {
+      var line = make("div", "rv-cand");
+      line.appendChild(make("span", "rv-key", "추천 " + (index + 1)));
+      line.appendChild(make("span", null, candidate.label));
+      line.appendChild(make("span", "rv-score",
+        Math.round(Number(candidate.score) * 100) + "%"));
+      if (candidate.evidence) {
+        line.appendChild(make("span", "rv-why", candidate.evidence));
+      }
+      box.appendChild(line);
+    });
+    return box;
+  }
+
+  /** 확정 블록 — 담당자가 고르는 유일한 곳. */
+  function reviewPicker(item) {
+    var id = item.source.purchase_id;
+    var box = make("div", "rv-pick");
+    var buttons = [];
+
+    reviewOptions.forEach(function (option) {
+      var button = make("button", "rv-opt", option.label);
+      button.type = "button";
+      button.dataset.value = option.value === null ? "" : option.value;
+      button.addEventListener("click", function () {
+        reviewPicks[id] = option.value;
+        buttons.forEach(function (other) { other.className = "rv-opt"; });
+        button.className = "rv-opt on";
+      });
+      buttons.push(button);
+      box.appendChild(button);
+    });
+
+    var note = make("input", "control control-input rv-note");
+    note.type = "text";
+    note.placeholder = "메모 (선택)";
+    note.value = item.review.review_note || "";
+
+    var confirm = make("button", "control", "확정");
+    confirm.type = "button";
+    confirm.addEventListener("click", function () {
+      if (!(id in reviewPicks)) {
+        reviewError("먼저 유형을 선택하세요. 모르겠으면 '판단 보류' 를 고르면 됩니다.");
+        return;
+      }
+      confirmReview(id, reviewPicks[id], note.value);
+    });
+
+    box.appendChild(note);
+    box.appendChild(confirm);
+    return box;
+  }
+
+  function reviewCard(item) {
+    var card = make("div", "rv");
+    card.appendChild(reviewSource(item.source));
+    card.appendChild(reviewAnalysis(item.analysis));
+
+    if (item.review.status === "CONFIRMED") {
+      var done = make("div", "rv-done");
+      text(done, "확정 " + (item.review.final_purchase_type_label || "판단 보류")
+        + " · " + (item.review.reviewed_at || "-")
+        + (item.review.reviewed_by ? " · " + item.review.reviewed_by : ""));
+      card.appendChild(done);
+
+      var again = make("button", "control", "다시 검토");
+      again.type = "button";
+      again.addEventListener("click", function () { reopenReview(item.source.purchase_id); });
+      var row = make("div", "rv-pick");
+      row.appendChild(again);
+      card.appendChild(row);
+      return card;
+    }
+
+    card.appendChild(reviewPicker(item));
+    return card;
+  }
+
+  function renderReviews(payload) {
+    var list = el("review-list");
+    clear(list);
+
+    text(el("review-progress"),
+      "확정 " + numberFormat(payload.progress.confirmed)
+      + " / " + numberFormat(payload.progress.total)
+      + " · 확인 권장 " + numberFormat(payload.progress.ambiguous));
+
+    if (!payload.items.length) {
+      list.appendChild(make("div", "empty", "표시할 검토 대상이 없습니다."));
+      return;
+    }
+    payload.items.forEach(function (item) { list.appendChild(reviewCard(item)); });
+  }
+
+  function loadReviews() {
+    reviewError("");
+    var filter = el("review-filter").value;
+    fetchJson("/reviews?review_filter=" + encodeURIComponent(filter) + "&limit=50")
+      .then(renderReviews)
+      .catch(function (error) { reviewError("검토 목록을 불러오지 못했습니다: " + error.message); });
+  }
+
+  function confirmReview(purchaseId, value, note) {
+    reviewError("");
+    var actor = el("review-actor").value;
+    fetch("/reviews/" + encodeURIComponent(purchaseId), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        final_purchase_type: value === "" ? null : value,
+        reviewed_by: actor || null,
+        review_note: note || null
+      })
+    }).then(function (response) {
+      if (!response.ok) { throw new Error("HTTP " + response.status); }
+      delete reviewPicks[purchaseId];
+      reviewNotice("확정했습니다. 원본 데이터는 변경되지 않았습니다.");
+      loadReviews();
+    }).catch(function (error) { reviewError("확정하지 못했습니다: " + error.message); });
+  }
+
+  function reopenReview(purchaseId) {
+    reviewError("");
+    fetch("/reviews/" + encodeURIComponent(purchaseId) + "/reopen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reopened_by: el("review-actor").value || null })
+    }).then(function (response) {
+      if (!response.ok) { throw new Error("HTTP " + response.status); }
+      reviewNotice("다시 검토 상태로 되돌렸습니다. 이전 값은 이력에 남습니다.");
+      loadReviews();
+    }).catch(function (error) { reviewError("되돌리지 못했습니다: " + error.message); });
+  }
+
+  function initReview() {
+    el("review-filter").addEventListener("change", loadReviews);
+    el("review-reload").addEventListener("click", loadReviews);
+    // 선택지 목록은 백엔드가 소유한다. 화면이 만들지 않는다.
+    fetchJson("/reviews/options").then(function (options) {
+      reviewOptions = options;
+      loadReviews();
+    }).catch(function (error) {
+      reviewError("선택지를 불러오지 못했습니다: " + error.message);
+    });
+  }
+
   initTheme();
   buildYearOptions();
   initUpload();
+  initReview();
   load();
 })();
 </script>

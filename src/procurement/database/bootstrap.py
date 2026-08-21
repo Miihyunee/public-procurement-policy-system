@@ -38,6 +38,7 @@ from procurement.database.company_repository import CompanyRepository
 from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
+from procurement.database.review_repository import ReviewRepository
 from procurement.models.policy import Policy
 
 
@@ -120,6 +121,20 @@ _REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
         "budget_account",
         "amount",
         "batch_id",
+    ),
+    "purchase_review": (
+        "review_id",
+        "purchase_id",
+        "analysis_status",
+        "candidates_json",
+        "review_status",
+        "final_purchase_type",
+    ),
+    "purchase_review_history": (
+        "history_id",
+        "purchase_id",
+        "action",
+        "changed_at",
     ),
     "import_batch": (
         "batch_id",
@@ -207,6 +222,8 @@ def init_db(db_path: str | Path | None = None) -> None:
     CertificationRepository(path).create_table()
     PurchaseRepository(path).create_table()
     ImportBatchRepository(path).create_table()
+    # DB-2 (검토·분류) — 신규 테이블만 추가한다. 기존 테이블은 건드리지 않는다.
+    ReviewRepository(path).create_table()
     migrate_schema(path)
     # 인덱스는 컬럼 보완 이후에 만든다(구 스키마 DB 대응).
     PurchaseRepository(path).ensure_indexes()

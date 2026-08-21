@@ -180,7 +180,7 @@ FastAPI  →  ApiService  →  DataService  →  Calculator  →  Rule Engine
 | **업로드 저장 API** | ✅ | `POST /uploads/purchases` |
 | Electron 앱 | ✅ 실기동 검증 (Linux) · Windows 미검증 | `electron/` |
 | 음수 상계 연결 | ❌ 저장 제약 해제 대기 (업무규칙 확정 · 판정 로직 구현 완료). 📄 사전 설계 `NEGATIVE_OFFSET_WIRING_DESIGN.md`. 🟡 발행일자 결측 처리는 **내부 판단(미확정 예외)** — DECISIONS §0.6.3.5 | `core/offsetting.py` |
-| 🆕 **정제·검토 파이프라인** | 📄 설계 완료 — `NEW_ARCHITECTURE.md` · `DATABASE_PIPELINE_DESIGN.md` · `DESCRIPTION_SIMILARITY_DESIGN.md` · `REVIEW_INTERFACE_DESIGN.md` (2026-08-22 회의) | 미구현 |
+| 🆕 **정제·검토 파이프라인** | 📄 설계 4건 + ✅ **STEP 1~3 구현 완료** (DB-2 · 분석 인터페이스 · 검토 API/화면). DB-3 · Calculator 연결은 미착수 | `database/review_repository.py` · `core/description_classifier.py` · `reviews/` |
 
 ## 5.3 지금 실제로 되는 것
 

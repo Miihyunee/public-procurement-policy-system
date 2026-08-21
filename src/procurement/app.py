@@ -61,8 +61,26 @@ from procurement.database.import_batch_repository import (
 )
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.purchase_repository import PurchaseRepository
+from procurement.database.review_repository import ReviewRepository, ReviewValidationError
 from procurement.importers.batch_import_service import BatchImportService
 from procurement.importers.purchase_importer import PurchaseImporter
+from procurement.reviews.response import (
+    ConfirmReviewRequest,
+    PurchaseTypeOptionResponseModel,
+    ReopenReviewRequest,
+    ReviewHistoryItemResponseModel,
+    ReviewHistoryResponseModel,
+    ReviewItemResponseModel,
+    ReviewListResponseModel,
+    ReviewProgressResponseModel,
+    purchase_type_options,
+)
+from procurement.reviews.review_service import (
+    FILTER_ALL,
+    ReviewFilterError,
+    ReviewNotFoundError,
+    ReviewService,
+)
 from procurement.uploads.template import TEMPLATE_FILE_NAME, build_template_bytes
 from procurement.uploads.upload_response import UploadResponseModel, build_upload_response
 from procurement.uploads.upload_service import ExistingPeriodBatchError, UploadService
@@ -140,6 +158,31 @@ def build_upload_service(db_path: str | Path | None = None) -> UploadService:
     return UploadService(BatchImportService(importer, batch_repo, purchase_repo))
 
 
+def build_review_service(db_path: str | Path | None = None) -> ReviewService:
+    """담당자 검토 서비스를 조립합니다(composition root).
+
+    ::
+
+        ReviewService → PurchaseRepository (⛔ 읽기 전용)
+                      → ReviewRepository   (DB-2)
+
+    .. warning::
+        🔴 **분석기를 주입하지 않습니다.** 적요 분석 방법(BM25 · RAG · FUSE)이
+        아직 선택되지 않았기 때문입니다
+        (``docs/DESCRIPTION_SIMILARITY_DESIGN.md`` §3.5). 분석기가 없으면
+        후보 없이 검토 화면이 동작하며, 담당자는 원본만 보고 판단합니다.
+        방법이 정해지면 여기에 구현체를 넣기만 하면 됩니다.
+
+    Args:
+        db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        조립된 :class:`ReviewService`.
+    """
+    path: str | Path = db_path if db_path is not None else settings.db_file
+    return ReviewService(PurchaseRepository(path), ReviewRepository(path))
+
+
 def build_data_status_api(
     db_path: str | Path | None = None,
     data_mode: str | None = None,
@@ -171,9 +214,7 @@ def build_data_status_api(
     )
     mode = data_mode if data_mode is not None else settings.DATA_MODE
     date_field = (
-        period_date_field
-        if period_date_field is not None
-        else settings.PURCHASE_PERIOD_DATE_FIELD
+        period_date_field if period_date_field is not None else settings.PURCHASE_PERIOD_DATE_FIELD
     )
     return DataStatusApiService(status_service, mode, date_field)
 
@@ -285,10 +326,9 @@ def create_app(
     dashboard_api = build_dashboard_api(db_path)
     upload_service = build_upload_service(db_path)
     policy_admin = build_policy_admin(db_path)
+    review_service = build_review_service(db_path)
     date_field = (
-        period_date_field
-        if period_date_field is not None
-        else settings.PURCHASE_PERIOD_DATE_FIELD
+        period_date_field if period_date_field is not None else settings.PURCHASE_PERIOD_DATE_FIELD
     )
     data_status_api = build_data_status_api(db_path, data_mode, date_field)
     thresholds = parse_thresholds(settings.DASHBOARD_ACHIEVEMENT_DISPLAY_THRESHOLDS)
@@ -426,7 +466,7 @@ def create_app(
         return Response(
             content=build_template_bytes(),
             media_type=XLSX_MEDIA_TYPE,
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8\'\'{quoted}"},
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
         )
 
     @app.post(
@@ -529,6 +569,130 @@ def create_app(
         except ImportBatchValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return build_upload_response(result)
+
+    # ------------------------------------------------------------------
+    # 담당자 검토 (DB-2) — 구매유형 확정
+    #
+    # ⛔ 원본(DB-1)을 수정하지 않습니다. ⛔ 자동 확정하지 않습니다.
+    # 🔴 적요 분석 방법은 아직 선택되지 않았습니다(결정 대기).
+    # ------------------------------------------------------------------
+    @app.get(
+        "/reviews",
+        response_model=ReviewListResponseModel,
+        summary="구매유형 검토 목록",
+        tags=["reviews"],
+    )
+    def list_reviews(
+        review_filter: str = FILTER_ALL, limit: int | None = None, offset: int = 0
+    ) -> ReviewListResponseModel:
+        """검토 대상 목록과 진행 상황을 반환합니다.
+
+        각 항목은 ``source``(원본) · ``analysis``(자동 분석) ·
+        ``review``(담당자 확정)로 **분리**되어 있습니다.
+        """
+        try:
+            targets = review_service.list_targets(
+                review_filter=review_filter, limit=limit, offset=offset
+            )
+        except ReviewFilterError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return ReviewListResponseModel(
+            items=[ReviewItemResponseModel.from_target(target) for target in targets],
+            progress=ReviewProgressResponseModel.from_progress(review_service.progress()),
+        )
+
+    @app.get(
+        "/reviews/options",
+        response_model=list[PurchaseTypeOptionResponseModel],
+        summary="담당자가 고를 수 있는 구매유형 선택지",
+        tags=["reviews"],
+    )
+    def list_review_options() -> list[PurchaseTypeOptionResponseModel]:
+        """공사 · 용역 · 물품 · 판단 보류를 반환합니다.
+
+        ⛔ 화면이 선택지를 직접 만들지 않도록 **백엔드가 목록을 소유**합니다.
+        """
+        return purchase_type_options()
+
+    @app.get(
+        "/reviews/progress",
+        response_model=ReviewProgressResponseModel,
+        summary="검토 진행 상황",
+        tags=["reviews"],
+    )
+    def get_review_progress() -> ReviewProgressResponseModel:
+        """확정 / 미확정 / 확인 권장 건수를 반환합니다."""
+        return ReviewProgressResponseModel.from_progress(review_service.progress())
+
+    @app.get(
+        "/reviews/{purchase_id}",
+        response_model=ReviewItemResponseModel,
+        summary="검토 대상 1건",
+        tags=["reviews"],
+    )
+    def get_review(purchase_id: int) -> ReviewItemResponseModel:
+        """원본 · 분석 결과 · 확정 상태를 함께 반환합니다."""
+        try:
+            return ReviewItemResponseModel.from_target(review_service.get_target(purchase_id))
+        except ReviewNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get(
+        "/reviews/{purchase_id}/history",
+        response_model=ReviewHistoryResponseModel,
+        summary="검토 변경 이력",
+        tags=["reviews"],
+    )
+    def get_review_history(purchase_id: int) -> ReviewHistoryResponseModel:
+        """확정·재검토·분석 이력을 시간순으로 반환합니다."""
+        entries = review_service.history(purchase_id)
+        return ReviewHistoryResponseModel(
+            purchase_id=purchase_id,
+            items=[ReviewHistoryItemResponseModel.from_entry(entry) for entry in entries],
+        )
+
+    @app.put(
+        "/reviews/{purchase_id}",
+        response_model=ReviewItemResponseModel,
+        summary="구매유형 확정",
+        tags=["reviews"],
+    )
+    def confirm_review(purchase_id: int, payload: ConfirmReviewRequest) -> ReviewItemResponseModel:
+        """담당자가 고른 구매유형을 확정합니다.
+
+        ``{"final_purchase_type": null}`` 은 **판단 보류**를 뜻합니다.
+        키가 아예 없으면 422 로 거부해 "바꾸지 않음" 과 구분합니다.
+
+        ⛔ 원본(DB-1)은 수정되지 않습니다.
+        """
+        try:
+            target = review_service.confirm(
+                purchase_id,
+                final_purchase_type=payload.final_purchase_type,
+                reviewed_by=payload.reviewed_by,
+                review_note=payload.review_note,
+            )
+        except ReviewNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ReviewValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return ReviewItemResponseModel.from_target(target)
+
+    @app.post(
+        "/reviews/{purchase_id}/reopen",
+        response_model=ReviewItemResponseModel,
+        summary="확정 되돌리기(재검토)",
+        tags=["reviews"],
+    )
+    def reopen_review(purchase_id: int, payload: ReopenReviewRequest) -> ReviewItemResponseModel:
+        """확정을 되돌립니다. ⛔ 이전 값은 지우지 않고 이력에 남깁니다."""
+        try:
+            target = review_service.reopen(
+                purchase_id, reopened_by=payload.reopened_by, note=payload.note
+            )
+        except ReviewNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return ReviewItemResponseModel.from_target(target)
 
     @app.get(
         "/policies",
