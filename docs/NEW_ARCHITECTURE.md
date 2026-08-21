@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |---|---|
 | 작성일 | 2026-08-22 |
-| 상태 | 📄 설계 + ✅ **STEP 1~3 구현 완료** · 🧪 **STEP 4 비교 실험 환경 완료** (2026-08-22). DB-3 · Calculator 연결은 미착수 |
+| 상태 | 📄 설계 + ✅ **STEP 1~3 구현 완료** · 🧪 **STEP 4 실험 환경** · 🔬 **STEP 5 코퍼스 검증 완료** (2026-08-22). DB-3 · Calculator 연결은 미착수 |
 | 근거 | 2026-08-22 회의 결과 (PM 전달) |
 | 관련 문서 | `DATABASE_PIPELINE_DESIGN.md` · `DESCRIPTION_SIMILARITY_DESIGN.md` · `REVIEW_INTERFACE_DESIGN.md` |
 | ⛔ 이번 범위 아님 | 구현 · 스키마 변경 · Calculator 수정 · Electron/Rust 선택 · 고객 미확정 사항 결정 |
@@ -282,6 +282,7 @@ Electron / Rust 중 **어느 것도 선택하지 않습니다.** 대신 종속�
 | ~~**2**~~ | ~~분석 인터페이스(추상) + 규칙 없는 기본 구현~~ | — | ✅ **완료** — `core/description_classifier.py` |
 | ~~**3**~~ | ~~검토 API + 화면~~ | — | ✅ **완료** — `reviews/` · `/reviews` · index.html 검토 카드 |
 | ~~**4**~~ | ~~분석 방법 비교 실험 (BM25/RAG/FUSE)~~ | — | 🧪 **실험 환경 완료** — `experiments/` · `scripts/compare_description_methods.py`. ⛔ **선택은 미결**(PM/고객). 실측: `DESCRIPTION_SIMILARITY_DESIGN.md` §8 |
+| **4.5** | 코퍼스 품질 검증 | 4 | 🔬 **완료** — `DESCRIPTION_CLASSIFICATION_DATA_ANALYSIS.md`. 🔴 작업본 `구분` 은 예산과목 파생값. 고객 확인 Q5-1~Q5-7 대기 |
 | **5** | DB-3 생성 서비스 | 1~3 · 결정 ⑥ | |
 | **6** | Calculator 입력 교체 | 5 | 숫자가 바뀌는 단계 — 마지막 |
 | **7** | 상계 검토 통합 | 결정 ③·④ | 검토 인터페이스에 상계 후보 추가 |
