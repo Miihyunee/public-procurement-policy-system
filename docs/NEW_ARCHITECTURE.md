@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |---|---|
 | 작성일 | 2026-08-22 |
-| 상태 | 📄 설계 + ✅ **STEP 1~3 구현 완료** (2026-08-22). DB-3 · Calculator 연결은 미착수 |
+| 상태 | 📄 설계 + ✅ **STEP 1~3 구현 완료** · 🧪 **STEP 4 비교 실험 환경 완료** (2026-08-22). DB-3 · Calculator 연결은 미착수 |
 | 근거 | 2026-08-22 회의 결과 (PM 전달) |
 | 관련 문서 | `DATABASE_PIPELINE_DESIGN.md` · `DESCRIPTION_SIMILARITY_DESIGN.md` · `REVIEW_INTERFACE_DESIGN.md` |
 | ⛔ 이번 범위 아님 | 구현 · 스키마 변경 · Calculator 수정 · Electron/Rust 선택 · 고객 미확정 사항 결정 |
@@ -281,10 +281,11 @@ Electron / Rust 중 **어느 것도 선택하지 않습니다.** 대신 종속�
 | ~~**1**~~ | ~~DB-2 스키마 + Repository~~ | — | ✅ **완료** (2026-08-22) — `database/review_repository.py` |
 | ~~**2**~~ | ~~분석 인터페이스(추상) + 규칙 없는 기본 구현~~ | — | ✅ **완료** — `core/description_classifier.py` |
 | ~~**3**~~ | ~~검토 API + 화면~~ | — | ✅ **완료** — `reviews/` · `/reviews` · index.html 검토 카드 |
-| **4** | 분석 방법 비교 실험 (BM25/RAG/FUSE) | 3 에서 쌓인 확정 데이터 | **실측 없이 고르지 않는다** |
+| ~~**4**~~ | ~~분석 방법 비교 실험 (BM25/RAG/FUSE)~~ | — | 🧪 **실험 환경 완료** — `experiments/` · `scripts/compare_description_methods.py`. ⛔ **선택은 미결**(PM/고객). 실측: `DESCRIPTION_SIMILARITY_DESIGN.md` §8 |
 | **5** | DB-3 생성 서비스 | 1~3 · 결정 ⑥ | |
 | **6** | Calculator 입력 교체 | 5 | 숫자가 바뀌는 단계 — 마지막 |
 | **7** | 상계 검토 통합 | 결정 ③·④ | 검토 인터페이스에 상계 후보 추가 |
 
-> **1~3 은 기존 계산 결과를 전혀 바꾸지 않습니다.** 새 테이블·새 화면만
-> 추가되므로 안전하게 먼저 진행할 수 있습니다. 숫자가 바뀌는 것은 6번뿐입니다.
+> **1~4 는 기존 계산 결과를 전혀 바꾸지 않습니다.** 새 테이블·새 화면·실험
+> 코드만 추가되며, 4번 실험 코드는 운영 경로에서 import 되지 않습니다(테스트로
+> 강제). 숫자가 바뀌는 것은 6번뿐입니다.

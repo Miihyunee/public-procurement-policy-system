@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |---|---|
 | 목적 | **새 PM 이 이 문서 하나로 프로젝트를 이어받을 수 있게 한다** |
-| 최종 갱신 | 2026-08-17 |
+| 최종 갱신 | 2026-08-22 (STEP 4) |
 | 작성 기준 | Git · 코드 · 테스트 **실측** (기억이나 추정이 아님) |
 | 다음에 읽을 문서 | `DECISIONS.md` (결정의 단일 출처) → `UPLOAD_PIPELINE_DESIGN.md` (현재 작업) |
 
@@ -28,7 +28,7 @@
 | 실제 운영 데이터 | ❌ 아직 없음 (샘플만 분석) |
 | **남은 것** | Windows 검증 · 운영 데이터 · 고객 확인 사항 · push 승인 |
 
-**품질 게이트는 전부 통과 상태입니다** — pytest 1083 · ruff · mypy strict ·
+**품질 게이트는 전부 통과 상태입니다** — pytest 1279 · ruff · mypy strict ·
 Electron 백엔드 검증 14/14 · Electron 실기동 smoke 6/6.
 
 ---
@@ -180,7 +180,7 @@ FastAPI  →  ApiService  →  DataService  →  Calculator  →  Rule Engine
 | **업로드 저장 API** | ✅ | `POST /uploads/purchases` |
 | Electron 앱 | ✅ 실기동 검증 (Linux) · Windows 미검증 | `electron/` |
 | 음수 상계 연결 | ❌ 저장 제약 해제 대기 (업무규칙 확정 · 판정 로직 구현 완료). 📄 사전 설계 `NEGATIVE_OFFSET_WIRING_DESIGN.md`. 🟡 발행일자 결측 처리는 **내부 판단(미확정 예외)** — DECISIONS §0.6.3.5 | `core/offsetting.py` |
-| 🆕 **정제·검토 파이프라인** | 📄 설계 4건 + ✅ **STEP 1~3 구현 완료** (DB-2 · 분석 인터페이스 · 검토 API/화면). DB-3 · Calculator 연결은 미착수 | `database/review_repository.py` · `core/description_classifier.py` · `reviews/` |
+| 🆕 **정제·검토 파이프라인** | 📄 설계 4건 + ✅ **STEP 1~3 구현 완료** (DB-2 · 분석 인터페이스 · 검토 API/화면) + 🧪 **STEP 4 비교 실험 환경 완료** (BM25/RAG/FUSE — ⛔ **선택은 미결**). DB-3 · Calculator 연결은 미착수 | `database/review_repository.py` · `core/description_classifier.py` · `reviews/` · `experiments/` |
 
 ## 5.3 지금 실제로 되는 것
 

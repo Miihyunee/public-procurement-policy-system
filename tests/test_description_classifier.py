@@ -175,11 +175,25 @@ class TestNoRuleClassifier:
 class TestNoMethodWasChosen:
     """🔴 BM25 · RAG · FUSE 중 어느 것도 구현하지 않았다."""
 
-    def test_no_algorithm_module_exists(self) -> None:
+    def test_no_algorithm_module_exists_outside_experiments(self) -> None:
+        """운영 경로에는 BM25 · RAG · FUSE 구현이 없다.
+
+        변경 사유(STEP 4): 세 방법을 **비교하기 위한** 실험 코드를
+        ``procurement/experiments/`` 아래에 만들었다. 따라서 "어디에도 없다" 는
+        더 이상 사실이 아니다. 다만 **선택하지 않았다** 는 것은 그대로이므로,
+        검사 범위를 실험 패키지 밖(= 운영 경로)으로 좁힌다. 실험 코드가 운영
+        코드에 스며들지 않는다는 것은
+        ``test_experiments_classifiers.py::TestExperimentsAreIsolated`` 가
+        따로 지킨다.
+        """
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[1] / "src" / "procurement"
-        names = {path.stem.lower() for path in root.rglob("*.py")}
+        names = {
+            path.stem.lower()
+            for path in root.rglob("*.py")
+            if "experiments" not in path.relative_to(root).parts
+        }
 
         for method in ("bm25", "rag", "fuse"):
             assert method not in names, method
