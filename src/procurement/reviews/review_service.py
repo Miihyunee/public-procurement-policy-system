@@ -173,6 +173,27 @@ class ReviewPage:
     condition: ConditionProgress = ConditionProgress()
 
 
+def keeps_batch(purchase: Purchase, batch_id: int | None) -> bool:
+    """기간(=배치) 조건에 맞는 구매인가.
+
+    ⚠️ **검토 조회의 모든 경로가 이 함수 하나를 씁니다.** 조건을 경로마다 따로
+    쓰면 어느 한쪽이 빠지고, 담당자는 **거르지 않은 목록을 걸러진 것으로**
+    보게 됩니다(STEP 20 에서 실제로 발견된 문제).
+
+    ⛔ 날짜를 다시 계산하지 않고 배치로만 좁힙니다 — 어느 날짜로 기간을 나눌지는
+    아직 확정되지 않은 업무규칙입니다(D-24).
+
+    ⛔ 대체된(SUPERSEDED) 배치를 여기서 판단하지 않습니다. 애초에
+    ``find_for_calculation`` 이 현재 배치의 구매만 주므로, 대체된 배치 ID 로
+    물으면 맞는 구매가 없어 자연히 0건이 됩니다.
+
+    Args:
+        purchase: 대상 구매.
+        batch_id: 배치 ID. ``None`` 이면 조건 없음이므로 모두 통과합니다.
+    """
+    return batch_id is None or purchase.batch_id == batch_id
+
+
 def _keeps(target: ReviewTarget, query: ReviewQuery) -> bool:
     """조건에 맞는 항목인가.
 
@@ -180,9 +201,7 @@ def _keeps(target: ReviewTarget, query: ReviewQuery) -> bool:
     """
     review = target.review
 
-    # 기간(=배치) 조건. ⛔ 날짜를 다시 계산하지 않고 배치로만 좁힌다 —
-    #    어느 날짜로 기간을 나눌지는 아직 확정되지 않은 업무규칙이다(D-24).
-    if query.batch_id is not None and target.purchase.batch_id != query.batch_id:
+    if not keeps_batch(target.purchase, query.batch_id):
         return False
 
     if query.search:
@@ -323,6 +342,7 @@ class ReviewService:
         *,
         review_filter: str = FILTER_ALL,
         period: PeriodFilter | None = None,
+        batch_id: int | None = None,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[ReviewTarget]:
@@ -335,6 +355,11 @@ class ReviewService:
             review_filter: :data:`FILTER_ALL` · :data:`FILTER_CONFIRMED` ·
                 :data:`FILTER_PENDING` · :data:`FILTER_AMBIGUOUS`.
             period: 기간 조건. ``None`` 이면 제한 없음.
+            batch_id: 기간(=배치) 조건. ``None`` 이면 제한 없음.
+
+                ⚠️ :meth:`search` 경로와 **같은 조건**(:func:`keeps_batch`)을
+                씁니다. 예전에는 이 경로만 배치를 보지 않아, ``batch_id`` 를
+                줘도 전체가 나왔습니다(STEP 20 발견 · STEP 21 수정).
             limit: 최대 건수. ``None`` 이면 전체.
             offset: 건너뛸 건수.
 
@@ -362,6 +387,8 @@ class ReviewService:
             review = reviews.get(purchase.purchase_id) or PurchaseReview(
                 purchase_id=purchase.purchase_id
             )
+            if not keeps_batch(purchase, batch_id):
+                continue
             if not self._matches(review, review_filter):
                 continue
             targets.append(
@@ -474,8 +501,7 @@ class ReviewService:
         by_id: dict[int, Purchase] = {
             purchase.purchase_id: purchase
             for purchase in self._purchase_repository.find_for_calculation(None)
-            if purchase.purchase_id is not None
-            and (batch_id is None or purchase.batch_id == batch_id)
+            if purchase.purchase_id is not None and keeps_batch(purchase, batch_id)
         }
         entries = self._review_repository.find_history_of(by_id)
         return [(by_id[entry.purchase_id], entry) for entry in entries]

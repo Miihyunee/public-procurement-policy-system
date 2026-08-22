@@ -137,6 +137,23 @@ class ReviewQueryError(ValueError):
     """조건 값이 허용 범위를 벗어났을 때 발생합니다."""
 
 
+def validate_batch_id(batch_id: int | None) -> None:
+    """기간(=배치) 조건이 쓸 수 있는 값인지 봅니다.
+
+    ⚠️ **검토 조회의 모든 경로가 이 함수 하나를 씁니다.** 조건 검사를 경로마다
+    따로 두면, 어느 한쪽만 검사를 빠뜨렸을 때 담당자는 **거르지 않은 목록을
+    걸러진 것으로** 보게 됩니다(STEP 20 에서 실제로 발견된 문제).
+
+    Args:
+        batch_id: 배치 ID. ``None`` 이면 조건 없음이므로 통과합니다.
+
+    Raises:
+        ReviewQueryError: 1 보다 작은 값인 경우.
+    """
+    if batch_id is not None and batch_id < 1:
+        raise ReviewQueryError(f"배치 ID 는 1 이상이어야 합니다: {batch_id}")
+
+
 @dataclass(frozen=True, kw_only=True)
 class ReviewQuery:
     """검토 목록 조회 조건.
@@ -188,8 +205,7 @@ class ReviewQuery:
         _require(self.sort, frozenset(SORT_KEYS), "정렬 기준")
         _require(self.direction, SORT_DIRECTIONS, "정렬 방향")
 
-        if self.batch_id is not None and self.batch_id < 1:
-            raise ReviewQueryError(f"배치 ID 는 1 이상이어야 합니다: {self.batch_id}")
+        validate_batch_id(self.batch_id)
         if self.page < 1:
             raise ReviewQueryError(f"페이지는 1 이상이어야 합니다: {self.page}")
         if not 1 <= self.page_size <= MAX_PAGE_SIZE:

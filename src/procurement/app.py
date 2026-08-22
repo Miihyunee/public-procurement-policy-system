@@ -104,6 +104,7 @@ from procurement.reviews.query import (
     MAX_PAGE_SIZE,
     ReviewQuery,
     ReviewQueryError,
+    validate_batch_id,
 )
 from procurement.reviews.response import (
     ConditionProgressResponseModel,
@@ -728,11 +729,19 @@ def create_app(
             HTTPException: 허용되지 않는 조건값이면 422.
         """
         if page is None:
+            # ⚠️ 이 경로도 **같은 기간 조건**을 적용한다. 예전에는 여기서만
+            #    ``batch_id`` 를 보지 않아, 조건을 줘도 전체가 내려왔다 — 담당자는
+            #    거르지 않은 목록을 걸러진 것으로 읽게 된다(STEP 20 발견).
+            #    ⛔ 값이 잘못됐다고 전체 조회로 되돌리지 않는다. 거부한다.
             try:
+                validate_batch_id(batch_id)
                 targets = review_service.list_targets(
-                    review_filter=review_filter, limit=limit, offset=offset
+                    review_filter=review_filter,
+                    batch_id=batch_id,
+                    limit=limit,
+                    offset=offset,
                 )
-            except ReviewFilterError as exc:
+            except (ReviewFilterError, ReviewQueryError) as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             return ReviewListResponseModel(
                 items=[ReviewItemResponseModel.from_target(target) for target in targets],
