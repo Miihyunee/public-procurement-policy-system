@@ -36,11 +36,25 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from decimal import Decimal
+from typing import Final
 
 from procurement.core.description_key import normalize_description
 from procurement.core.purchase_type import PURCHASE_TYPE_LABELS
 from procurement.models.purchase import Purchase
 from procurement.models.review import CONFIRMED, PurchaseReview
+
+#: 과거 확정 이력이 하나도 없음.
+NO_HISTORY: Final = "NO_HISTORY"
+
+#: 한 가지 유형으로만 확정된 적이 있음.
+SINGLE_TYPE: Final = "SINGLE_TYPE"
+
+#: 두 가지 이상으로 갈린 적이 있음.
+MIXED_TYPES: Final = "MIXED_TYPES"
+
+#: 일관성 수준 — **구조적 구분**이며 점수 임계값이 아닙니다.
+CONSISTENCY_LEVELS: Final = (NO_HISTORY, SINGLE_TYPE, MIXED_TYPES)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -91,6 +105,54 @@ class PastLabelSummary:
         ⛔ 그렇다고 이 건을 자동으로 걸러내거나 막지 않습니다.
         """
         return self.type_count > 1
+
+    @property
+    def dominant(self) -> PastLabel | None:
+        """가장 많이 확정된 유형. 이력이 없으면 ``None``.
+
+        ⛔ **"정답" 이 아닙니다.** 가장 자주 골랐다는 사실일 뿐입니다.
+        """
+        return self.labels[0] if self.labels else None
+
+    @property
+    def dominant_ratio(self) -> Decimal:
+        """최다 유형이 차지하는 비율(%). 이력이 없으면 0.
+
+        100% 면 과거 판단이 한 번도 갈리지 않았다는 뜻이고, 50% 에 가까울수록
+        갈렸다는 뜻입니다.
+
+        ⛔ **여기에 기준선이 없습니다.** "80% 넘으면 확정" 같은 임계값을
+        만들지 않았습니다 — 고객 업무규칙 미확정.
+        """
+        dominant = self.dominant
+        if dominant is None or self.total == 0:
+            return Decimal("0.00")
+        return (Decimal(dominant.count) / Decimal(self.total) * 100).quantize(Decimal("0.01"))
+
+    @property
+    def consistency(self) -> str:
+        """과거 판단이 얼마나 일관됐는지 — :data:`CONSISTENCY_LEVELS` 중 하나.
+
+        **구조적 구분일 뿐 임계값이 아닙니다.** 숫자를 잘라 등급을 매기지
+        않고, "이력이 있는가 / 갈렸는가" 라는 사실만 봅니다.
+
+        - :data:`NO_HISTORY` — 과거 확정 이력이 없음
+        - :data:`SINGLE_TYPE` — 한 가지 유형으로만 확정됨 (비율 100%)
+        - :data:`MIXED_TYPES` — 두 가지 이상으로 갈림
+
+        갈린 **정도**는 :attr:`dominant_ratio` 로 따로 봅니다. 그 값을 등급으로
+        자르는 것은 고객 확인 사항입니다.
+        """
+        if not self.labels:
+            return NO_HISTORY
+        return SINGLE_TYPE if self.type_count == 1 else MIXED_TYPES
+
+    def count_of(self, purchase_type: str) -> int:
+        """특정 유형으로 확정된 건수. 없으면 0."""
+        for label in self.labels:
+            if label.purchase_type == purchase_type:
+                return label.count
+        return 0
 
     def differs_from(self, purchase_type: str | None) -> bool:
         """주어진 유형이 과거 **최빈** 확정 유형과 다른가.

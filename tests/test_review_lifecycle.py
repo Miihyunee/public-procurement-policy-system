@@ -40,6 +40,7 @@ from procurement.models.review import (
     PENDING,
     REOPENED,
 )
+from procurement.reviews.past_labels import SINGLE_TYPE
 from procurement.reviews.review_service import ReviewService
 
 
@@ -375,3 +376,146 @@ class TestServiceLevelJourney:
         service.confirm(first, final_purchase_type=None, reviewed_by="김담당")
 
         assert service.get_target(second).past_labels.total == 0
+
+
+class TestConfirmationDetailsSurviveReanalysis:
+    """⛔ STEP 7 A-1 — 확정에 딸린 정보 **전부**가 재분석에도 남는다.
+
+    STEP 6 은 유형·확정자·확정시각까지 확인했습니다. 지시 A-1 이 "확정 메모 등
+    기존 확정 정보" 라고 명시했으므로 메모와 상태까지 함께 고정합니다.
+    """
+
+    def test_review_note_is_not_wiped(
+        self, purchases: PurchaseRepository, reviews: ReviewRepository
+    ) -> None:
+        """담당자가 남긴 메모가 재분석으로 지워지면 판단 근거가 사라진다."""
+        purchase_id = add_purchase(purchases)
+        reviews.confirm(
+            purchase_id,
+            final_purchase_type=CONSTRUCTION,
+            reviewed_by="김담당",
+            review_note="하도급 노무비라 공사로 봄",
+        )
+
+        after = reviews.save_analysis(purchase_id, analysis((GOODS, "0.99")))
+
+        assert after.review_note == "하도급 노무비라 공사로 봄"
+
+    def test_every_confirmation_field_is_unchanged(
+        self, purchases: PurchaseRepository, reviews: ReviewRepository
+    ) -> None:
+        """확정 블록 전체를 통째로 비교한다 — 한 필드라도 새면 실패."""
+        purchase_id = add_purchase(purchases)
+        before = reviews.confirm(
+            purchase_id,
+            final_purchase_type=CONSTRUCTION,
+            reviewed_by="김담당",
+            review_note="메모",
+        )
+
+        for _ in range(5):
+            reviews.save_analysis(purchase_id, analysis((GOODS, "0.99"), (SERVICE, "0.01")))
+
+        after = reviews.find_by_purchase_id(purchase_id)
+        assert after is not None
+        assert (
+            after.final_purchase_type,
+            after.review_status,
+            after.reviewed_by,
+            after.reviewed_at,
+            after.review_note,
+        ) == (
+            before.final_purchase_type,
+            before.review_status,
+            before.reviewed_by,
+            before.reviewed_at,
+            before.review_note,
+        )
+
+    def test_reopened_state_survives_reanalysis(
+        self, purchases: PurchaseRepository, reviews: ReviewRepository
+    ) -> None:
+        """재검토 중인 건을 다시 분석해도 REOPENED 가 유지된다.
+
+        분석이 상태를 PENDING 이나 CONFIRMED 로 되돌리면, 담당자가 "다시
+        보기로 했다" 는 사실이 사라진다.
+        """
+        purchase_id = add_purchase(purchases)
+        reviews.confirm(purchase_id, final_purchase_type=SERVICE, reviewed_by="김담당")
+        reviews.reopen(purchase_id, reopened_by="이담당", note="재검토")
+
+        after = reviews.save_analysis(purchase_id, analysis((GOODS, "0.99")))
+
+        assert after.review_status == REOPENED
+        assert after.final_purchase_type == SERVICE
+
+    def test_analysis_columns_do_change(
+        self, purchases: PurchaseRepository, reviews: ReviewRepository
+    ) -> None:
+        """반대 방향도 확인 — 분석 컬럼은 **정상적으로 갱신되어야** 한다.
+
+        확정값이 안 바뀐다는 것을 "아무것도 안 바뀐다" 로 통과시키면 안 된다.
+        """
+        purchase_id = add_purchase(purchases)
+        reviews.confirm(purchase_id, final_purchase_type=CONSTRUCTION, reviewed_by="김담당")
+        first = reviews.save_analysis(purchase_id, analysis((SERVICE, "0.50")))
+
+        second = reviews.save_analysis(purchase_id, analysis((GOODS, "0.90")))
+
+        assert first.top_candidate is not None
+        assert second.top_candidate is not None
+        assert first.top_candidate.purchase_type != second.top_candidate.purchase_type
+
+
+class TestPastLabelsStayIndependent:
+    """⛔ STEP 7 B — 과거 이력이 현재 확정값을 건드리지 않는다."""
+
+    def test_history_does_not_fill_in_the_decision(
+        self, service: ReviewService, purchases: PurchaseRepository
+    ) -> None:
+        """같은 적요가 과거 5건 모두 공사여도 현재 건은 여전히 미확정이다."""
+        for _ in range(5):
+            confirmed = add_purchase(purchases, "반복되는 적요")
+            service.confirm(confirmed, final_purchase_type=CONSTRUCTION, reviewed_by="김담당")
+        fresh = add_purchase(purchases, "반복되는 적요")
+
+        target = service.get_target(fresh)
+
+        assert target.past_labels.total == 5
+        assert target.past_labels.consistency == SINGLE_TYPE
+        # ⛔ 그럼에도 확정값은 비어 있다
+        assert target.review.final_purchase_type is None
+        assert target.review.review_status == PENDING
+
+    def test_history_does_not_override_a_different_decision(
+        self, service: ReviewService, purchases: PurchaseRepository
+    ) -> None:
+        """담당자가 과거와 다르게 골라도 그 선택이 그대로 남는다."""
+        first = add_purchase(purchases, "반복되는 적요")
+        service.confirm(first, final_purchase_type=CONSTRUCTION, reviewed_by="김담당")
+        second = add_purchase(purchases, "반복되는 적요")
+
+        service.confirm(second, final_purchase_type=GOODS, reviewed_by="이담당")
+        target = service.get_target(second)
+
+        assert target.review.final_purchase_type == GOODS
+        assert target.past_labels.has_conflict
+
+    def test_consistency_reflects_confirmations_only(
+        self, service: ReviewService, purchases: PurchaseRepository
+    ) -> None:
+        """미확정·판단 보류는 일관성 계산에 들어가지 않는다."""
+        confirmed = add_purchase(purchases, "같은 적요")
+        held = add_purchase(purchases, "같은 적요")
+        untouched = add_purchase(purchases, "같은 적요")
+        target_id = add_purchase(purchases, "같은 적요")
+
+        service.confirm(confirmed, final_purchase_type=SERVICE, reviewed_by="김담당")
+        service.confirm(held, final_purchase_type=None, reviewed_by="김담당")
+        # untouched 는 손대지 않는다
+        assert untouched
+
+        summary = service.get_target(target_id).past_labels
+
+        assert summary.total == 1
+        assert summary.consistency == SINGLE_TYPE

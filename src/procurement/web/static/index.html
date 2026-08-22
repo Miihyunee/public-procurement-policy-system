@@ -1328,9 +1328,10 @@
     var box = make("div", "rv-block");
     box.appendChild(reviewHeading("같은 적요의 과거 확정 이력 (참고)"));
 
+    // ⑤ 신규 적요 — 오류가 아니다. 임의 유형을 붙이지 않는다.
     if (!past.labels.length) {
       box.appendChild(make("div", "rv-key",
-        "같은 적요로 확정한 이력이 없습니다. (처음 보는 적요)"));
+        "과거 확정 이력 없음 (처음 보는 적요)"));
       return box;
     }
 
@@ -1341,6 +1342,14 @@
     });
     box.appendChild(line);
 
+    // 일관성 — 구조적 구분일 뿐 임계값으로 자른 등급이 아니다.
+    var summary = make("div", "rv-src");
+    summary.appendChild(reviewField("일관성", consistencyLabel(past.consistency)));
+    summary.appendChild(reviewField("최다 유형",
+      past.dominant_label ? past.dominant_label + " " + past.dominant_ratio + "%" : "-"));
+    summary.appendChild(reviewField("유형 수", past.type_count));
+    box.appendChild(summary);
+
     if (past.has_conflict) {
       box.appendChild(make("span", "rv-tag rv-tag-warn",
         "과거 판단이 갈렸던 적요입니다 (" + past.type_count + "개 유형)"));
@@ -1350,6 +1359,13 @@
         "1순위 후보가 과거 최다 유형과 다릅니다"));
     }
     return box;
+  }
+
+  /** 일관성 코드를 담당자가 읽을 말로. ⛔ 등급이 아니라 사실 서술이다. */
+  function consistencyLabel(value) {
+    if (value === "SINGLE_TYPE") { return "한 유형으로만 확정됨"; }
+    if (value === "MIXED_TYPES") { return "여러 유형으로 갈림"; }
+    return "이력 없음";
   }
 
   /** 확정 블록 — 담당자가 고르는 유일한 곳. */

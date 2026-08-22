@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |---|---|
 | 작성일 | 2026-08-22 |
-| 상태 | 📄 설계 + ✅ **STEP 1~3 구현** · 🧪 **STEP 4 실험 환경** · 🔬 **STEP 5 코퍼스 검증** · 🖥️ **STEP 6 검토 화면 개선·DB-2 검증 완료** (2026-08-22). DB-3 · Calculator 연결은 미착수 |
+| 상태 | 📄 설계 + ✅ **STEP 1~3 구현** · 🧪 **STEP 4 실험 환경** · 🔬 **STEP 5 코퍼스 검증** · 🖥️ STEP 6 검토 화면 개선 · 🔁 **STEP 7 DB-2 lifecycle·이력 일관성 검증 완료** (2026-08-22). DB-3 · Calculator 연결은 미착수 |
 | 근거 | 2026-08-22 회의 결과 (PM 전달) |
 | 관련 문서 | `DATABASE_PIPELINE_DESIGN.md` · `DESCRIPTION_SIMILARITY_DESIGN.md` · `REVIEW_INTERFACE_DESIGN.md` · `DESCRIPTION_CLASSIFICATION_DATA_ANALYSIS.md` · `DESCRIPTION_GROUPING_ANALYSIS.md` · `Q5_DECISION_IMPACT_MAP.md` |
 | ⛔ 이번 범위 아님 | 구현 · 스키마 변경 · Calculator 수정 · Electron/Rust 선택 · 고객 미확정 사항 결정 |

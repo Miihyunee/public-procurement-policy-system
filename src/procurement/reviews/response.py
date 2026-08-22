@@ -219,6 +219,11 @@ class PastLabelsResponseModel(BaseModel):
             **먼저 볼 것을 권하는 표시**이며 자동 판정에 쓰지 않습니다.
         differs_from_top_candidate: 1순위 후보가 과거 최빈 유형과 다른가.
             "틀렸다" 는 뜻이 아닙니다.
+        dominant_type: 과거 최다 확정 유형. 이력이 없으면 ``null``.
+        dominant_label: 그 한글 라벨.
+        dominant_ratio: 최다 유형이 차지한 비율(%). ⛔ 기준선 없음.
+        consistency: ``NO_HISTORY`` / ``SINGLE_TYPE`` / ``MIXED_TYPES``.
+            **구조적 구분**이며 점수를 잘라 만든 등급이 아닙니다.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -228,6 +233,14 @@ class PastLabelsResponseModel(BaseModel):
     type_count: int
     has_conflict: bool
     differs_from_top_candidate: bool
+    dominant_type: str | None
+    dominant_label: str | None
+    dominant_ratio: Decimal
+    consistency: str
+
+    @field_serializer("dominant_ratio")
+    def _dominant_ratio(self, value: Decimal) -> str:
+        return str(value)
 
 
 class ReviewItemResponseModel(BaseModel):
@@ -450,6 +463,10 @@ def _past_labels_of(summary: PastLabelSummary, top_candidate: object) -> PastLab
         type_count=summary.type_count,
         has_conflict=summary.has_conflict,
         differs_from_top_candidate=summary.differs_from(top_type),
+        dominant_type=summary.dominant.purchase_type if summary.dominant else None,
+        dominant_label=summary.dominant.label if summary.dominant else None,
+        dominant_ratio=summary.dominant_ratio,
+        consistency=summary.consistency,
     )
 
 
