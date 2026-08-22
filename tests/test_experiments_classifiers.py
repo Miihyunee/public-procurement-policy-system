@@ -31,6 +31,13 @@ from procurement.experiments import (
     RAGClassifier,
     run_comparison,
 )
+from procurement.experiments.comparison import (
+    CandidateRow,
+    ItemComparison,
+    MethodReport,
+    run_segmented_comparison,
+    segment_lines,
+)
 from procurement.experiments.corpus import CorpusError, tokenize
 from procurement.experiments.rag import TokenCosineBackend
 from procurement.models.review import CONFIRMED, PENDING, PurchaseReview
@@ -417,6 +424,22 @@ class TestExperimentsAreIsolated:
     """⛔ 실험 코드가 운영 경로에 섞이지 않는다."""
 
     def test_production_modules_do_not_import_experiments(self) -> None:
+        """⛔ 운영 코드는 실험 패키지를 끌어오지 않는다.
+
+        검사 방식 변경 사유(STEP 6): 이전에는 소스에 ``"experiments"`` 라는
+        **글자**가 있는지만 봤다. 그래서 문서화 주석에서 실험 패키지를
+        **언급**하기만 해도 실패했다("이 함수는 experiments 가 아니라 core 에
+        둔다" 같은 설명조차 막혔다).
+
+        대신 두 가지를 본다 — 둘 다 이전보다 **강한** 검사다.
+
+        1. ``import`` 문을 AST 로 실제로 뜯어본다 (글자 우연 일치가 아니라
+           진짜 의존성만 잡는다)
+        2. ``procurement.experiments`` 라는 **점 표기 경로**가 어디에도 없다
+           → ``importlib.import_module("procurement.experiments.bm25")``
+           처럼 AST import 를 우회하는 동적 로딩까지 막는다
+        """
+        import ast
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[1] / "src" / "procurement"
@@ -424,7 +447,18 @@ class TestExperimentsAreIsolated:
             if "experiments" in path.parts:
                 continue
             source = path.read_text(encoding="utf-8")
-            assert "experiments" not in source, path
+
+            assert "procurement.experiments" not in source, f"{path}: 동적 로딩 흔적"
+
+            for node in ast.walk(ast.parse(source)):
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    modules = [node.module] if node.module else []
+                else:
+                    continue
+                for module in modules:
+                    assert "experiments" not in module.split("."), f"{path}: {module}"
 
     def test_experiments_do_not_touch_the_database(self) -> None:
         """⛔ 실험은 DB 를 읽지도 쓰지도 않는다."""
@@ -489,3 +523,188 @@ class TestExperimentsAreIsolated:
                     assert name.split(".")[0] in {
                         root_name.split(".")[0] for root_name in allowed_roots
                     }, (path.name, name)
+
+
+class TestUtilityIsSeparateFromAccuracy:
+    """지시 11 — "정확도" 와 "업무적 유용성" 을 따로 낸다 (STEP 6)."""
+
+    @staticmethod
+    def corpus() -> ClassificationCorpus:
+        return ClassificationCorpus.from_examples(
+            [
+                LabeledExample(
+                    description="LED 등기구 교체공사", purchase_type=CONSTRUCTION, key="1"
+                ),
+                LabeledExample(description="청소 용역 대금", purchase_type=SERVICE, key="2"),
+                LabeledExample(description="사무용품 구매", purchase_type=GOODS, key="3"),
+                LabeledExample(description="사무용품 구매", purchase_type=GOODS, key="4"),
+            ]
+        )
+
+    def test_score_gap_needs_two_candidates(self) -> None:
+        """후보가 1개면 '점수 차' 라는 것이 없다 — 0 이 아니라 None."""
+        one = ItemComparison(
+            key="a",
+            description="가",
+            method="m",
+            candidates=(
+                CandidateRow(rank=1, purchase_type=GOODS, score=Decimal("1"), evidence=""),
+            ),
+            confirmed_type=GOODS,
+            is_ambiguous=False,
+        )
+
+        assert one.score_gap is None
+
+    def test_score_gap_is_the_difference(self) -> None:
+        two = ItemComparison(
+            key="a",
+            description="가",
+            method="m",
+            candidates=(
+                CandidateRow(rank=1, purchase_type=GOODS, score=Decimal("0.80"), evidence="x"),
+                CandidateRow(rank=2, purchase_type=SERVICE, score=Decimal("0.30"), evidence="y"),
+            ),
+            confirmed_type=GOODS,
+            is_ambiguous=True,
+        )
+
+        assert two.score_gap == Decimal("0.50")
+
+    def test_seen_and_unseen_are_split(self) -> None:
+        """leave-one-out 에서 '중복이 있는 적요' 와 '단 하나뿐인 적요' 를 가른다."""
+        corpus = self.corpus()
+        report = run_comparison(corpus, {"BM25": BM25Classifier}, leave_one_out=True)
+        method = report.methods[0]
+
+        # '사무용품 구매' 는 2건이라 자기를 빼도 하나 남는다 → seen
+        # 나머지 2건은 자기를 빼면 같은 적요가 없다 → unseen
+        assert method.unseen == 2
+
+    def test_unseen_accuracy_is_reported_separately(self) -> None:
+        """처음 보는 적요에 대한 성능이 따로 나와야 한다."""
+        corpus = self.corpus()
+        method = run_comparison(corpus, {"BM25": BM25Classifier}).methods[0]
+
+        assert isinstance(method.unseen_accuracy, Decimal)
+        assert isinstance(method.seen_accuracy, Decimal)
+
+    def test_evidence_rate_is_measured(self) -> None:
+        """근거가 붙지 않으면 담당자가 판단할 수 없다."""
+        corpus = self.corpus()
+        method = run_comparison(corpus, {"BM25": BM25Classifier}).methods[0]
+
+        assert method.evidence_rate > Decimal("0")
+
+    def test_ambiguity_precision_exposes_over_flagging(self) -> None:
+        """모든 건에 경고를 붙이면 과잉 경보 수치가 낮게 나와야 한다."""
+        items = tuple(
+            ItemComparison(
+                key=str(index),
+                description="가",
+                method="m",
+                candidates=(
+                    CandidateRow(rank=1, purchase_type=GOODS, score=Decimal("0.6"), evidence="x"),
+                    CandidateRow(rank=2, purchase_type=SERVICE, score=Decimal("0.4"), evidence="y"),
+                ),
+                confirmed_type=GOODS,  # 전부 맞힘
+                is_ambiguous=True,  # 그런데 전부 애매하다고 표시
+            )
+            for index in range(10)
+        )
+        method = MethodReport(method="over-flagger", items=items)
+
+        assert method.ambiguous == 10
+        assert method.errors == 0
+        assert method.ambiguity_precision == Decimal("0.00")
+
+    def test_ambiguity_recall_rewards_catching_errors(self) -> None:
+        """틀린 건을 애매하다고 표시했으면 놓침 방지 수치가 올라간다."""
+        wrong = ItemComparison(
+            key="1",
+            description="가",
+            method="m",
+            candidates=(
+                CandidateRow(rank=1, purchase_type=SERVICE, score=Decimal("0.6"), evidence="x"),
+                CandidateRow(rank=2, purchase_type=GOODS, score=Decimal("0.4"), evidence="y"),
+            ),
+            confirmed_type=GOODS,
+            is_ambiguous=True,
+        )
+        method = MethodReport(method="m", items=(wrong,))
+
+        assert method.errors == 1
+        assert method.ambiguity_recall == Decimal("100.00")
+
+    def test_utility_lines_do_not_collapse_into_one_score(self) -> None:
+        """⛔ 6개 항목을 하나의 종합 점수로 합치지 않는다."""
+        corpus = self.corpus()
+        method = run_comparison(corpus, {"BM25": BM25Classifier}).methods[0]
+        text = " ".join(method.utility_lines())
+
+        for word in ("종합", "총점", "최종 점수", "추천", "WINNER", "승자"):
+            assert word not in text
+
+
+class TestSegmentedComparison:
+    """지시 10 — 구간별로 나눠 비교한다 (전체 · 특정 예산과목 · 유형별)."""
+
+    @staticmethod
+    def corpus() -> ClassificationCorpus:
+        return ClassificationCorpus.from_examples(
+            [
+                LabeledExample(description="철거공사 노무비", purchase_type=CONSTRUCTION, key="1"),
+                LabeledExample(description="유지관리 노무비", purchase_type=CONSTRUCTION, key="2"),
+                LabeledExample(description="청소 용역 대금", purchase_type=SERVICE, key="3"),
+                LabeledExample(description="경비 용역 대금", purchase_type=SERVICE, key="4"),
+                LabeledExample(description="사무용품 구매", purchase_type=GOODS, key="5"),
+            ]
+        )
+
+    def test_each_segment_gets_its_own_report(self) -> None:
+        corpus = self.corpus()
+        segments = {
+            "전체": list(corpus.examples),
+            "공사": [e for e in corpus.examples if e.purchase_type == CONSTRUCTION],
+            "용역": [e for e in corpus.examples if e.purchase_type == SERVICE],
+        }
+
+        reports = run_segmented_comparison(corpus, {"BM25": BM25Classifier}, segments)
+
+        assert set(reports) == {"전체", "공사", "용역"}
+        assert reports["전체"].methods[0].total == 5
+        assert reports["공사"].methods[0].total == 2
+        assert reports["용역"].methods[0].total == 2
+
+    def test_all_methods_run_on_every_segment(self) -> None:
+        corpus = self.corpus()
+        factories = {
+            "BM25": BM25Classifier,
+            "RAG": RAGClassifier,
+            "FUSE": lambda c: FUSEClassifier([BM25Classifier(c), RAGClassifier(c)]),
+        }
+
+        reports = run_segmented_comparison(corpus, factories, {"전체": list(corpus.examples)})
+
+        assert [m.method for m in reports["전체"].methods] == ["BM25", "RAG", "FUSE"]
+
+    def test_empty_segment_does_not_crash(self) -> None:
+        corpus = self.corpus()
+
+        reports = run_segmented_comparison(corpus, {"BM25": BM25Classifier}, {"없음": []})
+
+        assert reports["없음"].methods[0].total == 0
+        assert reports["없음"].methods[0].top1_accuracy == Decimal("0.00")
+
+    def test_segment_lines_do_not_pick_a_winner(self) -> None:
+        """⛔ 구간별 표에도 승자가 없다."""
+        corpus = self.corpus()
+        reports = run_segmented_comparison(
+            corpus,
+            {"BM25": BM25Classifier, "RAG": RAGClassifier},
+            {"전체": list(corpus.examples)},
+        )
+        text = " ".join(segment_lines(reports))
+
+        for word in ("WINNER", "승자", "1위", "추천", "best", "최적"):
+            assert word not in text

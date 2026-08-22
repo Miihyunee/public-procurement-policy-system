@@ -23,22 +23,22 @@ STEP 4 는 "세 방법 중 무엇이 잘 맞히는가" 를 쟀습니다. 이 모
 
 from __future__ import annotations
 
-import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from procurement.core.description_key import normalize_description
 from procurement.experiments.corpus import ClassificationCorpus, LabeledExample, tokenize
-
-#: 공백을 지우고 소문자로 맞춰 "사실상 같은 적요" 를 한 덩어리로 봅니다.
-#:
-#: ⚠️ 정규화 방식일 뿐 업무규칙이 아닙니다. 원본 적요는 건드리지 않습니다.
-_WHITESPACE = re.compile(r"\s+")
 
 
 def normalize(description: str | None) -> str:
     """비교용으로 적요를 정규화합니다(공백 제거 + 소문자).
+
+    운영 코드(검토 화면의 과거 이력 조회)와 **같은 기준**으로 묶어야 숫자가
+    서로 맞으므로, 구현은
+    :func:`~procurement.core.description_key.normalize_description` 하나만
+    씁니다. 이 이름은 실험 코드의 기존 호출부를 위해 남겨 둔 별칭입니다.
 
     Args:
         description: 원본 적요.
@@ -50,9 +50,7 @@ def normalize(description: str | None) -> str:
         >>> normalize("  LED  교체 공사 ")
         'led교체공사'
     """
-    if not description:
-        return ""
-    return _WHITESPACE.sub("", description).lower()
+    return normalize_description(description)
 
 
 def jaccard(left: Iterable[str], right: Iterable[str]) -> Decimal:

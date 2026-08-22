@@ -132,13 +132,23 @@ class TestListReviews:
 class TestResponseSeparatesSourceAnalysisReview:
     """⛔ 원본 · 분석 · 확정을 **분리**해서 준다."""
 
-    def test_three_blocks(self, client: TestClient, db_path: Path) -> None:
+    def test_blocks_stay_separated(self, client: TestClient, db_path: Path) -> None:
+        """원본 · 분석 · 확정이 각자의 블록에 담긴다.
+
+        변경 사유(STEP 6): 담당자 화면에 "같은 적요의 과거 확정 이력" 을
+        보여주라는 지시에 따라 ``past_labels`` 블록이 추가되었다. 셋을 섞지
+        않는다는 원래 취지는 그대로이며, **네 번째 블록도 독립**이다 —
+        과거 이력이 ``review`` 안에 섞여 들어가면 "확정값" 으로 오인될 수
+        있으므로 일부러 분리했다.
+        """
         purchase_id = _purchase(db_path)
         _analyze(db_path, purchase_id, (SERVICE, "0.72"), (CONSTRUCTION, "0.68"))
 
         body = client.get(f"/reviews/{purchase_id}").json()
 
-        assert set(body) == {"source", "analysis", "review"}
+        assert set(body) == {"source", "analysis", "review", "past_labels"}
+        # 과거 이력은 확정 블록을 오염시키지 않는다
+        assert body["review"]["final_purchase_type"] is None
 
     def test_source_is_the_original(self, client: TestClient, db_path: Path) -> None:
         purchase_id = _purchase(db_path)

@@ -95,6 +95,14 @@
   .rv-src div { display: flex; gap: 6px; }
   .rv-key { color: var(--muted); }
   .rv-desc { font-size: 14.5px; font-weight: 600; margin-bottom: 8px; }
+  .rv-head {
+    font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px;
+  }
+  .rv-past {
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 8px; font-size: 12.5px;
+  }
   .rv-block {
     margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px;
   }
@@ -1246,16 +1254,23 @@
     return wrap;
   }
 
+  /** 블록 제목 — 담당자가 "지금 보는 것이 원본인지 분석인지" 를 늘 알게 한다. */
+  function reviewHeading(label) {
+    return make("div", "rv-head", label);
+  }
+
   /** 원본 블록 — 읽기 전용. 값을 바꾸는 요소를 만들지 않는다. */
   function reviewSource(source) {
     var box = make("div");
+    box.appendChild(reviewHeading("원본 (DB-1 · 수정되지 않습니다)"));
     box.appendChild(make("div", "rv-desc", source.description || "(적요 없음)"));
     var grid = make("div", "rv-src");
-    grid.appendChild(reviewField("거래처", source.company_name));
-    grid.appendChild(reviewField("사업자번호", source.business_no));
-    grid.appendChild(reviewField("금액", numberFormat(source.amount) + "원"));
+    grid.appendChild(reviewField("신고기준일", source.issue_date));
     grid.appendChild(reviewField("결의일자", source.resolution_date));
-    grid.appendChild(reviewField("발행일자", source.issue_date));
+    grid.appendChild(reviewField("거래처명", source.company_name));
+    grid.appendChild(reviewField("사업자번호", source.business_no));
+    // ⚠️ DB-1 은 공급가액과 세액을 따로 보관하지 않는다. amount 는 VAT 포함 총액이다.
+    grid.appendChild(reviewField("금액(VAT 포함)", numberFormat(source.amount) + "원"));
     grid.appendChild(reviewField("예산과목", source.budget_account || "(공란)"));
     box.appendChild(grid);
     return box;
@@ -1264,24 +1279,32 @@
   /** 분석 블록 — 후보와 점수를 보여줄 뿐, 고르지 않는다. */
   function reviewAnalysis(analysis) {
     var box = make("div", "rv-block");
-    var head = make("div");
+    box.appendChild(reviewHeading("분석 결과 (참고 · 확정이 아닙니다)"));
+
+    var meta = make("div", "rv-src");
+    meta.appendChild(reviewField("분석 방법",
+      analysis.analyzer_name
+        ? analysis.analyzer_name + " v" + (analysis.analyzer_version || "?")
+        : "(분석기 미선택)"));
+    meta.appendChild(reviewField("후보 개수", analysis.candidate_count));
+    // 점수 차이는 후보가 2개 이상일 때만 존재한다. 없으면 "0" 이 아니라 "-".
+    meta.appendChild(reviewField("1·2순위 점수차",
+      analysis.score_gap === null ? "-" : scorePercent(analysis.score_gap)));
+    box.appendChild(meta);
+
     if (!analysis.candidates.length) {
-      head.appendChild(make("span", "rv-key",
+      box.appendChild(make("div", "rv-key",
         analysis.note || "분석 후보가 없습니다. 원본을 보고 직접 선택하세요."));
-      box.appendChild(head);
       return box;
     }
-    head.appendChild(make("span", "rv-key", "분석 후보"));
     if (analysis.is_ambiguous) {
-      head.appendChild(make("span", "rv-tag rv-tag-warn", "확인 권장 — 후보가 갈립니다"));
+      box.appendChild(make("span", "rv-tag rv-tag-warn", "확인 권장 — 후보가 갈립니다"));
     }
-    box.appendChild(head);
     analysis.candidates.forEach(function (candidate, index) {
       var line = make("div", "rv-cand");
-      line.appendChild(make("span", "rv-key", "추천 " + (index + 1)));
+      line.appendChild(make("span", "rv-key", (index + 1) + "순위"));
       line.appendChild(make("span", null, candidate.label));
-      line.appendChild(make("span", "rv-score",
-        Math.round(Number(candidate.score) * 100) + "%"));
+      line.appendChild(make("span", "rv-score", scorePercent(candidate.score)));
       if (candidate.evidence) {
         line.appendChild(make("span", "rv-why", candidate.evidence));
       }
@@ -1290,9 +1313,50 @@
     return box;
   }
 
+  /** 점수(0~1 문자열)를 백분율 표기로. */
+  function scorePercent(value) {
+    return Math.round(Number(value) * 100) + "%";
+  }
+
+  /**
+   * 같은 적요의 과거 확정 이력.
+   *
+   * ⛔ 추천이 아니다. 과거 기록을 세어 보여줄 뿐이며, 담당자의 선택을 미리
+   *    눌러 놓지 않는다.
+   */
+  function reviewPastLabels(past) {
+    var box = make("div", "rv-block");
+    box.appendChild(reviewHeading("같은 적요의 과거 확정 이력 (참고)"));
+
+    if (!past.labels.length) {
+      box.appendChild(make("div", "rv-key",
+        "같은 적요로 확정한 이력이 없습니다. (처음 보는 적요)"));
+      return box;
+    }
+
+    var line = make("div", "rv-cand");
+    line.appendChild(make("span", "rv-key", "과거 " + past.total + "건"));
+    past.labels.forEach(function (label) {
+      line.appendChild(make("span", "rv-past", label.label + " " + label.count + "건"));
+    });
+    box.appendChild(line);
+
+    if (past.has_conflict) {
+      box.appendChild(make("span", "rv-tag rv-tag-warn",
+        "과거 판단이 갈렸던 적요입니다 (" + past.type_count + "개 유형)"));
+    }
+    if (past.differs_from_top_candidate) {
+      box.appendChild(make("span", "rv-tag",
+        "1순위 후보가 과거 최다 유형과 다릅니다"));
+    }
+    return box;
+  }
+
   /** 확정 블록 — 담당자가 고르는 유일한 곳. */
   function reviewPicker(item) {
     var id = item.source.purchase_id;
+    var wrap = make("div", "rv-block");
+    wrap.appendChild(reviewHeading("담당자 결정 (여기서만 확정됩니다)"));
     var box = make("div", "rv-pick");
     var buttons = [];
 
@@ -1326,19 +1390,29 @@
 
     box.appendChild(note);
     box.appendChild(confirm);
-    return box;
+    wrap.appendChild(box);
+    // ⛔ 어떤 버튼도 미리 눌려 있지 않다. 분석 점수가 아무리 높아도 마찬가지다.
+    wrap.appendChild(make("div", "rv-done",
+      "선택된 항목이 없습니다. 분석 결과는 참고이며, 확정은 담당자가 직접 고릅니다."));
+    return wrap;
   }
 
   function reviewCard(item) {
     var card = make("div", "rv");
     card.appendChild(reviewSource(item.source));
     card.appendChild(reviewAnalysis(item.analysis));
+    card.appendChild(reviewPastLabels(item.past_labels));
 
     if (item.review.status === "CONFIRMED") {
-      var done = make("div", "rv-done");
-      text(done, "확정 " + (item.review.final_purchase_type_label || "판단 보류")
-        + " · " + (item.review.reviewed_at || "-")
-        + (item.review.reviewed_by ? " · " + item.review.reviewed_by : ""));
+      var done = make("div", "rv-block");
+      done.appendChild(reviewHeading("담당자 결정"));
+      var line = make("div", "rv-src");
+      line.appendChild(reviewField("확정 유형",
+        item.review.final_purchase_type_label || "판단 보류"));
+      line.appendChild(reviewField("확정자", item.review.reviewed_by));
+      line.appendChild(reviewField("확정 시각", item.review.reviewed_at));
+      line.appendChild(reviewField("메모", item.review.review_note));
+      done.appendChild(line);
       card.appendChild(done);
 
       var again = make("button", "control", "다시 검토");

@@ -25,11 +25,13 @@ procurement.experiments.comparison
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from procurement.core.description_classifier import DescriptionClassifier
+from procurement.core.description_key import normalize_description
 from procurement.experiments.corpus import ClassificationCorpus, LabeledExample
 
 #: 코퍼스를 받아 분석기를 만드는 함수.
@@ -67,6 +69,9 @@ class ItemComparison:
         candidates: 후보 목록(순위 포함).
         confirmed_type: **담당자 확정값**. 비교의 기준입니다.
         is_ambiguous: 후보가 갈리는가.
+        seen_in_corpus: 이 적요와 **같은 적요**가 코퍼스에 있었는가.
+            ``False`` 면 분석기가 **처음 보는 표현**이었다는 뜻입니다
+            (지시 11 — 신규 데이터).
     """
 
     key: str | None
@@ -75,6 +80,22 @@ class ItemComparison:
     candidates: tuple[CandidateRow, ...]
     confirmed_type: str
     is_ambiguous: bool
+    seen_in_corpus: bool = False
+
+    @property
+    def score_gap(self) -> Decimal | None:
+        """1순위와 2순위의 점수 차. 후보가 1개 이하면 ``None``.
+
+        ⛔ 원시 정보입니다. "차이가 크면 확정" 같은 기준은 없습니다.
+        """
+        if len(self.candidates) < 2:
+            return None
+        return self.candidates[0].score - self.candidates[1].score
+
+    @property
+    def has_evidence(self) -> bool:
+        """1순위 후보에 담당자가 읽을 근거가 붙어 있는가(지시 11 — 근거)."""
+        return bool(self.candidates and self.candidates[0].evidence.strip())
 
     @property
     def has_candidate(self) -> bool:
@@ -180,6 +201,101 @@ class MethodReport:
             return Decimal("0.00")
         return (Decimal(part) / Decimal(whole) * 100).quantize(Decimal("0.01"))
 
+    # ------------------------------------------------------------------
+    # 지시 11 — "정확도" 와 "업무적 유용성" 을 분리한다
+    # ------------------------------------------------------------------
+    @property
+    def evidence_rate(self) -> Decimal:
+        """**근거**: 1순위 후보에 설명이 붙은 비율(%).
+
+        담당자가 "왜 이 후보인가" 를 읽을 수 없으면 정확도가 높아도 쓰기
+        어렵습니다.
+        """
+        return self._ratio(sum(1 for item in self.items if item.has_evidence), self.with_candidate)
+
+    @property
+    def errors(self) -> int:
+        """후보를 냈지만 1순위가 틀린 건수."""
+        return sum(1 for item in self.items if item.has_candidate and not item.top1_hit)
+
+    @property
+    def flagged_errors(self) -> int:
+        """틀렸는데 **애매하다고 표시된** 건수."""
+        return sum(
+            1
+            for item in self.items
+            if item.has_candidate and not item.top1_hit and item.is_ambiguous
+        )
+
+    @property
+    def ambiguity_recall(self) -> Decimal:
+        """**애매함(놓침 방지)**: 틀린 건 중 애매하다고 표시한 비율(%).
+
+        높을수록 "담당자가 봐야 할 건" 을 잘 집어냅니다.
+        """
+        return self._ratio(self.flagged_errors, self.errors)
+
+    @property
+    def ambiguity_precision(self) -> Decimal:
+        """**애매함(과잉 경보)**: 애매하다고 표시한 것 중 실제로 틀린 비율(%).
+
+        낮으면 거의 모든 건에 경고가 붙어 **신호로서 쓸모가 없습니다.**
+        STEP 4 에서 BM25 가 98~99% 를 애매로 표시한 문제가 여기 드러납니다.
+        """
+        return self._ratio(self.flagged_errors, self.ambiguous)
+
+    @property
+    def unseen(self) -> int:
+        """**신규 데이터**: 코퍼스에 같은 적요가 없던 건수."""
+        return sum(1 for item in self.items if not item.seen_in_corpus)
+
+    @property
+    def unseen_accuracy(self) -> Decimal:
+        """처음 보는 적요에 대한 1순위 적중률(%).
+
+        운영에서 실제로 만나는 상황에 가장 가까운 숫자입니다.
+        """
+        unseen = [item for item in self.items if not item.seen_in_corpus]
+        return self._ratio(sum(1 for item in unseen if item.top1_hit), len(unseen))
+
+    @property
+    def seen_accuracy(self) -> Decimal:
+        """과거에 같은 적요가 있던 건의 1순위 적중률(%).
+
+        :attr:`unseen_accuracy` 와의 차이가 곧 **과거 사례 의존도**입니다.
+        """
+        seen = [item for item in self.items if item.seen_in_corpus]
+        return self._ratio(sum(1 for item in seen if item.top1_hit), len(seen))
+
+    @property
+    def median_score_gap(self) -> Decimal | None:
+        """1·2순위 점수차의 중앙값. 후보가 2개 이상인 건이 없으면 ``None``."""
+        gaps = sorted(gap for gap in (item.score_gap for item in self.items) if gap is not None)
+        if not gaps:
+            return None
+        return gaps[len(gaps) // 2]
+
+    def utility_lines(self) -> tuple[str, ...]:
+        """지시 11 의 6개 항목을 **정확도와 나란히, 그러나 따로** 보여 줍니다.
+
+        ⛔ 항목을 하나의 점수로 합치지 않습니다. 합치는 방식 자체가 업무
+        판단이기 때문입니다.
+        """
+        gap = self.median_score_gap
+        return (
+            f"{self.method}",
+            f"    정확도      1순위 {self.top1_accuracy}% (후보 낸 건 기준) · "
+            f"전체 대비 {self.top1_accuracy_overall}%",
+            f"    후보 제시율 {self.coverage}%  ({self.with_candidate}/{self.total})",
+            f"    애매함      표시 {self.ambiguous_ratio}% · "
+            f"놓침 방지 {self.ambiguity_recall}% · 과잉 경보 아님 {self.ambiguity_precision}%",
+            f"    근거        {self.evidence_rate}% 의 1순위에 설명이 붙음",
+            f"    데이터 의존 과거 사례 있음 {self.seen_accuracy}% ↔ 없음 {self.unseen_accuracy}%",
+            f"    신규 데이터 처음 보는 적요 {self.unseen}건 "
+            f"({self._ratio(self.unseen, self.total)}%)",
+            f"    점수차      중앙값 {'-' if gap is None else gap}",
+        )
+
     def summary_line(self) -> str:
         """한 줄 요약."""
         return (
@@ -249,6 +365,30 @@ def run_comparison(
     """
     targets = list(evaluation_set) if evaluation_set is not None else list(corpus.examples)
 
+    # "이 적요가 코퍼스에 있었는가" 를 O(1) 로 답하기 위한 사전 계산.
+    # 건마다 집합을 새로 만들면 O(n²) 이 된다.
+    corpus_keys = Counter(normalize_description(example.description) for example in corpus.examples)
+    corpus_key_by_example = {
+        example.key: normalize_description(example.description)
+        for example in corpus.examples
+        if example.key is not None
+    }
+
+    def was_seen(example: LabeledExample) -> bool:
+        """평가에 쓰인 코퍼스에 **같은 적요**가 있었는가."""
+        key = normalize_description(example.description)
+        if not key:
+            return False
+        occurrences: int = corpus_keys.get(key, 0)
+        # leave-one-out 이면 자기 자신은 코퍼스에서 빠져 있다.
+        if (
+            leave_one_out
+            and example.key is not None
+            and corpus_key_by_example.get(example.key) == key
+        ):
+            occurrences -= 1
+        return occurrences > 0
+
     reports: list[MethodReport] = []
     for label, factory in factories.items():
         shared = None if leave_one_out else factory(corpus)
@@ -274,6 +414,7 @@ def run_comparison(
                     ),
                     confirmed_type=example.purchase_type,
                     is_ambiguous=result.is_ambiguous,
+                    seen_in_corpus=was_seen(example),
                 )
             )
 
@@ -284,3 +425,50 @@ def run_comparison(
         corpus_size=len(corpus),
         leave_one_out=leave_one_out,
     )
+
+
+def run_segmented_comparison(
+    corpus: ClassificationCorpus,
+    factories: dict[str, ClassifierFactory],
+    segments: dict[str, Sequence[LabeledExample]],
+    *,
+    leave_one_out: bool = True,
+) -> dict[str, ComparisonReport]:
+    """평가셋을 **구간별로 나눠** 같은 방법들을 각각 돌립니다.
+
+    전체 정확도 하나로 방법을 고르면 정작 중요한 구간에서 잘못 고를 수
+    있습니다. STEP 5 에서 실제로 그런 일이 확인되었습니다 — 전체에서는
+    한 방법이 앞섰지만, 공사/용역 판별이 실제로 필요한 구간에서는 순위가
+    뒤집혔습니다(``DESCRIPTION_CLASSIFICATION_DATA_ANALYSIS.md`` §9.3).
+
+    Args:
+        corpus: 담당자 확정 사례(코퍼스는 구간과 무관하게 공통).
+        factories: ``{표시이름: 코퍼스를 받아 분석기를 만드는 함수}``.
+        segments: ``{구간 이름: 평가 대상}``. 예) 전체 · 외주용역비 · 공사.
+        leave_one_out: 평가할 건을 코퍼스에서 빼고 분석할지 여부.
+
+    Returns:
+        ``{구간 이름: ComparisonReport}``. ⛔ 구간별 **승자를 뽑지 않습니다.**
+    """
+    return {
+        name: run_comparison(
+            corpus, factories, evaluation_set=examples, leave_one_out=leave_one_out
+        )
+        for name, examples in segments.items()
+    }
+
+
+def segment_lines(reports: dict[str, ComparisonReport]) -> tuple[str, ...]:
+    """구간별 결과를 한 표로 늘어놓습니다.
+
+    ⛔ 승자 표시, 굵게, 별표 같은 강조를 넣지 않습니다. 어느 구간을 중요하게
+    볼지는 업무 판단이며 PM/고객의 몫입니다.
+    """
+    lines: list[str] = []
+    for name, report in reports.items():
+        lines.append("")
+        lines.append(f"[{name}] 평가 {report.methods[0].total if report.methods else 0}건")
+        lines.extend(f"  {method.summary_line()}" for method in report.methods)
+    lines.append("")
+    lines.append("⛔ 구간별 숫자입니다. 어느 구간을 기준으로 고를지는 PM/고객 확인 사항입니다.")
+    return tuple(lines)

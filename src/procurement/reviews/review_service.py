@@ -42,6 +42,7 @@ from procurement.models.review import (
     ReviewHistoryEntry,
     ReviewProgress,
 )
+from procurement.reviews.past_labels import EMPTY_SUMMARY, PastLabelIndex, PastLabelSummary
 
 #: 필터 — 전체.
 FILTER_ALL = "ALL"
@@ -79,10 +80,13 @@ class ReviewTarget:
     Attributes:
         purchase: DB-1 원본. ⛔ 읽기 전용입니다.
         review: DB-2 검토 상태(분석 결과 + 담당자 확정).
+        past_labels: 같은 적요를 **과거에 어떻게 확정했는지**. 참고 정보이며
+            ⛔ 자동 확정에 쓰지 않습니다.
     """
 
     purchase: Purchase
     review: PurchaseReview
+    past_labels: PastLabelSummary = EMPTY_SUMMARY
 
 
 class ReviewService:
@@ -142,9 +146,10 @@ class ReviewService:
             )
 
         purchases = self._purchase_repository.find_for_calculation(period)
-        reviews = {
-            review.purchase_id: review for review in self._review_repository.find_all()
-        }
+        stored = self._review_repository.find_all()
+        reviews = {review.purchase_id: review for review in stored}
+        # 목록 한 번에 대해 색인을 한 번만 만든다 (건마다 재조회하면 O(n²)).
+        index = PastLabelIndex(purchases, stored)
 
         targets: list[ReviewTarget] = []
         for purchase in purchases:
@@ -155,7 +160,13 @@ class ReviewService:
             )
             if not self._matches(review, review_filter):
                 continue
-            targets.append(ReviewTarget(purchase=purchase, review=review))
+            targets.append(
+                ReviewTarget(
+                    purchase=purchase,
+                    review=review,
+                    past_labels=index.summary_for(purchase.description),
+                )
+            )
 
         end = None if limit is None else offset + limit
         return targets[offset:end]
@@ -178,7 +189,9 @@ class ReviewService:
         review = self._review_repository.find_by_purchase_id(purchase_id) or PurchaseReview(
             purchase_id=purchase_id
         )
-        return ReviewTarget(purchase=purchase, review=review)
+        return ReviewTarget(
+            purchase=purchase, review=review, past_labels=self._past_labels_for(purchase)
+        )
 
     def history(self, purchase_id: int) -> list[ReviewHistoryEntry]:
         """변경 이력을 시간순으로 반환합니다."""
@@ -194,9 +207,7 @@ class ReviewService:
             period: 기간 조건. ``None`` 이면 제한 없음.
         """
         purchases = self._purchase_repository.find_for_calculation(period)
-        reviews = {
-            review.purchase_id: review for review in self._review_repository.find_all()
-        }
+        reviews = {review.purchase_id: review for review in self._review_repository.find_all()}
 
         total = confirmed = ambiguous = analyzed = 0
         for purchase in purchases:
@@ -255,7 +266,9 @@ class ReviewService:
             reviewed_by=reviewed_by,
             review_note=review_note,
         )
-        return ReviewTarget(purchase=purchase, review=review)
+        return ReviewTarget(
+            purchase=purchase, review=review, past_labels=self._past_labels_for(purchase)
+        )
 
     def reopen(
         self, purchase_id: int, *, reopened_by: str | None = None, note: str | None = None
@@ -266,10 +279,10 @@ class ReviewService:
             ReviewNotFoundError: 해당 구매가 없는 경우.
         """
         purchase = self._require_purchase(purchase_id)
-        review = self._review_repository.reopen(
-            purchase_id, reopened_by=reopened_by, note=note
+        review = self._review_repository.reopen(purchase_id, reopened_by=reopened_by, note=note)
+        return ReviewTarget(
+            purchase=purchase, review=review, past_labels=self._past_labels_for(purchase)
         )
-        return ReviewTarget(purchase=purchase, review=review)
 
     def analyze(self, purchase_id: int) -> ReviewTarget:
         """적요를 분석해 후보를 DB-2 에 기록합니다.
@@ -294,7 +307,9 @@ class ReviewService:
 
         result = self._classifier.classify(purchase.description)
         review = self._review_repository.save_analysis(purchase_id, result)
-        return ReviewTarget(purchase=purchase, review=review)
+        return ReviewTarget(
+            purchase=purchase, review=review, past_labels=self._past_labels_for(purchase)
+        )
 
     def analyze_all(self, period: PeriodFilter | None = None) -> int:
         """검토 대상 전체를 분석합니다.
@@ -320,6 +335,18 @@ class ReviewService:
     # ------------------------------------------------------------------
     # 내부 헬퍼
     # ------------------------------------------------------------------
+    def _past_labels_for(self, purchase: Purchase) -> PastLabelSummary:
+        """한 건에 대한 과거 확정 이력.
+
+        ⛔ 자기 자신의 확정도 이력에 포함됩니다 — 화면에서 "이 적요는 지금까지
+        용역 3건으로 확정됨" 을 그대로 보여주는 것이 목적이기 때문입니다.
+        """
+        index = PastLabelIndex(
+            self._purchase_repository.find_for_calculation(None),
+            self._review_repository.find_all(),
+        )
+        return index.summary_for(purchase.description)
+
     def _require_purchase(self, purchase_id: int) -> Purchase:
         """구매를 조회하고 없으면 예외를 냅니다."""
         purchase = self._purchase_repository.find_by_id(purchase_id)

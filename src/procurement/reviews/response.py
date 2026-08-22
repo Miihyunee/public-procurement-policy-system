@@ -37,6 +37,7 @@ from procurement.models.review import (
     ReviewHistoryEntry,
     ReviewProgress,
 )
+from procurement.reviews.past_labels import PastLabelSummary
 from procurement.reviews.review_service import ReviewTarget
 
 
@@ -137,7 +138,14 @@ class AnalysisResponseModel(BaseModel):
         is_ambiguous: 후보가 갈리는가. **정렬·표시용**이며 자동 확정에 쓰지
             않습니다(임계값 미확정 — 결정 대기).
         candidates: 후보 목록(점수 내림차순). 비어 있을 수 있습니다.
+        candidate_count: 후보 개수. 0 이면 **판단하지 않았다**는 뜻입니다.
+        score_gap: 1순위와 2순위의 점수 차. 후보가 1개 이하면 ``null``
+            ("차이 0" 이 아니라 **차이라는 것이 없음**).
         note: 부가 설명.
+
+    .. warning::
+        ⛔ ``score_gap`` 은 **원시 정보**입니다. "차이가 크면 확정" 같은
+        기준이 없으며, 임계값은 고객 미확정입니다.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -148,7 +156,13 @@ class AnalysisResponseModel(BaseModel):
     analyzed_at: datetime | None
     is_ambiguous: bool
     candidates: list[CandidateResponseModel]
+    candidate_count: int
+    score_gap: Decimal | None
     note: str | None
+
+    @field_serializer("score_gap")
+    def _score_gap(self, value: Decimal | None) -> str | None:
+        return None if value is None else str(value)
 
 
 class ReviewStateResponseModel(BaseModel):
@@ -174,6 +188,48 @@ class ReviewStateResponseModel(BaseModel):
     review_note: str | None
 
 
+class PastLabelResponseModel(BaseModel):
+    """과거 같은 적요가 확정된 유형 하나.
+
+    Attributes:
+        purchase_type: 유형 코드.
+        label: 한글 라벨.
+        count: 그렇게 확정된 건수.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    purchase_type: str
+    label: str
+    count: int
+
+
+class PastLabelsResponseModel(BaseModel):
+    """같은 적요의 **과거 확정 이력** — 담당자 판단을 돕는 참고 정보.
+
+    .. warning::
+        ⛔ 이 블록은 **추천이 아닙니다.** 과거 기록을 세어 보여줄 뿐이며,
+        어떤 유형이 맞다고 말하지 않습니다. 확정값을 미리 채우지도 않습니다.
+
+    Attributes:
+        labels: 유형별 건수(내림차순). 이력이 없으면 빈 목록.
+        total: 과거 확정 건수 합계.
+        type_count: 과거에 붙은 서로 다른 유형 수.
+        has_conflict: 같은 적요가 여러 유형으로 확정된 적이 있는가.
+            **먼저 볼 것을 권하는 표시**이며 자동 판정에 쓰지 않습니다.
+        differs_from_top_candidate: 1순위 후보가 과거 최빈 유형과 다른가.
+            "틀렸다" 는 뜻이 아닙니다.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    labels: list[PastLabelResponseModel]
+    total: int
+    type_count: int
+    has_conflict: bool
+    differs_from_top_candidate: bool
+
+
 class ReviewItemResponseModel(BaseModel):
     """검토 대상 1건 — **원본 · 분석 · 확정을 분리**해 담습니다.
 
@@ -181,6 +237,7 @@ class ReviewItemResponseModel(BaseModel):
         source: DB-1 원본.
         analysis: 자동 분석 결과.
         review: 담당자 확정 결과.
+        past_labels: 같은 적요의 과거 확정 이력(참고).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -188,6 +245,7 @@ class ReviewItemResponseModel(BaseModel):
     source: PurchaseSourceResponseModel
     analysis: AnalysisResponseModel
     review: ReviewStateResponseModel
+    past_labels: PastLabelsResponseModel
 
     @classmethod
     def from_target(cls, target: ReviewTarget) -> ReviewItemResponseModel:
@@ -211,6 +269,7 @@ class ReviewItemResponseModel(BaseModel):
             ),
             analysis=_analysis_of(review),
             review=_review_state_of(review),
+            past_labels=_past_labels_of(target.past_labels, review.top_candidate),
         )
 
 
@@ -355,15 +414,42 @@ def _candidate_of(candidate: object) -> CandidateResponseModel:
 
 
 def _analysis_of(review: PurchaseReview) -> AnalysisResponseModel:
-    """검토 상태에서 분석 블록만 뽑습니다."""
+    """검토 상태에서 분석 블록만 뽑습니다.
+
+    ``candidate_count`` · ``score_gap`` 은 후보 목록에서 **그대로 계산한
+    값**입니다. 새 판정을 만들지 않습니다.
+    """
+    candidates = list(review.candidates)
+    gap = candidates[0].score - candidates[1].score if len(candidates) > 1 else None
     return AnalysisResponseModel(
         status=review.analysis_status,
         analyzer_name=review.analyzer_name,
         analyzer_version=review.analyzer_version,
         analyzed_at=review.analyzed_at,
         is_ambiguous=review.is_ambiguous,
-        candidates=[_candidate_of(candidate) for candidate in review.candidates],
+        candidates=[_candidate_of(candidate) for candidate in candidates],
+        candidate_count=len(candidates),
+        score_gap=gap,
         note=review.analysis_note,
+    )
+
+
+def _past_labels_of(summary: PastLabelSummary, top_candidate: object) -> PastLabelsResponseModel:
+    """과거 확정 이력을 응답 모델로 변환합니다."""
+    from procurement.models.classification import TypeCandidate
+
+    top_type = top_candidate.purchase_type if isinstance(top_candidate, TypeCandidate) else None
+    return PastLabelsResponseModel(
+        labels=[
+            PastLabelResponseModel(
+                purchase_type=label.purchase_type, label=label.label, count=label.count
+            )
+            for label in summary.labels
+        ],
+        total=summary.total,
+        type_count=summary.type_count,
+        has_conflict=summary.has_conflict,
+        differs_from_top_candidate=summary.differs_from(top_type),
     )
 
 
