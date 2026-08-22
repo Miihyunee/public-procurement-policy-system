@@ -496,7 +496,8 @@
             원본을 보고 담당자가 직접 확정합니다. 원본 데이터는 수정되지 않습니다
           </p>
         </div>
-        <div id="review-progress" class="card-sub"></div>
+        <!-- 확정·Undo 로 숫자가 바뀌면 스크린리더가 읽을 수 있게 한다. -->
+        <div id="review-progress" class="card-sub" role="status" aria-live="polite"></div>
       </div>
 
       <!--
@@ -1360,6 +1361,30 @@
   /** 마지막으로 받은 기간 목록. 세 화면이 함께 쓴다. */
   var periodOptions = [];
 
+  /** 진행 중인 기간 목록 요청. 화면 여럿이 **같은 요청 하나**를 기다린다. */
+  var periodsPromise = null;
+
+  /**
+   * 기간 선택지가 준비될 때까지 기다린다.
+   *
+   * 검토 화면과 업로드 화면이 각각 부르지만 요청은 **한 번**만 나간다.
+   */
+  function periodsReady() {
+    if (periodsPromise === null) { periodsPromise = loadPeriods(); }
+    return periodsPromise;
+  }
+
+  /**
+   * 기간별 확정 건수를 다시 받는다.
+   *
+   * 확정·Undo 로 숫자가 바뀌었을 때만 부른다 — 목록을 넘길 때마다 부르면
+   * 조회 한 번에 요청이 둘씩 나간다. 실패해도 화면을 막지 않는다.
+   */
+  function refreshPeriods() {
+    periodsPromise = loadPeriods();
+    return periodsPromise;
+  }
+
   /**
    * 기간 선택지를 채운다.
    *
@@ -1369,7 +1394,8 @@
   function loadPeriods() {
     return fetchJson("/imports/periods").then(function (payload) {
       periodOptions = payload.items || [];
-      fillPeriodSelect("review-period", function (item) { return String(item.batch_id); });
+      fillPeriodSelect("review-period",
+        function (item) { return String(item.batch_id); }, periodText);
       fillPeriodSelect("rejection-period", function (item) { return String(item.batch_id); });
       fillPeriodSelect("history-period", function (item) {
         return item.period_start + "," + item.period_end;
@@ -1379,7 +1405,7 @@
     });
   }
 
-  function fillPeriodSelect(id, valueOf) {
+  function fillPeriodSelect(id, valueOf, textOf) {
     var select = el(id);
     var chosen = select.value;
     // 첫 항목("전체")만 남기고 다시 채운다.
@@ -1387,12 +1413,25 @@
     periodOptions.forEach(function (item) {
       var option = document.createElement("option");
       option.value = valueOf(item);
-      option.textContent = item.label;
+      option.textContent = textOf ? textOf(item) : item.label;
       select.appendChild(option);
     });
     // 고르고 있던 기간이 아직 있으면 그대로 둔다(업로드 후에도 유지).
     select.value = chosen;
+    // ⛔ 없는 값이었으면 "전체" 로 — 최신 달을 자동으로 고르지 않는다.
     if (select.selectedIndex < 0) { select.selectedIndex = 0; }
+  }
+
+  /**
+   * 기간 선택지에 붙일 진행 상황.
+   *
+   * ⛔ **판정하지 않는다.** 위험·적정 같은 등급도, 색도 붙이지 않는다. 지금
+   *    DB 에 저장된 확정 건수를 그대로 적을 뿐이다.
+   * ⛔ 미적재 건수를 분모에 더하지 않는다 — 검토 대상이 아니기 때문이다(Q5-8).
+   */
+  function periodText(item) {
+    return item.label + " · " + numberFormat(item.confirmed)
+      + " / " + numberFormat(item.stored);
   }
 
   /** 선택된 기간을 조회 조건 조각으로. 고르지 않았으면 빈 문자열. */
@@ -1611,7 +1650,11 @@
     renderUploadTrace(result);
     // 새 기간이 생겼을 수 있으므로 목록을 **서버에서 다시 읽는다.**
     // ⛔ 화면이 기간을 만들어 넣지 않는다.
-    if (result.stored) { loadPeriods().then(loadHistory); }
+    // 새 기간이 생겼을 수 있으므로 **다시 받는다**(캐시를 비운다).
+    if (result.stored) {
+      periodsPromise = loadPeriods();
+      periodsPromise.then(loadHistory);
+    }
 
     if (!result.issues.length) {
       issues.hidden = true;
@@ -1743,7 +1786,7 @@
       rejectionPage += 1;
       loadRejections();
     });
-    loadPeriods().then(loadHistory);
+    periodsReady().then(loadHistory);
 
     if (!desktop()) {
       pick.disabled = true;
@@ -2071,12 +2114,35 @@
     // 조건이 전체와 같으면 중복이므로 생략한다.
     if (condition.total === whole.total && condition.confirmed === whole.confirmed) {
       node.appendChild(make("div", "rv-cond", "현재 조건 = 전체"));
-      return;
+    } else {
+      node.appendChild(make("div", "rv-cond",
+        "현재 조건 확정 " + numberFormat(condition.confirmed)
+        + " / " + numberFormat(condition.total)
+        + " (" + condition.ratio + "%)"));
     }
-    node.appendChild(make("div", "rv-cond",
-      "현재 조건 확정 " + numberFormat(condition.confirmed)
-      + " / " + numberFormat(condition.total)
-      + " (" + condition.ratio + "%)"));
+    appendPeriodNote(node);
+  }
+
+  /**
+   * 선택한 기간의 보조 정보.
+   *
+   * ⛔ 미적재 건수는 **분모 밖**에 따로 적는다. 검토 대상이 아니고, 어떻게
+   *    처리할지는 고객 확인 사항이다(Q5-8). "제외" 라고 쓰지 않는다.
+   */
+  function appendPeriodNote(node) {
+    var value = el("review-period").value;
+    if (!value) { return; }
+    var item = periodOptions.filter(function (option) {
+      return String(option.batch_id) === value;
+    })[0];
+    if (!item) { return; }
+    var text = "기간 " + item.label
+      + " · 검토 대상 " + numberFormat(item.stored) + "건"
+      + " · 확정 " + numberFormat(item.confirmed) + "건";
+    if (item.rejected) {
+      text += " · 미적재 " + numberFormat(item.rejected) + "건(검토 대상 밖)";
+    }
+    node.appendChild(make("div", "rv-cond", text));
   }
 
   function renderReviews(payload) {
@@ -2519,7 +2585,9 @@
       if (!response.ok) { throw httpError(response); }
       closeUndo();
       reviewNotice("확정을 취소했습니다. 이전 확정 기록은 이력에 남아 있습니다.");
-      loadReviews();
+      // 기간별 확정 건수가 바뀌었다. 목록보다 **먼저** 받아야 진행률 보조
+      // 정보가 갱신된 숫자로 그려진다.
+      refreshPeriods().then(function () { loadReviews(); });
     }).catch(function (error) {
       // ⛔ 실패했으면 성공처럼 보이면 안 된다 — 화면 상태를 그대로 둔다.
       reviewError(failureMessage(error, "확정을 취소하지 못했습니다"));
@@ -2578,11 +2646,15 @@
   /** URL 의 조건을 화면 입력에 되돌려 놓는다. */
   function applyUrl() {
     var params = new URLSearchParams(window.location.search);
+    var dropped = [];
     var pairs = [
       ["search", "review-search"], ["status", "review-status"],
       ["decision", "review-decision"], ["history", "review-history"],
       ["candidates", "review-candidates"], ["sort", "review-sort"],
-      ["direction", "review-direction"], ["page_size", "review-page-size"]
+      ["direction", "review-direction"], ["page_size", "review-page-size"],
+      // 기간은 선택지가 서버에서 온 뒤라야 되돌릴 수 있다 — initReview 가
+      // loadPeriods() 를 먼저 기다린다.
+      ["batch_id", "review-period"]
     ];
     pairs.forEach(function (pair) {
       var value = params.get(pair[0]);
@@ -2593,10 +2665,17 @@
         for (var i = 0; i < node.options.length; i += 1) {
           if (node.options[i].value === value) { node.value = value; return; }
         }
+        // ⛔ 조용히 넘기지 않는다. 담당자가 URL 을 고쳤거나 오래된 링크를
+        //    열었을 수 있으므로, 무엇이 무시되었는지 알려 준다.
+        dropped.push(pair[0]);
         return;
       }
       node.value = value;
     });
+    if (dropped.length) {
+      reviewNotice("URL 의 조건 일부를 쓸 수 없어 무시했습니다: " + dropped.join(", ")
+        + ". 나머지 조건으로 보여 줍니다.");
+    }
     var page = parseInt(params.get("page") || "1", 10);
     reviewPage = isNaN(page) || page < 1 ? 1 : page;
   }
@@ -2616,9 +2695,11 @@
       if (!response.ok) { throw httpError(response); }
       delete reviewPicks[purchaseId];
       reviewNotice("확정했습니다. 원본 데이터는 변경되지 않았습니다.");
+      // 기간별 확정 건수가 바뀌었다. 목록보다 **먼저** 받아야 진행률 보조
+      // 정보가 갱신된 숫자로 그려진다.
       // 확정한 건이 현재 조건에서 빠지면 같은 자리에 다음 건이 들어온다.
       // ⛔ 다음 건의 유형을 미리 고르거나 확정하지 않는다 — 이동만 한다.
-      loadReviews();
+      refreshPeriods().then(function () { loadReviews(); });
     }).catch(function (error) {
       // ⛔ 실패했으면 **다음 건으로 넘어가지 않는다.** 고른 값도 남겨 둬서
       //    담당자가 그대로 다시 누를 수 있게 한다.
@@ -2701,18 +2782,24 @@
     document.addEventListener("keydown", handleReviewKey);
     window.addEventListener("popstate", function () {
       // 뒤로/앞으로 — URL 이 정본이므로 그대로 복원한다.
-      applyUrl();
-      reviewCursor = 0;
-      loadReviews(false);
+      periodsReady().then(function () {
+        applyUrl();
+        reviewCursor = 0;
+        loadReviews(false);
+      });
     });
-    // URL 에 담긴 조건을 먼저 화면에 되돌린 뒤 불러온다 (새로고침·공유 대응).
-    applyUrl();
     // 원본 대조는 목록과 독립이다 — 실패해도 검토를 막지 않는다.
     loadTrace();
-    // 선택지 목록은 백엔드가 소유한다. 화면이 만들지 않는다.
-    fetchJson("/reviews/options").then(function (options) {
-      reviewOptions = options;
-      loadReviews();
+    // ⚠️ **순서가 중요하다.** 기간 선택지가 서버에서 온 뒤라야 URL 의
+    //    ``batch_id`` 를 select 에 되돌릴 수 있다. 먼저 그리면 선택지가 없어
+    //    조용히 "전체" 로 떨어진다.
+    periodsReady().then(function () {
+      applyUrl();
+      // 선택지 목록은 백엔드가 소유한다. 화면이 만들지 않는다.
+      return fetchJson("/reviews/options").then(function (options) {
+        reviewOptions = options;
+        loadReviews();
+      });
     }).catch(function (error) {
       reviewError("선택지를 불러오지 못했습니다: " + error.message);
     });

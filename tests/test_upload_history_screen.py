@@ -202,10 +202,14 @@ class TestUploadResultNumbers:
 
         STEP 15 에서 기간 목록도 함께 다시 읽습니다 — 새 달을 올렸으면 기간
         선택지에 나타나야 하고, 그 목록은 **서버에서** 받아야 하기 때문입니다.
+
+        STEP 16 에서 기간 목록에 캐시(``periodsPromise``)가 생겼으므로, 저장
+        후에는 **캐시를 비우고 다시 받습니다**. 확인하는 사실은 그대로입니다.
         """
         body = _function_body(page, "renderUploadResult")
 
-        assert "loadPeriods().then(loadHistory)" in body
+        assert "periodsPromise = loadPeriods()" in body
+        assert "loadHistory" in body
 
 
 class TestScreenStaysConsistent:
@@ -342,3 +346,154 @@ class TestPeriodFilters:
     def test_period_selects_are_labelled(self, page: str) -> None:
         for label in ("검토 대상 기간", "미적재 행 기간", "업로드 이력 기간"):
             assert f'aria-label="{label}"' in page, label
+
+
+class TestReviewUrlState:
+    """STEP 16 — 조회 조건이 URL 에 남는다.
+
+    ⛔ URL 에는 **조회 조건만** 넣습니다. 확정 유형·점수·담당자명 같은 업무
+    데이터는 넣지 않습니다.
+    """
+
+    #: URL 에 실리는 조건. 기존 파라미터 이름을 그대로 씁니다.
+    CONDITIONS = (
+        "search",
+        "status",
+        "decision",
+        "history",
+        "candidates",
+        "sort",
+        "direction",
+        "page",
+        "page_size",
+        "batch_id",
+    )
+
+    def test_every_condition_is_written(self, page: str) -> None:
+        body = _function_body(page, "reviewParams")
+
+        for name in self.CONDITIONS:
+            assert f'"{name}=' in body or f"{name}=" in body, name
+
+    def test_period_is_written(self, page: str) -> None:
+        body = _function_body(page, "reviewParams")
+
+        assert 'el("review-period").value' in body
+        assert "batch_id=" in body
+
+    def test_every_condition_is_restored(self, page: str) -> None:
+        body = _function_body(page, "applyUrl")
+
+        for name in (
+            "search",
+            "status",
+            "decision",
+            "history",
+            "candidates",
+            "sort",
+            "direction",
+            "page_size",
+            "batch_id",
+        ):
+            assert f'"{name}"' in body, name
+        assert 'params.get("page")' in body
+
+    def test_period_is_restored_after_options_arrive(self, page: str) -> None:
+        """⛔ 선택지가 오기 전에 되돌리면 조용히 '전체' 로 떨어진다."""
+        body = _function_body(page, "initReview")
+
+        assert "periodsReady().then(" in body
+        assert body.index("periodsReady()") < body.index("applyUrl()")
+
+    def test_back_and_forward_restore_the_url(self, page: str) -> None:
+        body = _function_body(page, "initReview")
+        popstate = body[body.index('addEventListener("popstate"') :]
+
+        assert "applyUrl()" in popstate
+        assert "periodsReady()" in popstate
+
+    def test_condition_changes_push_history(self, page: str) -> None:
+        body = _function_body(page, "syncUrl")
+
+        assert "pushState" in body
+        assert "replaceState" in body
+
+    def test_typing_does_not_flood_history(self, page: str) -> None:
+        """작업 §5 — 글자마다 history 가 쌓이지 않는다."""
+        body = _function_body(page, "initReview")
+
+        assert 'el("review-search").addEventListener("input", debounce(' in body
+
+    def test_unknown_values_are_ignored_and_announced(self, page: str) -> None:
+        """⛔ 조용히 무시하지 않는다 — 무엇이 빠졌는지 알려 준다."""
+        body = _function_body(page, "applyUrl")
+
+        assert "dropped.push" in body
+        assert "무시했습니다" in body
+
+    def test_bad_page_falls_back_to_one(self, page: str) -> None:
+        body = _function_body(page, "applyUrl")
+
+        assert "isNaN(page)" in body
+        assert "page < 1" in body
+
+    def test_no_business_data_in_the_url(self, page: str) -> None:
+        """⛔ 업무 데이터는 URL 에 넣지 않는다."""
+        body = _function_body(page, "reviewParams")
+
+        for banned in (
+            "final_purchase_type",
+            "reviewed_by",
+            "review-actor",
+            "score",
+            "business_no",
+        ):
+            assert banned not in body, banned
+
+    def test_default_has_no_period(self, page: str) -> None:
+        """⛔ 기간을 고르지 않았으면 조건 자체를 보내지 않는다(= 전체)."""
+        body = _function_body(page, "reviewParams")
+
+        assert 'if (el("review-period").value) {' in body
+
+
+class TestPeriodProgressOnScreen:
+    """STEP 16 — 기간 선택지에 진행 상황이 붙는다."""
+
+    def test_option_text_shows_progress(self, page: str) -> None:
+        body = _function_body(page, "periodText")
+
+        assert "item.confirmed" in body
+        assert "item.stored" in body
+
+    def test_progress_has_no_verdict(self, page: str) -> None:
+        """⛔ 등급·색으로 판정하지 않는다 (지시 §15)."""
+        body = _function_body(page, "periodText")
+
+        for banned in ("위험", "주의", "적정", "우수", "충족", "미달", "color", "class"):
+            assert banned not in body, banned
+
+    def test_rejected_is_outside_the_denominator(self, page: str) -> None:
+        """⛔ 미적재를 분모에 더하지 않는다 (지시 §10)."""
+        body = _function_body(page, "periodText")
+
+        assert "item.rejected" not in body
+
+    def test_rejected_is_shown_as_a_side_note(self, page: str) -> None:
+        body = _function_body(page, "appendPeriodNote")
+
+        assert "검토 대상 밖" in body
+        for banned in ("제외", "부적합", "검토할 필요"):
+            assert banned not in body, banned
+
+    def test_progress_area_is_announced(self, page: str) -> None:
+        """확정·Undo 로 숫자가 바뀌면 스크린리더도 알 수 있어야 한다."""
+        assert 'id="review-progress"' in page
+        assert 'aria-live="polite"' in page
+
+    def test_periods_are_fetched_once(self, page: str) -> None:
+        """작업 §26 — 화면 여럿이 같은 요청 하나를 기다린다."""
+        body = _function_body(page, "periodsReady")
+
+        assert "periodsPromise === null" in body
+        assert "periodsPromise = loadPeriods()" in body

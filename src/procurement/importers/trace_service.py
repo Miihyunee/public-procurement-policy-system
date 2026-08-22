@@ -27,6 +27,7 @@ from procurement.core.description_key import normalize_description
 from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.import_rejection_repository import ImportRejectionRepository
 from procurement.database.purchase_repository import PurchaseRepository
+from procurement.database.review_repository import ReviewRepository
 from procurement.importers.rejection_query import ANY, RejectionQuery
 from procurement.models.import_batch import ImportBatch
 from procurement.models.import_rejection import ImportRejection, ImportTrace
@@ -122,8 +123,13 @@ class PeriodOption:
         period_start: 대상 기간 시작일.
         period_end: 대상 기간 종료일.
         batch_id: 이 기간의 **현재 배치** ID.
-        stored: 그 배치로 적재된 행 수.
+        stored: 그 배치로 적재된 행 수 — **검토 대상 건수**.
         rejected: 그 배치의 미적재 행 수.
+
+            ⛔ **진행률 분모에 더하지 않습니다.** 미적재 행은 아직 검토 대상
+            DB 에 들어오지 않았고, 어떻게 처리할지는 고객 확인 사항입니다
+            (Q5-8). 보조 정보로 함께 보여줄 뿐입니다.
+        confirmed: 그 배치에서 담당자가 확정한 건수.
         current_batch_count: 이 기간에 현재 상태인 배치 수.
 
             정상이면 1 입니다. 2 이상이면 대체 처리가 중간에 멈춘 것이므로
@@ -137,7 +143,16 @@ class PeriodOption:
     batch_id: int
     stored: int = 0
     rejected: int = 0
+    confirmed: int = 0
     current_batch_count: int = 1
+
+    @property
+    def pending(self) -> int:
+        """아직 확정하지 않은 건수(재검토 포함).
+
+        ⛔ 미적재 행은 여기 들어가지 않습니다 — 검토 대상이 아니기 때문입니다.
+        """
+        return self.stored - self.confirmed
 
     @property
     def label(self) -> str:
@@ -201,6 +216,7 @@ class ImportTraceService:
         purchase_repository: PurchaseRepository,
         batch_repository: ImportBatchRepository,
         rejection_repository: ImportRejectionRepository,
+        review_repository: ReviewRepository | None = None,
     ) -> None:
         """서비스를 초기화합니다.
 
@@ -208,10 +224,14 @@ class ImportTraceService:
             purchase_repository: 적재된 행을 세는 데 사용합니다(⛔ 읽기 전용).
             batch_repository: 배치별 대조에 사용합니다.
             rejection_repository: 미적재 기록 저장소.
+            review_repository: 기간별 확정 건수를 세는 데 사용합니다
+                (⛔ 읽기 전용). ``None`` 이면 확정 건수를 0 으로 두고 나머지는
+                그대로 동작합니다(하위 호환).
         """
         self._purchase_repository = purchase_repository
         self._batch_repository = batch_repository
         self._rejection_repository = rejection_repository
+        self._review_repository = review_repository
 
     def overview(self) -> ImportTraceOverview:
         """전체 대조 결과를 만듭니다.
@@ -279,6 +299,8 @@ class ImportTraceService:
         for item in rejections:
             rejected_by_batch[item.batch_id] = rejected_by_batch.get(item.batch_id, 0) + 1
 
+        stored_by_batch, confirmed_by_batch = self._review_counts()
+
         by_period: dict[tuple[date, date], list[ImportBatch]] = {}
         for batch in self._batch_repository.find_all():
             if not batch.is_active or batch.batch_id is None:
@@ -295,13 +317,46 @@ class ImportTraceService:
                     period_start=start,
                     period_end=end,
                     batch_id=latest.batch_id,
-                    stored=latest.row_count,
+                    # 지금 조회 가능한 행을 **세어서** 쓴다 — 배치에 적힌
+                    # row_count 와 확정 건수를 다른 곳에서 가져오면 둘이
+                    # 어긋날 수 있다.
+                    stored=stored_by_batch.get(latest.batch_id, 0),
                     rejected=rejected_by_batch.get(latest.batch_id, 0),
+                    confirmed=confirmed_by_batch.get(latest.batch_id, 0),
                     current_batch_count=len(batches),
                 )
             )
         options.sort(key=lambda option: (option.period_start, option.period_end), reverse=True)
         return options
+
+    def _review_counts(self) -> tuple[dict[int | None, int], dict[int | None, int]]:
+        """배치별 (검토 대상 건수, 확정 건수).
+
+        ⚠️ **현재 배치만** 셉니다 — :meth:`find_for_calculation` 이 대체된
+        배치를 이미 빼기 때문입니다. 대체된 배치의 확정 이력이 진행률에 섞이면
+        재업로드할수록 숫자가 부풀어 오릅니다(STEP 12 에서 겪은 문제).
+
+        ⛔ 미적재 행은 여기 없습니다. 검토 대상 DB 에 들어오지 않았기 때문이며,
+        그 처리 방식은 고객 확인 사항입니다(Q5-8).
+        """
+        stored: dict[int | None, int] = {}
+        confirmed: dict[int | None, int] = {}
+        purchases = self._purchase_repository.find_for_calculation(None)
+        for purchase in purchases:
+            stored[purchase.batch_id] = stored.get(purchase.batch_id, 0) + 1
+
+        if self._review_repository is None:
+            return stored, confirmed
+
+        batch_of = {purchase.purchase_id: purchase.batch_id for purchase in purchases}
+        for review in self._review_repository.find_all():
+            if not review.is_confirmed:
+                continue
+            if review.purchase_id not in batch_of:
+                continue  # 대체된 배치의 확정 이력 — 현재 집계에서 뺀다
+            batch_id = batch_of[review.purchase_id]
+            confirmed[batch_id] = confirmed.get(batch_id, 0) + 1
+        return stored, confirmed
 
     def history(
         self, *, period_start: date | None = None, period_end: date | None = None

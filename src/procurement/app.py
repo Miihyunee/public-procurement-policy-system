@@ -250,6 +250,7 @@ def build_import_trace_service(db_path: str | Path | None = None) -> ImportTrace
         ImportTraceService → PurchaseRepository        (⛔ 읽기 전용)
                            → ImportBatchRepository     (⛔ 읽기 전용)
                            → ImportRejectionRepository (⛔ 읽기 전용)
+                           → ReviewRepository          (⛔ 읽기 전용)
 
     Args:
         db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값을 사용합니다.
@@ -262,6 +263,8 @@ def build_import_trace_service(db_path: str | Path | None = None) -> ImportTrace
         PurchaseRepository(path),
         ImportBatchRepository(path),
         ImportRejectionRepository(path),
+        # 기간별 확정 건수를 세기 위해서만 읽습니다. ⛔ 쓰지 않습니다.
+        ReviewRepository(path),
     )
 
 

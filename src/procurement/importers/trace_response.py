@@ -338,8 +338,11 @@ class PeriodOptionResponseModel(BaseModel):
         period_end: 대상 기간 종료일.
         batch_id: 이 기간의 **현재 배치** ID. 화면은 이 값을 그대로 조회 조건에
             넣습니다 — ⛔ 기간을 직접 만들지 않습니다.
-        stored: 적재된 행 수.
-        rejected: 미적재 행 수.
+        stored: 적재된 행 수 = **검토 대상 건수**(진행률 분모).
+        rejected: 미적재 행 수. ⛔ **진행률 분모에 더하지 않습니다** — 검토 대상
+            DB 에 들어오지 않았고, 처리 방식은 고객 확인 사항입니다(Q5-8).
+        confirmed: 담당자가 확정한 건수(진행률 분자).
+        pending: 아직 확정하지 않은 건수 = ``stored - confirmed``.
         current_batch_count: 이 기간에 현재 상태인 배치 수. 정상이면 1.
     """
 
@@ -351,6 +354,8 @@ class PeriodOptionResponseModel(BaseModel):
     batch_id: int
     stored: int
     rejected: int
+    confirmed: int
+    pending: int
     current_batch_count: int
 
     @classmethod
@@ -363,6 +368,8 @@ class PeriodOptionResponseModel(BaseModel):
             batch_id=option.batch_id,
             stored=option.stored,
             rejected=option.rejected,
+            confirmed=option.confirmed,
+            pending=option.pending,
             current_batch_count=option.current_batch_count,
         )
 
