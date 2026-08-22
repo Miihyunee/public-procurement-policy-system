@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS import_batch (
     period_end DATE NOT NULL,
     uploaded_at DATETIME NOT NULL,
     row_count INTEGER NOT NULL,
+    source_row_count INTEGER,
     total_amount NUMERIC NOT NULL,
     status TEXT NOT NULL,
     superseded_by INTEGER,
@@ -76,6 +77,14 @@ def _to_db_date(value: date) -> str:
 def _from_db_date(value: str) -> date:
     """SQLite 에서 읽은 ISO 문자열을 date 로 변환합니다."""
     return date.fromisoformat(value)
+
+
+def _optional_int(row: sqlite3.Row, column: str) -> int | None:
+    """컬럼이 없거나 값이 비어 있으면 ``None`` 을 돌려줍니다(구 스키마 대응)."""
+    if column not in row.keys():
+        return None
+    value = row[column]
+    return None if value is None else int(value)
 
 
 def _to_db_amount(value: Decimal) -> str:
@@ -243,22 +252,44 @@ class ImportBatchRepository(BaseRepository):
         rows = self.execute("SELECT * FROM import_batch ORDER BY batch_id")
         return [self._row_to_batch(row) for row in rows]
 
-    def update_totals(self, batch_id: int, row_count: int, total_amount: Decimal) -> bool:
+    def update_totals(
+        self,
+        batch_id: int,
+        row_count: int,
+        total_amount: Decimal,
+        *,
+        source_row_count: int | None = None,
+    ) -> bool:
         """적재 결과(행 수·금액 합계)를 배치에 기록합니다.
 
         Args:
             batch_id: 대상 배치 ID.
-            row_count: 실제 적재된 행 수.
+            row_count: 실제 **적재된** 행 수.
             total_amount: 적재된 금액 합계.
+            source_row_count: 이 배치의 **원본 행 수**. ``None`` 이면 기존 값을
+                그대로 둡니다(하위 호환 — 이 값을 넘기지 않던 호출부가 있습니다).
 
         Returns:
             갱신된 행이 있으면 ``True``, 해당 배치가 없으면 ``False``.
         """
-        affected = self.execute_write(
-            "UPDATE import_batch SET row_count = ?, total_amount = ?, updated_at = ? "
-            "WHERE batch_id = ?",
-            (row_count, _to_db_amount(total_amount), _to_db(datetime.now()), batch_id),
-        )
+        if source_row_count is None:
+            affected = self.execute_write(
+                "UPDATE import_batch SET row_count = ?, total_amount = ?, updated_at = ? "
+                "WHERE batch_id = ?",
+                (row_count, _to_db_amount(total_amount), _to_db(datetime.now()), batch_id),
+            )
+        else:
+            affected = self.execute_write(
+                "UPDATE import_batch SET row_count = ?, source_row_count = ?, "
+                "total_amount = ?, updated_at = ? WHERE batch_id = ?",
+                (
+                    row_count,
+                    source_row_count,
+                    _to_db_amount(total_amount),
+                    _to_db(datetime.now()),
+                    batch_id,
+                ),
+            )
         return affected > 0
 
     def supersede(self, batch_id: int, superseded_by: int) -> bool:
@@ -325,6 +356,9 @@ class ImportBatchRepository(BaseRepository):
             period_end=_from_db_date(row["period_end"]),
             uploaded_at=_from_db(row["uploaded_at"]),
             row_count=int(row["row_count"]),
+            # 구 스키마 DB 에는 이 컬럼이 없다. 0 이 아니라 None 이어야
+            # "원본 행 수를 모른다" 는 뜻이 보존된다.
+            source_row_count=_optional_int(row, "source_row_count"),
             total_amount=_from_db_amount(row["total_amount"]),
             status=row["status"],
             superseded_by=row["superseded_by"],

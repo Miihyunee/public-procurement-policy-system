@@ -62,6 +62,8 @@ class UploadResponseModel(BaseModel):
             ⛔ 제외 확정이 아닙니다 — 처리 방식은 확인 대기입니다(Q5-8).
         rejection_reasons: 사유별 미적재 행 수(코드 · 표시 이름 · 건수).
             ⛔ 표시 이름에 "제외" 같은 확정 표현을 쓰지 않습니다.
+        unexplained_rows: 원본 − 적재 − 미적재. **0 이 아니면 행이 사라진
+            것**이므로 화면이 반드시 드러내야 합니다.
         batch_id: 저장된 배치 ID. 저장하지 않았으면 ``null``.
         file_errors: 파일 단위 오류(읽기 실패·머리글 누락 등).
         issues: 행 단위 문제 목록.
@@ -82,6 +84,7 @@ class UploadResponseModel(BaseModel):
     stored_rows: int
     rejected_rows: int = 0
     rejection_reasons: tuple[RejectionReasonResponseModel, ...] = ()
+    unexplained_rows: int = 0
     batch_id: int | None
     file_errors: tuple[str, ...]
     issues: tuple[UploadIssueResponseModel, ...]
@@ -119,6 +122,7 @@ def build_upload_response(result: UploadResult) -> UploadResponseModel:
         error_rows=result.error_rows,
         stored_rows=result.stored_rows,
         rejected_rows=result.rejected_rows,
+        unexplained_rows=result.unexplained_rows,
         rejection_reasons=tuple(
             RejectionReasonResponseModel(
                 reason=reason,

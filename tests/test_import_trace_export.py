@@ -540,15 +540,27 @@ class TestUploadScreen:
         assert "if (!result.stored)" in body
 
     def test_rejection_table_is_shared_with_the_review_screen(self, page: str) -> None:
-        """⛔ 같은 표를 두 번 만들지 않는다 (지시 ⑤ — 재사용)."""
+        """⛔ 같은 표를 두 번 만들지 않는다 (지시 ⑤ — 재사용).
+
+        STEP 14 에서 업로드 쪽 호출부가 ``showUploadRejections`` → 조건 패널 →
+        ``loadRejections`` 로 한 단계 깊어졌습니다. 확인하는 사실은 그대로 —
+        표를 그리는 함수는 하나뿐이고 두 화면이 그것을 씁니다.
+        """
         assert page.count("function renderRejectionTable(") == 1
         assert "renderRejectionTable(rows, trace)" in _function_body(page, "renderTrace")
-        assert "renderRejectionTable(rows, trace)" in _function_body(page, "showUploadRejections")
+        assert "renderRejectionTable(" in _function_body(page, "loadRejections")
 
     def test_show_button_reuses_the_existing_api(self, page: str) -> None:
-        body = _function_body(page, "showUploadRejections")
+        """⛔ 화면이 미적재 목록을 스스로 만들지 않는다 — 백엔드에서 받는다.
 
-        assert "/imports/trace" in body
+        STEP 14 에서 검색·정렬·페이지가 붙으면서 조회 대상이
+        ``/imports/rejections`` 로 바뀌었습니다.
+        """
+        opened = _function_body(page, "showUploadRejections")
+        assert "loadRejections()" in opened
+
+        loader = _function_body(page, "loadRejections")
+        assert "/imports/rejections" in loader
 
     def test_ids_stay_unique(self, page: str) -> None:
         import re

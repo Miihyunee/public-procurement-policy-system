@@ -66,8 +66,28 @@ from procurement.database.review_repository import ReviewRepository, ReviewValid
 from procurement.importers.batch_import_service import BatchImportService
 from procurement.importers.purchase_importer import PurchaseImporter
 from procurement.importers.rejection_export import export_lines as rejection_export_lines
+from procurement.importers.rejection_query import (
+    ANY as REJECTION_ANY,
+)
+from procurement.importers.rejection_query import (
+    ASCENDING as REJECTION_ASCENDING,
+)
+from procurement.importers.rejection_query import (
+    DEFAULT_PAGE_SIZE as REJECTION_PAGE_SIZE,
+)
+from procurement.importers.rejection_query import (
+    MAX_PAGE_SIZE as REJECTION_MAX_PAGE_SIZE,
+)
+from procurement.importers.rejection_query import (
+    RejectionQuery,
+    RejectionQueryError,
+)
 from procurement.importers.trace_response import (
+    BatchHistoryListResponseModel,
+    BatchHistoryResponseModel,
     ImportTraceResponseModel,
+    RejectionPageResponseModel,
+    build_history_response,
     build_trace_response,
 )
 from procurement.importers.trace_service import ImportTraceService
@@ -769,6 +789,79 @@ def create_app(
         대상에 넣을지는 고객 확인 사항입니다(``Q5-8``).
         """
         return build_trace_response(import_trace.overview(), import_trace.rejections())
+
+    @app.get(
+        "/imports/batches",
+        response_model=BatchHistoryListResponseModel,
+        summary="업로드 이력",
+        tags=["imports"],
+    )
+    def list_import_batches() -> BatchHistoryListResponseModel:
+        """업로드 이력을 최근 순으로 반환합니다.
+
+        매월 원본 파일을 올리는 운영을 전제로, **어느 달 파일이 언제 올라왔고
+        지금 무엇이 쓰이고 있는지**를 한눈에 보기 위한 목록입니다. 대체된
+        배치도 함께 나옵니다 — 무엇이 무엇으로 바뀌었는지 알아야 하기 때문
+        입니다.
+
+        ⛔ 새 상태값을 만들지 않았습니다. ``status`` 는 기존 배치 lifecycle 의
+        ``ACTIVE`` / ``SUPERSEDED`` 그대로입니다.
+        """
+        return build_history_response(import_trace.history())
+
+    @app.get(
+        "/imports/batches/{batch_id}",
+        response_model=BatchHistoryResponseModel,
+        summary="업로드 한 건 상세",
+        tags=["imports"],
+    )
+    def get_import_batch(batch_id: int) -> BatchHistoryResponseModel:
+        """업로드 한 건의 원본·적재·미적재와 사유별 건수를 반환합니다.
+
+        Raises:
+            HTTPException: 해당 배치가 없으면 404.
+        """
+        entry = import_trace.batch(batch_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"업로드를 찾을 수 없습니다: {batch_id}")
+        return BatchHistoryResponseModel.from_entry(entry)
+
+    @app.get(
+        "/imports/rejections",
+        response_model=RejectionPageResponseModel,
+        summary="미적재 원본 행 조회(검색·필터·정렬·페이지)",
+        tags=["imports"],
+    )
+    def search_import_rejections(
+        search: str = Query("", description="적요·거래처명·사업자번호·원본 행 번호"),
+        reason: str = Query(REJECTION_ANY, description="미적재 사유 코드 또는 ALL"),
+        sort: str = Query("row_number", description="정렬 기준"),
+        direction: str = Query(REJECTION_ASCENDING, description="asc | desc"),
+        page: int = Query(1, ge=1, description="1부터 시작하는 페이지 번호"),
+        page_size: int = Query(
+            REJECTION_PAGE_SIZE, ge=1, le=REJECTION_MAX_PAGE_SIZE, description="한 페이지 건수"
+        ),
+    ) -> RejectionPageResponseModel:
+        """미적재 원본 행을 조건에 맞춰 한 페이지씩 반환합니다.
+
+        ⛔ **조회 기능일 뿐입니다.** 걸러 본다고 해서 그 행이 실적에 포함되거나
+        빠지지 않습니다. 처리 방식은 고객 확인 사항입니다(``Q5-8``).
+
+        Raises:
+            HTTPException: 조건 값이 허용 범위를 벗어나면 422.
+        """
+        try:
+            query = RejectionQuery(
+                search=search,
+                reason=reason,
+                sort=sort,
+                direction=direction,
+                page=page,
+                page_size=page_size,
+            )
+        except RejectionQueryError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return RejectionPageResponseModel.from_page(import_trace.search_rejections(query))
 
     @app.get(
         "/imports/trace.csv",

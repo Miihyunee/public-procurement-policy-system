@@ -20,10 +20,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 
+from procurement.core.description_key import normalize_description
 from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.import_rejection_repository import ImportRejectionRepository
 from procurement.database.purchase_repository import PurchaseRepository
+from procurement.importers.rejection_query import ANY, RejectionQuery
+from procurement.models.import_batch import ImportBatch
 from procurement.models.import_rejection import ImportRejection, ImportTrace
 
 
@@ -52,6 +57,89 @@ class ImportTraceOverview:
     def all_visible(self) -> bool:
         """원본 행이 모두 검토 화면에 보이는가."""
         return self.rejected == 0
+
+
+@dataclass(frozen=True, kw_only=True)
+class BatchHistoryEntry:
+    """업로드 한 번의 기록.
+
+    ⛔ 새 상태값을 만들지 않습니다 — ``status`` 는 기존 배치 lifecycle 의
+    ``ACTIVE`` / ``SUPERSEDED`` 그대로입니다.
+
+    Attributes:
+        batch: 배치 원본(기간 · 업로드 시각 · 상태 · 파일명).
+        stored: 이 배치로 적재된 행 수.
+        rejected: 이 배치에서 적재되지 않아 기록된 행 수.
+        reasons: 사유별 건수.
+    """
+
+    batch: ImportBatch
+    stored: int = 0
+    rejected: int = 0
+    reasons: dict[str, int] | None = None
+
+    @property
+    def batch_id(self) -> int | None:
+        """배치 ID."""
+        return self.batch.batch_id
+
+    @property
+    def source_rows(self) -> int | None:
+        """원본 행 수. **기록된 값**이며, 모르면 ``None`` 입니다.
+
+        ⚠️ 적재 + 미적재로 되계산하지 않습니다 — 그러면 :attr:`unexplained` 가
+        늘 0 이 되어 아무것도 검증하지 못합니다.
+        """
+        return self.batch.source_row_count
+
+    @property
+    def unexplained(self) -> int | None:
+        """설명되지 않은 행 수. 원본 행 수를 모르면 ``None``.
+
+        ⚠️ 0 이 아니면 **어딘가에서 행이 사라진 것**입니다.
+        """
+        if self.batch.source_row_count is None:
+            return None
+        return self.batch.source_row_count - self.stored - self.rejected
+
+    @property
+    def is_current(self) -> bool:
+        """지금 검토·계산에 쓰이는 배치인가(기존 lifecycle 기준)."""
+        return self.batch.is_active
+
+
+@dataclass(frozen=True, kw_only=True)
+class RejectionPage:
+    """조건에 맞는 미적재 행 한 페이지.
+
+    Attributes:
+        items: 이 페이지의 행.
+        total: 조건에 맞는 전체 건수.
+        page: 현재 페이지 번호.
+        page_size: 한 페이지 건수.
+    """
+
+    items: list[ImportRejection]
+    total: int = 0
+    page: int = 1
+    page_size: int = 0
+
+    @property
+    def total_pages(self) -> int:
+        """전체 쪽 수. 결과가 없으면 1쪽(빈 화면)."""
+        if self.page_size <= 0:
+            return 1
+        return max(1, -(-self.total // self.page_size))
+
+    @property
+    def has_previous(self) -> bool:
+        """이전 쪽이 있는가."""
+        return self.page > 1
+
+    @property
+    def has_next(self) -> bool:
+        """다음 쪽이 있는가."""
+        return self.page < self.total_pages
 
 
 def _count_reasons(items: Iterable[ImportRejection]) -> dict[str, int]:
@@ -133,6 +221,66 @@ class ImportTraceService:
             batches=tuple(batches),
         )
 
+    def history(self) -> list[BatchHistoryEntry]:
+        """업로드 이력을 **최근 순**으로 반환합니다.
+
+        ⛔ 대체된 배치도 함께 보여 줍니다 — 무엇이 무엇으로 바뀌었는지
+        담당자가 알 수 있어야 하기 때문입니다.
+
+        ⚠️ 적재 행 수는 배치에 기록된 ``row_count`` 를 씁니다. 대체된 배치의
+        구매 행은 현재 조회에서 빠지므로, 지금 다시 세면 0 이 나옵니다.
+        """
+        batches = self._batch_repository.find_all()
+        rejections = self._rejection_repository.find_all()
+
+        by_batch: dict[int | None, list[ImportRejection]] = {}
+        for item in rejections:
+            by_batch.setdefault(item.batch_id, []).append(item)
+
+        entries = [
+            BatchHistoryEntry(
+                batch=batch,
+                stored=batch.row_count,
+                rejected=len(by_batch.get(batch.batch_id, [])),
+                reasons=_count_reasons(by_batch.get(batch.batch_id, [])),
+            )
+            for batch in batches
+        ]
+        entries.sort(key=_history_order, reverse=True)
+        return entries
+
+    def batch(self, batch_id: int) -> BatchHistoryEntry | None:
+        """업로드 한 건의 상세를 반환합니다. 없으면 ``None``."""
+        found = self._batch_repository.find_by_id(batch_id)
+        if found is None:
+            return None
+        rejections = self._rejection_repository.find_by_batch(batch_id)
+        return BatchHistoryEntry(
+            batch=found,
+            stored=found.row_count,
+            rejected=len(rejections),
+            reasons=_count_reasons(rejections),
+        )
+
+    def search_rejections(self, query: RejectionQuery) -> RejectionPage:
+        """조건에 맞는 미적재 행 한 페이지를 반환합니다.
+
+        ⛔ **조회일 뿐입니다.** 걸러 본다고 그 행의 처리 방식이 정해지지
+        않습니다(Q5-8).
+
+        ⚠️ 대상은 :meth:`rejections` 와 같이 **지금 유효한** 기록입니다 —
+        대체된 배치의 기록은 들어오지 않습니다.
+        """
+        items = self._rejection_repository.find_current()
+        items = _sorted([item for item in items if _keeps(item, query)], query)
+        start = query.offset
+        return RejectionPage(
+            items=items[start : start + query.page_size],
+            total=len(items),
+            page=query.page,
+            page_size=query.page_size,
+        )
+
     def rejections(self, *, limit: int | None = None) -> list[ImportRejection]:
         """미적재 행 목록을 반환합니다.
 
@@ -143,3 +291,77 @@ class ImportTraceService:
         """
         items = self._rejection_repository.find_current()
         return items if limit is None else items[:limit]
+
+
+def _history_order(entry: BatchHistoryEntry) -> tuple[datetime, int]:
+    """최근 업로드가 먼저. 시각이 같으면 배치 ID 순."""
+    uploaded = entry.batch.uploaded_at or datetime.min
+    return uploaded, entry.batch_id or 0
+
+
+def _keeps(item: ImportRejection, query: RejectionQuery) -> bool:
+    """조건에 맞는 행인가."""
+    if query.reason != ANY and item.reason != query.reason:
+        return False
+    if not query.search:
+        return True
+    needle = normalize_description(query.search)
+    haystacks = (
+        normalize_description(item.description),
+        normalize_description(item.company_name),
+        str(item.row_number),
+        normalize_description(item.business_no),
+    )
+    return any(needle in value for value in haystacks)
+
+
+def _sorted(items: list[ImportRejection], query: RejectionQuery) -> list[ImportRejection]:
+    """정렬합니다. **값이 없는 행은 오름차순·내림차순 모두에서 마지막**입니다.
+
+    ⚠️ ``reverse=True`` 하나로 처리하면 "값 없음" 표시까지 뒤집혀, 내림차순일
+    때 빈 값이 맨 앞으로 올라옵니다 — 검토 목록에서 실제로 겪은 문제라
+    (``REVIEW_INTERFACE_DESIGN.md`` §9.1) 여기서도 있는 것과 없는 것을 나눠
+    정렬합니다.
+    """
+    present = [item for item in items if _value_of(item, query.sort) is not None]
+    missing = [item for item in items if _value_of(item, query.sort) is None]
+    present.sort(
+        key=lambda item: _sort_key(item, query.sort),
+        reverse=query.descending,
+    )
+    # 값이 없는 행끼리는 배치 · 원본 행 번호 순으로 — 순서가 흔들리지 않도록.
+    missing.sort(key=lambda item: (item.batch_id or 0, item.row_number))
+    return present + missing
+
+
+def _value_of(item: ImportRejection, key: str) -> object | None:
+    """정렬 기준 값. 없으면 ``None``."""
+    if key == "amount":
+        return item.amount
+    if key == "description":
+        return item.description
+    if key == "company_name":
+        return item.company_name
+    if key == "reason":
+        return item.reason
+    return item.row_number
+
+
+def _sort_key(item: ImportRejection, key: str) -> tuple[Decimal, str]:
+    """값이 있는 행의 정렬 키.
+
+    숫자 칸과 글자 칸을 **한 가지 모양**(숫자, 글자)으로 맞춰 돌려줍니다 —
+    정렬 기준이 무엇이든 같은 방식으로 비교되도록.
+    """
+    if key == "amount":
+        return (item.amount if item.amount is not None else Decimal(0), "")
+    if key == "description":
+        return (Decimal(0), normalize_description(item.description))
+    if key == "company_name":
+        return (Decimal(0), normalize_description(item.company_name))
+    if key == "reason":
+        return (Decimal(0), item.reason)
+    # 원본 행 번호는 **파일마다 1부터** 다시 시작한다. 여러 달을 올려 두면 번호만
+    # 으로는 순서가 정해지지 않으므로 배치를 앞세운다 — CSV 와 같은 순서가 되어
+    # 두 결과를 나란히 대조할 수 있다.
+    return (Decimal((item.batch_id or 0) * 1_000_000 + item.row_number), "")

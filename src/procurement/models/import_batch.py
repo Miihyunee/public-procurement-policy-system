@@ -49,7 +49,10 @@ class ImportBatch:
         period_end: 대상 기간 종료일 (필수). 호출자가 지정합니다.
         file_hash: 원본 파일 내용 해시. 같은 파일 재업로드 감지에 사용하며
             선택 항목입니다.
-        row_count: 이 배치로 적재된 행 수. 적재 후 갱신됩니다.
+        source_row_count: 이 배치의 **원본 행 수**(Importer 에 넘긴 행 수).
+            적재 후 갱신됩니다. ``None`` 이면 이 값을 기록하기 전(STEP 14 이전)에
+            만들어진 배치라 **원본 행 수를 알 수 없다**는 뜻이며, 0 이 아닙니다.
+        row_count: 이 배치로 **적재된** 행 수. 적재 후 갱신됩니다.
         total_amount: 이 배치의 금액 합계. 적재 후 갱신됩니다.
         status: 배치 상태(``ACTIVE`` / ``SUPERSEDED``).
         superseded_by: 이 배치를 대체한 배치 ID. 대체되지 않았으면 ``None``.
@@ -64,6 +67,7 @@ class ImportBatch:
     period_end: date
     file_hash: str | None = None
     row_count: int = 0
+    source_row_count: int | None = None
     total_amount: Decimal = Decimal("0")
     status: str = STATUS_ACTIVE
     superseded_by: int | None = None
@@ -71,6 +75,17 @@ class ImportBatch:
     batch_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @property
+    def rejected_hint(self) -> int | None:
+        """원본 대비 적재되지 않은 행 수(원본 행 수를 아는 경우에만).
+
+        ⚠️ 실제 미적재 **기록** 건수와 맞대어 보는 용도입니다. 둘이 다르면
+        어딘가에서 행이 설명 없이 사라진 것입니다.
+        """
+        if self.source_row_count is None:
+            return None
+        return self.source_row_count - self.row_count
 
     @property
     def is_active(self) -> bool:

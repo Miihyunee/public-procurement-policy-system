@@ -87,7 +87,7 @@ class TestPreloadSurfaceIsMinimal:
 
     def test_does_not_expose_node_modules(self) -> None:
         source = _read(ELECTRON_DIR / "preload.js")
-        for forbidden in ("node:fs", "node:child_process", "require(\"fs\")"):
+        for forbidden in ("node:fs", "node:child_process", 'require("fs")'):
             assert forbidden not in source
 
 
@@ -133,10 +133,31 @@ class TestRendererUsesBackendOnly:
         assert "year: Number(" in source
 
     def test_screen_does_not_compute_the_period(self) -> None:
-        """연도 → 기간 환산은 백엔드가 한다(화면에 날짜 계산이 없다)."""
+        """연도 → 기간 환산은 백엔드가 한다(화면에 날짜 계산이 없다).
+
+        STEP 14 에서 업로드 이력 표가 배치의 기간을 **표시**하게 되면서,
+        ``period_start`` 라는 낱말이 화면에 등장합니다. 원래 막으려던 것은
+        "표시" 가 아니라 **화면이 기간을 만들어 보내는 것**이므로, 검사를
+        그 지점으로 좁혔습니다 — 요청 본문과 날짜 계산을 직접 봅니다.
+        """
         source = _read(INDEX_HTML)
-        assert "period_start" not in source
-        assert "period_end" not in source
+
+        # ① 업로드 요청 본문에 기간이 실리지 않는다 (연도만 보낸다).
+        for body in re.findall(r"sendUpload\((.*?)\);", source, re.S):
+            assert "period_start" not in body, body
+            assert "period_end" not in body, body
+
+        # ② 화면에 기간을 만들어 내는 날짜 계산이 없다.
+        for banned in ("-01-01", "-12-31", "setFullYear", "toISOString"):
+            assert banned not in source, banned
+
+        # ``new Date`` 는 연도 선택지를 채울 때 **올해가 몇 년인지** 묻는
+        # 용도로만 쓴다. 그 외 날짜 조립은 없다.
+        assert set(re.findall(r"new Date\([^)]*\)[.\w()]*", source)) == {"new Date().getFullYear()"}
+
+        # ③ 기간이 등장하는 곳은 **백엔드가 준 값을 읽는 자리**뿐이다.
+        for match in re.findall(r"[\w.]*period_(?:start|end)", source):
+            assert match.startswith("item."), match
 
     def test_upload_ui_elements_exist(self) -> None:
         source = _read(INDEX_HTML)
@@ -192,9 +213,12 @@ class TestRendererUsesBackendOnly:
         """
         source = _read(INDEX_HTML)
 
-        assert "409" in source          # 백엔드 응답을 보고 움직인다
+        assert "409" in source  # 백엔드 응답을 보고 움직인다
         assert "import_batch" not in source
+        # ⛔ 화면이 상태 상수를 직접 비교하지 않는다. "현재인가" 는 백엔드가
+        #    준 ``is_current`` 로만 판단한다.
         assert "SUPERSEDED" not in source
+        assert '"ACTIVE"' not in source
 
     def test_browser_mode_degrades_gracefully(self) -> None:
         """데스크톱이 아니면 버튼을 막고 안내한다(브라우저에서 열었을 때)."""

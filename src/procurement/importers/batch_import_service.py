@@ -192,7 +192,14 @@ class BatchImportService:
 
         stored = self._purchase_repository.find_by_batch(batch.batch_id)
         total_amount = sum((purchase.amount for purchase in stored), Decimal("0"))
-        self._batch_repository.update_totals(batch.batch_id, len(stored), total_amount)
+        self._batch_repository.update_totals(
+            batch.batch_id,
+            len(stored),
+            total_amount,
+            # 원본 행 수를 **세어서** 남긴다 — 적재/미적재 합계로 되계산하면
+            # 둘을 맞대어 볼 수 없다.
+            source_row_count=report.total_count,
+        )
 
         superseded: ImportBatch | None = None
         if previous is not None and previous.batch_id is not None:

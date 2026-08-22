@@ -144,6 +144,7 @@ _REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
         "period_end",
         "status",
         "row_count",
+        "source_row_count",
         "total_amount",
     ),
     # 원본에는 있었으나 DB-1 에 적재되지 않은 행의 기록(STEP 12).
@@ -255,6 +256,10 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("purchase", "issue_date", "DATE"),
     ("purchase", "description", "TEXT"),
     ("purchase", "budget_account", "TEXT"),
+    # 2026-08-22 STEP 14 — 배치의 **원본 행 수**. 적재 행 수(row_count)와 맞대어
+    # "설명되지 않는 행" 을 계산한다. 기존 배치는 NULL 이 되며, 그것이 곧
+    # "원본 행 수를 모른다" 는 뜻이다(0 으로 채우지 않는다).
+    ("import_batch", "source_row_count", "INTEGER"),
 )
 
 

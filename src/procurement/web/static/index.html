@@ -407,9 +407,70 @@
         <a id="upload-trace-csv" class="control" href="/imports/trace.csv"
            download="import-rejections.csv">미적재 CSV 내려받기</a>
       </div>
-      <div id="upload-trace-rows" class="rv-trace" hidden></div>
+      <div id="rejection-panel" hidden>
+        <div class="upload-actions">
+          <span class="control">
+            <span class="control-label">검색</span>
+            <input id="rejection-search" class="control-input" type="text"
+                   placeholder="적요 · 거래처 · 행 번호"
+                   aria-label="미적재 행 검색 — 적요, 거래처명, 사업자번호, 원본 행 번호" />
+          </span>
+          <span class="control">
+            <span class="control-label">사유</span>
+            <select id="rejection-reason" class="control-input" aria-label="미적재 사유 필터">
+              <option value="ALL">전체</option>
+            </select>
+          </span>
+          <span class="control">
+            <span class="control-label">정렬</span>
+            <select id="rejection-sort" class="control-input" aria-label="미적재 행 정렬 기준">
+              <option value="row_number">원본 행 번호</option>
+              <option value="amount">금액</option>
+              <option value="description">적요</option>
+              <option value="company_name">거래처명</option>
+              <option value="reason">사유</option>
+            </select>
+          </span>
+          <span class="control">
+            <span class="control-label">방향</span>
+            <select id="rejection-direction" class="control-input" aria-label="정렬 방향">
+              <option value="asc">오름차순</option>
+              <option value="desc">내림차순</option>
+            </select>
+          </span>
+        </div>
+        <div id="upload-trace-rows" class="rv-trace"></div>
+        <div class="upload-actions rv-pager">
+          <button id="rejection-prev" class="control" type="button"
+                  aria-label="미적재 행 이전 쪽">← 이전 쪽</button>
+          <span id="rejection-page-info" class="card-sub"></span>
+          <button id="rejection-next" class="control" type="button"
+                  aria-label="미적재 행 다음 쪽">다음 쪽 →</button>
+        </div>
+      </div>
 
       <div id="upload-issues" class="upload-issues" hidden></div>
+    </section>
+
+    <!--
+      업로드 이력 — 매월 파일을 올리는 운영을 전제로, 어느 달이 언제 올라왔고
+      지금 무엇이 쓰이는지 보여 준다. ⛔ 삭제·복구 기능은 만들지 않는다.
+    -->
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">업로드 이력</h2>
+          <p class="card-sub">
+            매월 올린 원본 파일과 그 결과입니다. 같은 기간을 다시 올리면
+            이전 업로드는 <b>대체됨</b> 으로 남고 기록은 지워지지 않습니다
+          </p>
+        </div>
+        <button id="history-reload" class="control" type="button"
+                aria-label="업로드 이력 새로고침">새로고침</button>
+      </div>
+      <div id="history-error" class="error" hidden></div>
+      <div id="history-table" class="rv-trace"></div>
+      <div id="history-detail" class="notice" hidden></div>
     </section>
   </div>
 
@@ -1222,10 +1283,18 @@
     }
 
     var rejected = result.rejected_rows || 0;
+    var unexplained = result.unexplained_rows || 0;
     box.appendChild(make("div", null,
       "원본 행 " + numberFormat(result.total_rows) + "건 · " +
       "검토 대상 적재 " + numberFormat(result.stored_rows) + "건 · " +
-      "미적재 " + numberFormat(rejected) + "건"));
+      "미적재 " + numberFormat(rejected) + "건 · " +
+      "설명되지 않는 행 " + numberFormat(unexplained) + "건"));
+    if (unexplained) {
+      // ⚠️ 0 이 아니면 어딘가에서 행이 사라진 것이다. 조용히 넘기지 않는다.
+      box.appendChild(make("div", null,
+        "⚠️ 설명되지 않는 행이 " + numberFormat(unexplained) + "건 있습니다. " +
+        "원본 행 수와 적재·미적재 합계가 맞지 않습니다."));
+    }
 
     if (!rejected) {
       box.appendChild(make("div", "rv-key",
@@ -1246,15 +1315,170 @@
     actions.hidden = false;
   }
 
-  /** [미적재 행 확인] — 이미 있는 ``/imports/trace`` 를 그대로 쓴다. */
+  // ------------------------------------------------------------------
+  // 미적재 행 조회 — 검색 · 사유 · 정렬 · 페이지
+  //
+  // ⛔ **조회일 뿐이다.** 걸러 본다고 그 행의 처리 방식이 정해지지 않는다.
+  //    금액 0 이하 행을 승인·제외·검토대상 전환하는 기능은 만들지 않았다.
+  // ------------------------------------------------------------------
+
+  var rejectionPage = 1;
+
+  /** 가장 최근에 받은 ``/imports/trace`` 결과. 같은 것을 두 번 받지 않으려고 둔다. */
+  var lastTrace = null;
+
+  /** [미적재 행 확인] — 조건 패널을 열고 닫는다. */
   function showUploadRejections() {
-    var rows = el("upload-trace-rows");
-    if (!rows.hidden) { rows.hidden = true; return; }
-    fetchJson("/imports/trace").then(function (trace) {
-      renderRejectionTable(rows, trace);
-      rows.hidden = false;
+    var panel = el("rejection-panel");
+    if (!panel.hidden) { panel.hidden = true; return; }
+    panel.hidden = false;
+    rejectionPage = 1;
+    loadRejectionReasons();
+    loadRejections();
+  }
+
+  /**
+   * 사유 선택지는 백엔드가 소유한다 — 화면이 만들지 않는다.
+   *
+   * 검토 화면이 이미 받아 둔 ``/imports/trace`` 결과를 **다시 쓴다**. 같은
+   * 것을 두 번 받지 않기 위해서다.
+   */
+  function loadRejectionReasons() {
+    var select = el("rejection-reason");
+    if (select.options.length > 1) { return; }
+    var ready = lastTrace ? Promise.resolve(lastTrace) : fetchJson("/imports/trace");
+    ready.then(function (trace) {
+      lastTrace = trace;
+      (trace.reasons || []).forEach(function (item) {
+        var option = document.createElement("option");
+        option.value = item.reason;
+        option.textContent = item.label + " (" + numberFormat(item.count) + ")";
+        select.appendChild(option);
+      });
+    }).catch(function () { /* 선택지를 못 받아도 전체 조회는 된다 */ });
+  }
+
+  function rejectionParams() {
+    return "search=" + encodeURIComponent(el("rejection-search").value.trim())
+      + "&reason=" + encodeURIComponent(el("rejection-reason").value)
+      + "&sort=" + encodeURIComponent(el("rejection-sort").value)
+      + "&direction=" + encodeURIComponent(el("rejection-direction").value)
+      + "&page=" + rejectionPage
+      + "&page_size=50";
+  }
+
+  function loadRejections() {
+    uploadError("");
+    fetchJson("/imports/rejections?" + rejectionParams()).then(function (page) {
+      renderRejectionTable(el("upload-trace-rows"), page);
+      text(el("rejection-page-info"),
+        page.total
+          ? page.page + " / " + page.total_pages + " 쪽 · 전체 "
+            + numberFormat(page.total) + "건"
+          : "조건에 맞는 미적재 행이 없습니다.");
+      el("rejection-prev").disabled = !page.has_previous;
+      el("rejection-next").disabled = !page.has_next;
     }).catch(function (error) {
       uploadError("미적재 행을 불러오지 못했습니다: " + error.message);
+    });
+  }
+
+  function reloadRejectionsFromFirstPage() {
+    rejectionPage = 1;
+    loadRejections();
+  }
+
+  // ------------------------------------------------------------------
+  // 업로드 이력 (STEP 14)
+  //
+  // ⛔ 삭제·복구 기능을 만들지 않는다. 새 상태값도 만들지 않는다 —
+  //    상태 문자열과 "현재/대체됨" 판정은 **백엔드가 준 값**(status ·
+  //    is_current)을 그대로 쓴다. 화면이 상태 상수를 비교하지 않는다.
+  // ------------------------------------------------------------------
+
+  function historyError(message) {
+    var node = el("history-error");
+    text(node, message);
+    node.hidden = !message;
+  }
+
+  function loadHistory() {
+    historyError("");
+    fetchJson("/imports/batches").then(renderHistory).catch(function (error) {
+      historyError("업로드 이력을 불러오지 못했습니다: " + error.message);
+    });
+  }
+
+  function renderHistory(payload) {
+    var box = el("history-table");
+    clear(box);
+    el("history-detail").hidden = true;
+
+    if (!payload.items.length) {
+      box.appendChild(make("div", "rv-key", "아직 업로드한 파일이 없습니다."));
+      return;
+    }
+
+    var table = make("table");
+    var head = make("tr");
+    ["기간", "파일", "업로드일시", "원본", "적재", "미적재", "설명 안 됨", "상태", ""]
+      .forEach(function (label) { head.appendChild(make("th", null, label)); });
+    table.appendChild(head);
+
+    payload.items.forEach(function (item) {
+      var tr = make("tr");
+      tr.appendChild(make("td", null, item.period_start + " ~ " + item.period_end));
+      tr.appendChild(make("td", null, item.file_name));
+      tr.appendChild(make("td", null, (item.uploaded_at || "").replace("T", " ").slice(0, 19)));
+      // 원본 행 수를 모르는 옛 배치는 "-" 다. ⛔ 0 으로 적지 않는다.
+      tr.appendChild(make("td", "num",
+        item.source_rows === null ? "-" : numberFormat(item.source_rows)));
+      tr.appendChild(make("td", "num", numberFormat(item.stored)));
+      tr.appendChild(make("td", "num", numberFormat(item.rejected)));
+      tr.appendChild(make("td", "num",
+        item.unexplained === null ? "-" : numberFormat(item.unexplained)));
+      tr.appendChild(make("td", null, item.is_current ? "현재" : "대체됨"));
+
+      var cell = make("td");
+      var button = make("button", "control", "상세");
+      button.type = "button";
+      button.setAttribute("aria-label",
+        "업로드 " + item.batch_id + " (" + item.period_start + ") 상세 보기");
+      button.addEventListener("click", function () { showBatchDetail(item.batch_id); });
+      cell.appendChild(button);
+      tr.appendChild(cell);
+      table.appendChild(tr);
+    });
+    box.appendChild(table);
+    box.appendChild(make("div", "rv-key",
+      "전체 " + numberFormat(payload.total) + "회 업로드 · 현재 사용 중 "
+      + numberFormat(payload.current) + "개 배치"));
+  }
+
+  function showBatchDetail(batchId) {
+    var box = el("history-detail");
+    fetchJson("/imports/batches/" + encodeURIComponent(batchId)).then(function (item) {
+      clear(box);
+      box.appendChild(make("div", null,
+        "업로드 #" + item.batch_id + " · " + item.file_name
+        + " · " + (item.uploaded_at || "").replace("T", " ").slice(0, 19)));
+      box.appendChild(make("div", null,
+        "기간 " + item.period_start + " ~ " + item.period_end
+        + " · 상태 " + item.status + (item.is_current ? " (현재)" : " (대체됨)")
+        + (item.superseded_by ? " → #" + item.superseded_by : "")));
+      box.appendChild(make("div", null,
+        "원본 " + (item.source_rows === null ? "-" : numberFormat(item.source_rows))
+        + "건 · 적재 " + numberFormat(item.stored)
+        + "건 · 미적재 " + numberFormat(item.rejected)
+        + "건 · 설명되지 않는 행 "
+        + (item.unexplained === null ? "-" : numberFormat(item.unexplained)) + "건"));
+      (item.reasons || []).forEach(function (reason) {
+        box.appendChild(make("div", "rv-key",
+          "- " + reason.label + ": " + numberFormat(reason.count) + "건"));
+      });
+      box.hidden = false;
+    }).catch(function (error) {
+      historyError("업로드 상세를 불러오지 못했습니다: " + error.message);
     });
   }
 
@@ -1293,6 +1517,7 @@
     );
 
     renderUploadTrace(result);
+    if (result.stored) { loadHistory(); }
 
     if (!result.issues.length) {
       issues.hidden = true;
@@ -1409,6 +1634,20 @@
     // 미적재 행 확인은 브라우저에서도 쓸 수 있어야 하므로 데스크톱 검사보다
     // 먼저 연결한다(파일 선택만 데스크톱 앱 기능이다).
     el("upload-trace-show").addEventListener("click", showUploadRejections);
+    el("history-reload").addEventListener("click", loadHistory);
+    ["rejection-reason", "rejection-sort", "rejection-direction"].forEach(function (id) {
+      el(id).addEventListener("change", reloadRejectionsFromFirstPage);
+    });
+    // 타이핑 한 글자마다 요청하지 않는다.
+    el("rejection-search").addEventListener("input", debounce(reloadRejectionsFromFirstPage, 300));
+    el("rejection-prev").addEventListener("click", function () {
+      if (rejectionPage > 1) { rejectionPage -= 1; loadRejections(); }
+    });
+    el("rejection-next").addEventListener("click", function () {
+      rejectionPage += 1;
+      loadRejections();
+    });
+    loadHistory();
 
     if (!desktop()) {
       pick.disabled = true;
@@ -1927,6 +2166,7 @@
   /** 대조 결과를 불러와 안내줄을 그린다. 실패해도 검토 화면을 막지 않는다. */
   function loadTrace() {
     return fetchJson("/imports/trace").then(function (trace) {
+      lastTrace = trace;
       renderTrace(trace);
     }).catch(function () {
       // 대조 정보를 못 받아도 검토는 계속할 수 있어야 한다.
@@ -1960,19 +2200,33 @@
     rows.hidden = false;
   }
 
-  /** 미적재 행 표. 검토 화면과 업로드 화면이 **같은 것**을 쓴다. */
-  function renderRejectionTable(box, trace) {
+  /**
+   * 미적재 행 표. 검토 화면과 업로드 화면이 **같은 것**을 쓴다.
+   *
+   * ``payload`` 는 두 가지 모양을 받는다 — ``/imports/trace`` 의
+   * ``{rejected, rows, truncated}`` 와 ``/imports/rejections`` 의
+   * ``{total, items}``. 담당자가 보는 표는 하나뿐이어야 하기 때문이다.
+   */
+  function renderRejectionTable(box, payload) {
     clear(box);
-    box.appendChild(make("div", "rv-key",
-      "미적재 행 " + numberFormat(trace.rejected) + "건"));
+    var rows = payload.items || payload.rows || [];
+    var total = payload.total !== undefined ? payload.total : payload.rejected;
+    box.appendChild(make("div", "rv-key", "미적재 행 " + numberFormat(total) + "건"));
+    if (!rows.length) {
+      box.appendChild(make("div", "rv-key", "표시할 행이 없습니다."));
+      return;
+    }
     var table = make("table");
     var head = make("tr");
-    ["원본 행", "적요", "거래처", "금액", "예산과목", "사유"].forEach(function (label) {
+    // 원본 행 번호는 **파일마다 1부터** 다시 시작하므로, 어느 업로드의 몇 행인지
+    // 함께 보여야 담당자가 원본을 찾을 수 있다.
+    ["업로드", "원본 행", "적요", "거래처", "금액", "예산과목", "사유"].forEach(function (label) {
       head.appendChild(make("th", null, label));
     });
     table.appendChild(head);
-    (trace.rows || []).forEach(function (row) {
+    rows.forEach(function (row) {
       var tr = make("tr");
+      tr.appendChild(make("td", "num", row.batch_id === null ? "-" : "#" + row.batch_id));
       tr.appendChild(make("td", "num", String(row.row_number)));
       tr.appendChild(make("td", null, row.description || "-"));
       tr.appendChild(make("td", null, row.company_name || "-"));
@@ -1983,7 +2237,7 @@
       table.appendChild(tr);
     });
     box.appendChild(table);
-    if (trace.truncated) {
+    if (payload.truncated) {
       // ⛔ 조용히 자르지 않는다 — 자른 사실을 말한다.
       box.appendChild(make("div", "rv-key",
         "목록이 길어 일부만 표시했습니다. 전체 건수는 위 안내를 보세요."));

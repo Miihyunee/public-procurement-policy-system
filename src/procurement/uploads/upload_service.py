@@ -132,6 +132,15 @@ class UploadResult:
         """사유별 미적재 행 수."""
         return dict(self.batch.trace.reasons or {}) if self.batch is not None else {}
 
+    @property
+    def unexplained_rows(self) -> int:
+        """**설명되지 않은** 행 수 = 원본 − 적재 − 미적재.
+
+        ⚠️ 0 이 아니면 어딘가에서 행이 사라진 것입니다. 저장하지 않았으면 0
+        입니다(적재/미적재를 말할 수 없으므로).
+        """
+        return self.batch.trace.unexplained if self.batch is not None else 0
+
 
 class UploadService:
     """표준 Excel 업로드를 읽고 검증하며, 요청 시 기존 적재 계층으로 저장합니다.

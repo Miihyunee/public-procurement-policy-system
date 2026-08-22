@@ -15,11 +15,16 @@ procurement.importers.trace_response
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
-from procurement.importers.trace_service import ImportTraceOverview
+from procurement.importers.trace_service import (
+    BatchHistoryEntry,
+    ImportTraceOverview,
+    RejectionPage,
+)
 from procurement.models.import_rejection import (
     REJECTION_REASON_LABELS,
     ImportRejection,
@@ -167,14 +172,7 @@ def build_trace_response(
         rejected=overview.rejected,
         all_visible=overview.all_visible,
         notice=build_notice(overview),
-        reasons=tuple(
-            RejectionReasonResponseModel(
-                reason=reason,
-                label=REJECTION_REASON_LABELS.get(reason, reason),
-                count=count,
-            )
-            for reason, count in sorted((overview.reasons or {}).items())
-        ),
+        reasons=_reason_models(overview.reasons),
         batches=tuple(BatchTraceResponseModel.from_trace(trace) for trace in overview.batches),
         rows=tuple(RejectedRowResponseModel.from_rejection(item) for item in shown),
         truncated=len(rejections) > len(shown),
@@ -194,4 +192,137 @@ def build_notice(overview: ImportTraceOverview) -> str:
         f"원본 {overview.source_rows:,}행 중 {overview.stored:,}행이 검토 대상입니다. "
         f"나머지 {overview.rejected:,}행은 원본에는 있으나 현재 검토 대상에 "
         "포함되지 않았습니다 — 처리 방식 확인이 필요합니다."
+    )
+
+
+class BatchHistoryResponseModel(BaseModel):
+    """업로드 한 번의 기록.
+
+    Attributes:
+        batch_id: 배치 ID.
+        file_name: 원본 파일명.
+        period_start: 대상 기간 시작일.
+        period_end: 대상 기간 종료일.
+        uploaded_at: 업로드 시각.
+        status: 배치 상태. ⛔ 기존 lifecycle 값 그대로 (``ACTIVE`` / ``SUPERSEDED``).
+        is_current: 지금 검토·계산에 쓰이는 배치인가.
+        superseded_by: 이 배치를 대체한 배치 ID.
+        source_rows: 기록된 원본 행 수. **모르면 ``null``** — 0 이 아닙니다.
+        stored: 적재된 행 수.
+        rejected: 적재되지 않아 기록된 행 수.
+        unexplained: 설명되지 않은 행 수. 원본 행 수를 모르면 ``null``.
+        reasons: 사유별 건수.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    batch_id: int | None
+    file_name: str
+    period_start: date
+    period_end: date
+    uploaded_at: datetime | None
+    status: str
+    is_current: bool
+    superseded_by: int | None
+    source_rows: int | None
+    stored: int
+    rejected: int
+    unexplained: int | None
+    reasons: tuple[RejectionReasonResponseModel, ...]
+
+    @classmethod
+    def from_entry(cls, entry: BatchHistoryEntry) -> BatchHistoryResponseModel:
+        """이력 항목을 응답 모델로 변환합니다."""
+        return cls(
+            batch_id=entry.batch_id,
+            file_name=entry.batch.file_name,
+            period_start=entry.batch.period_start,
+            period_end=entry.batch.period_end,
+            uploaded_at=entry.batch.uploaded_at,
+            status=entry.batch.status,
+            is_current=entry.is_current,
+            superseded_by=entry.batch.superseded_by,
+            source_rows=entry.source_rows,
+            stored=entry.stored,
+            rejected=entry.rejected,
+            unexplained=entry.unexplained,
+            reasons=_reason_models(entry.reasons),
+        )
+
+
+class BatchHistoryListResponseModel(BaseModel):
+    """업로드 이력 목록.
+
+    Attributes:
+        items: 최근 업로드 순.
+        total: 전체 업로드 수(대체된 것 포함).
+        current: 지금 유효한 배치 수.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[BatchHistoryResponseModel, ...]
+    total: int
+    current: int
+
+
+class RejectionPageResponseModel(BaseModel):
+    """조건에 맞는 미적재 행 한 페이지.
+
+    Attributes:
+        items: 이 페이지의 행.
+        total: 조건에 맞는 전체 건수.
+        page: 현재 페이지.
+        page_size: 한 페이지 건수.
+        total_pages: 전체 쪽 수.
+        has_previous: 이전 쪽이 있는가.
+        has_next: 다음 쪽이 있는가.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[RejectedRowResponseModel, ...]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    has_previous: bool
+    has_next: bool
+
+    @classmethod
+    def from_page(cls, page: RejectionPage) -> RejectionPageResponseModel:
+        """조회 결과를 응답 모델로 변환합니다."""
+        return cls(
+            items=tuple(RejectedRowResponseModel.from_rejection(item) for item in page.items),
+            total=page.total,
+            page=page.page,
+            page_size=page.page_size,
+            total_pages=page.total_pages,
+            has_previous=page.has_previous,
+            has_next=page.has_next,
+        )
+
+
+def build_history_response(
+    entries: list[BatchHistoryEntry],
+) -> BatchHistoryListResponseModel:
+    """업로드 이력을 응답 모델로 변환합니다."""
+    return BatchHistoryListResponseModel(
+        items=tuple(BatchHistoryResponseModel.from_entry(entry) for entry in entries),
+        total=len(entries),
+        current=sum(1 for entry in entries if entry.is_current),
+    )
+
+
+def _reason_models(
+    reasons: dict[str, int] | None,
+) -> tuple[RejectionReasonResponseModel, ...]:
+    """사유별 건수를 응답 모델 묶음으로 만듭니다."""
+    return tuple(
+        RejectionReasonResponseModel(
+            reason=reason,
+            label=REJECTION_REASON_LABELS.get(reason, reason),
+            count=count,
+        )
+        for reason, count in sorted((reasons or {}).items())
     )
