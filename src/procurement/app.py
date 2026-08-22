@@ -33,7 +33,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from procurement.admin import (
@@ -64,8 +64,20 @@ from procurement.database.purchase_repository import PurchaseRepository
 from procurement.database.review_repository import ReviewRepository, ReviewValidationError
 from procurement.importers.batch_import_service import BatchImportService
 from procurement.importers.purchase_importer import PurchaseImporter
+from procurement.reviews.export import export_lines
+from procurement.reviews.query import (
+    ANY as QUERY_ANY,
+)
+from procurement.reviews.query import (
+    ASCENDING,
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+    ReviewQuery,
+    ReviewQueryError,
+)
 from procurement.reviews.response import (
     ConfirmReviewRequest,
+    PageResponseModel,
     PurchaseTypeOptionResponseModel,
     ReopenReviewRequest,
     ReviewHistoryItemResponseModel,
@@ -583,22 +595,118 @@ def create_app(
         tags=["reviews"],
     )
     def list_reviews(
-        review_filter: str = FILTER_ALL, limit: int | None = None, offset: int = 0
+        review_filter: str = FILTER_ALL,
+        limit: int | None = None,
+        offset: int = 0,
+        search: str = "",
+        status: str = QUERY_ANY,
+        decision: str = QUERY_ANY,
+        history: str = QUERY_ANY,
+        candidates: str = QUERY_ANY,
+        ambiguous_only: bool = False,
+        sort: str = "purchase_id",
+        direction: str = ASCENDING,
+        page: int | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
     ) -> ReviewListResponseModel:
         """검토 대상 목록과 진행 상황을 반환합니다.
 
         각 항목은 ``source``(원본) · ``analysis``(자동 분석) ·
-        ``review``(담당자 확정)로 **분리**되어 있습니다.
+        ``review``(담당자 확정) · ``past_labels``(과거 이력)로 **분리**되어
+        있습니다.
+
+        검색 · 필터 · 정렬 · 페이지는 **서버에서** 처리하고 **해당 페이지만**
+        내려보냅니다. 전체를 브라우저로 보내 거르는 구조는 건수가 늘수록
+        첫 화면이 느려지기 때문입니다.
+
+        ``page`` 를 주지 않으면 기존 방식(``limit`` · ``offset``)으로 동작해
+        이전 호출부가 그대로 동작합니다.
+
+        Raises:
+            HTTPException: 허용되지 않는 조건값이면 422.
+        """
+        if page is None:
+            try:
+                targets = review_service.list_targets(
+                    review_filter=review_filter, limit=limit, offset=offset
+                )
+            except ReviewFilterError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return ReviewListResponseModel(
+                items=[ReviewItemResponseModel.from_target(target) for target in targets],
+                progress=ReviewProgressResponseModel.from_progress(review_service.progress()),
+            )
+
+        try:
+            query = ReviewQuery(
+                search=search,
+                status=status,
+                decision=decision,
+                history=history,
+                candidates=candidates,
+                ambiguous_only=ambiguous_only,
+                sort=sort,
+                direction=direction,
+                page=page,
+                page_size=page_size,
+            )
+        except ReviewQueryError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        result = review_service.search(query)
+        return ReviewListResponseModel(
+            items=[ReviewItemResponseModel.from_target(target) for target in result.items],
+            progress=ReviewProgressResponseModel.from_progress(review_service.progress()),
+            page=PageResponseModel.from_page(result.page),
+        )
+
+    @app.get(
+        "/reviews/export.csv",
+        summary="확정 이력 CSV 내려받기",
+        tags=["reviews"],
+        response_class=StreamingResponse,
+    )
+    def export_reviews(
+        search: str = "",
+        status: str = QUERY_ANY,
+        decision: str = QUERY_ANY,
+        history: str = QUERY_ANY,
+        candidates: str = QUERY_ANY,
+        ambiguous_only: bool = False,
+        sort: str = "purchase_id",
+        direction: str = ASCENDING,
+    ) -> StreamingResponse:
+        """화면과 **같은 조건**의 검토 내역을 CSV 로 내려줍니다.
+
+        담당자가 엑셀에서 직접 검증하기 위한 것입니다. ⛔ 자동 확정이나 분석기
+        평가와는 무관하며, ``최종 유형`` 열에는 **담당자 확정값만** 들어갑니다.
+
+        페이지 조건은 받지 않습니다 — 내보내기는 **조건에 맞는 전부**입니다.
+
+        Raises:
+            HTTPException: 허용되지 않는 조건값이면 422.
         """
         try:
-            targets = review_service.list_targets(
-                review_filter=review_filter, limit=limit, offset=offset
+            query = ReviewQuery(
+                search=search,
+                status=status,
+                decision=decision,
+                history=history,
+                candidates=candidates,
+                ambiguous_only=ambiguous_only,
+                sort=sort,
+                direction=direction,
+                page=1,
+                page_size=MAX_PAGE_SIZE,
             )
-        except ReviewFilterError as exc:
+        except ReviewQueryError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return ReviewListResponseModel(
-            items=[ReviewItemResponseModel.from_target(target) for target in targets],
-            progress=ReviewProgressResponseModel.from_progress(review_service.progress()),
+
+        targets = review_service.search_all(query)
+        return StreamingResponse(
+            export_lines(targets),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="reviews.csv"'},
         )
 
     @app.get(

@@ -38,6 +38,7 @@ from procurement.models.review import (
     ReviewProgress,
 )
 from procurement.reviews.past_labels import PastLabelSummary
+from procurement.reviews.query import PageInfo
 from procurement.reviews.review_service import ReviewTarget
 
 
@@ -317,18 +318,54 @@ class ReviewProgressResponseModel(BaseModel):
         )
 
 
+class PageResponseModel(BaseModel):
+    """페이지 상태.
+
+    Attributes:
+        page: 현재 페이지(1부터).
+        page_size: 한 페이지 건수.
+        total: **조건에 맞는 전체 건수**(이 페이지에 담긴 수가 아님).
+        total_pages: 전체 페이지 수. 결과가 0건이면 1.
+        has_previous: 이전 페이지가 있는가.
+        has_next: 다음 페이지가 있는가.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    has_previous: bool
+    has_next: bool
+
+    @classmethod
+    def from_page(cls, info: PageInfo) -> PageResponseModel:
+        """페이지 상태를 응답 모델로 변환합니다."""
+        return cls(
+            page=info.page,
+            page_size=info.page_size,
+            total=info.total,
+            total_pages=info.total_pages,
+            has_previous=info.has_previous,
+            has_next=info.has_next,
+        )
+
+
 class ReviewListResponseModel(BaseModel):
     """검토 목록 응답.
 
     Attributes:
-        items: 검토 대상 목록.
-        progress: 진행 상황.
+        items: 검토 대상 목록 — 페이지 조건을 주면 **그 페이지만** 담깁니다.
+        progress: 진행 상황(필터와 무관한 전체 집계).
+        page: 페이지 상태. 페이지 조건을 주지 않으면 ``null``.
     """
 
     model_config = ConfigDict(frozen=True)
 
     items: list[ReviewItemResponseModel]
     progress: ReviewProgressResponseModel
+    page: PageResponseModel | None = None
 
 
 class ReviewHistoryItemResponseModel(BaseModel):

@@ -194,6 +194,48 @@ class ReviewRepository(BaseRepository):
         rows = self.execute("SELECT * FROM purchase_review ORDER BY purchase_id")
         return [self._row_to_review(row) for row in rows]
 
+    def confirmed_fingerprint(self) -> tuple[int, str | None]:
+        """확정 상태의 **값싼 지문** — ``(확정 건수, 가장 늦은 확정 시각)``.
+
+        같은 지문이면 확정 내용이 그대로라고 보고, 과거 이력 색인을 다시
+        만들지 않습니다(:class:`~procurement.reviews.review_service.ReviewService`).
+
+        전체 행을 읽지 않고 집계 한 번으로 끝나므로, 색인을 매번 새로 만드는
+        것보다 훨씬 쌉니다.
+
+        .. note::
+            **왜 건수와 시각을 함께 보는가.**
+
+            - ``CONFIRMED`` → ``REOPENED`` : 건수가 줄어든다
+            - 같은 건을 다른 유형으로 재확정 : 건수는 같지만 확정 시각이 바뀐다
+
+            둘 중 하나만 보면 각각을 놓칩니다.
+
+        .. note::
+            **왜 ``updated_at`` 이 아니라 ``reviewed_at`` 인가.**
+            ``updated_at`` 은 **재분석에도** 바뀝니다. 분석은 확정 이력을
+            건드리지 않으므로, 그걸로 판단하면 아무 이유 없이 색인을 다시
+            만들게 됩니다. ``reviewed_at`` 은 담당자가 확정할 때만 바뀝니다.
+
+        .. note::
+            **왜 서비스 밖에 두는가.** 서비스가 아니라 **DB 상태**를 근거로
+            판단해야, 테스트나 다른 코드가 Repository 를 직접 고쳐도 낡은
+            색인이 남지 않습니다.
+
+        Returns:
+            ``(건수, ISO 문자열 또는 None)``. 확정이 하나도 없으면 ``(0, None)``.
+        """
+        rows = self.execute(
+            "SELECT COUNT(*) AS n, MAX(reviewed_at) AS latest "
+            "FROM purchase_review WHERE review_status = ?",
+            (CONFIRMED,),
+        )
+        if not rows:
+            return (0, None)
+        row = rows[0]
+        latest = row["latest"]
+        return (int(row["n"]), None if latest is None else str(latest))
+
     def find_by_review_status(self, review_status: str) -> list[PurchaseReview]:
         """검토 상태로 걸러 조회합니다.
 

@@ -99,6 +99,8 @@
     font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase;
     color: var(--muted); margin-bottom: 6px;
   }
+  .rv-pager { justify-content: center; align-items: center; gap: 12px; }
+  .control-grow { flex: 1 1 260px; }
   .rv-past {
     border: 1px solid var(--line); border-radius: 999px;
     padding: 1px 8px; font-size: 12.5px;
@@ -376,14 +378,85 @@
         <div id="review-progress" class="card-sub"></div>
       </div>
 
+      <!--
+        ⛔ 어떤 조건도 "먼저 보라" 는 뜻이 아니다. 담당자가 직접 고른다.
+        검색·필터·정렬·페이지는 전부 서버가 처리하고, 해당 페이지만 내려온다.
+      -->
+      <div class="upload-actions">
+        <span class="control control-grow">
+          <span class="control-label">적요 검색</span>
+          <input id="review-search" class="control-input" type="search"
+                 placeholder="적요 일부를 입력 (띄어쓰기 무시)" />
+        </span>
+        <span class="control">
+          <span class="control-label">상태</span>
+          <select id="review-status" class="control-input">
+            <option value="ALL">전체</option>
+            <option value="PENDING">PENDING</option>
+            <option value="CONFIRMED">CONFIRMED</option>
+            <option value="REOPENED">REOPENED</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">확정 여부</span>
+          <select id="review-decision" class="control-input">
+            <option value="ALL">전체</option>
+            <option value="UNDECIDED">미확정</option>
+            <option value="DECIDED">확정</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">과거 이력</span>
+          <select id="review-history" class="control-input">
+            <option value="ALL">전체</option>
+            <option value="HAS_HISTORY">이력 있음</option>
+            <option value="NO_HISTORY">이력 없음</option>
+            <option value="MIXED">과거 유형 혼재</option>
+            <option value="AGREES">1순위 = 과거 최다</option>
+            <option value="DIFFERS">1순위 ≠ 과거 최다</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">후보 수</span>
+          <select id="review-candidates" class="control-input">
+            <option value="ALL">전체</option>
+            <option value="NONE">0개</option>
+            <option value="ONE">1개</option>
+            <option value="MANY">2개 이상</option>
+          </select>
+        </span>
+      </div>
+
       <div class="upload-actions">
         <span class="control">
-          <span class="control-label">보기</span>
-          <select id="review-filter" class="control-input">
-            <option value="ALL">전체</option>
-            <option value="PENDING">미확정</option>
-            <option value="CONFIRMED">확정됨</option>
-            <option value="AMBIGUOUS">확인 권장</option>
+          <span class="control-label">정렬</span>
+          <select id="review-sort" class="control-input">
+            <option value="purchase_id">구매 ID</option>
+            <option value="resolution_date">결의일자</option>
+            <option value="issue_date">신고기준일</option>
+            <option value="amount">금액</option>
+            <option value="description">적요</option>
+            <option value="status">상태</option>
+            <option value="candidate_count">후보 수</option>
+            <option value="score_gap">1·2순위 점수차</option>
+            <option value="has_history">과거 확정 건수</option>
+            <option value="dominant_ratio">과거 최다 유형 비율</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">방향</span>
+          <select id="review-direction" class="control-input">
+            <option value="asc">오름차순</option>
+            <option value="desc">내림차순</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">페이지 크기</span>
+          <select id="review-page-size" class="control-input">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
           </select>
         </span>
         <span class="control">
@@ -391,11 +464,18 @@
           <input id="review-actor" class="control-input" type="text" placeholder="이름" />
         </span>
         <button id="review-reload" class="control" type="button">새로고침</button>
+        <button id="review-export" class="control" type="button">CSV 내려받기</button>
       </div>
 
       <div id="review-notice" class="notice" hidden></div>
       <div id="review-error" class="error" hidden></div>
       <div id="review-list" class="upload-summary"></div>
+
+      <div class="upload-actions rv-pager">
+        <button id="review-prev" class="control" type="button">← 이전</button>
+        <span id="review-page-info" class="card-sub"></span>
+        <button id="review-next" class="control" type="button">다음 →</button>
+      </div>
     </section>
   </div>
 
@@ -1234,6 +1314,7 @@
 
   var reviewOptions = [];
   var reviewPicks = {};   // purchase_id -> 담당자가 지금 고른 값 (아직 확정 전)
+  var reviewPage = 1;     // 현재 페이지 (1부터)
 
   function reviewNotice(message) {
     var node = el("review-notice");
@@ -1453,19 +1534,79 @@
       + " / " + numberFormat(payload.progress.total)
       + " · 확인 권장 " + numberFormat(payload.progress.ambiguous));
 
+    renderPager(payload.page);
+
     if (!payload.items.length) {
-      list.appendChild(make("div", "empty", "표시할 검토 대상이 없습니다."));
+      list.appendChild(make("div", "empty", "조건에 맞는 검토 대상이 없습니다."));
       return;
     }
     payload.items.forEach(function (item) { list.appendChild(reviewCard(item)); });
   }
 
+  /**
+   * 현재 화면의 조건을 쿼리 문자열로 만든다.
+   *
+   * ⛔ 조건을 화면이 임의로 덧붙이지 않는다. 담당자가 고른 값 그대로다.
+   */
+  function reviewParams(withPage) {
+    var parts = [
+      "search=" + encodeURIComponent(el("review-search").value.trim()),
+      "status=" + encodeURIComponent(el("review-status").value),
+      "decision=" + encodeURIComponent(el("review-decision").value),
+      "history=" + encodeURIComponent(el("review-history").value),
+      "candidates=" + encodeURIComponent(el("review-candidates").value),
+      "sort=" + encodeURIComponent(el("review-sort").value),
+      "direction=" + encodeURIComponent(el("review-direction").value)
+    ];
+    if (withPage) {
+      parts.push("page=" + reviewPage);
+      parts.push("page_size=" + encodeURIComponent(el("review-page-size").value));
+    }
+    return parts.join("&");
+  }
+
   function loadReviews() {
     reviewError("");
-    var filter = el("review-filter").value;
-    fetchJson("/reviews?review_filter=" + encodeURIComponent(filter) + "&limit=50")
+    fetchJson("/reviews?" + reviewParams(true))
       .then(renderReviews)
       .catch(function (error) { reviewError("검토 목록을 불러오지 못했습니다: " + error.message); });
+  }
+
+  /** 조건이 바뀌면 1페이지로 돌아간다 — 3페이지에 있던 채로 걸러지면 빈 화면이 된다. */
+  function reloadFromFirstPage() {
+    reviewPage = 1;
+    loadReviews();
+  }
+
+  /** 타자 칠 때마다 요청하지 않도록 잠시 기다린다. */
+  function debounce(fn, delay) {
+    var timer = null;
+    return function () {
+      if (timer) { clearTimeout(timer); }
+      timer = setTimeout(function () { timer = null; fn(); }, delay);
+    };
+  }
+
+  function renderPager(page) {
+    var info = el("review-page-info");
+    var previous = el("review-prev");
+    var next = el("review-next");
+    if (!page) {
+      text(info, "");
+      previous.disabled = next.disabled = true;
+      return;
+    }
+    text(info, page.total === 0
+      ? "조건에 맞는 건이 없습니다"
+      : page.page + " / " + page.total_pages + " 쪽 · 전체 "
+        + numberFormat(page.total) + "건");
+    previous.disabled = !page.has_previous;
+    next.disabled = !page.has_next;
+  }
+
+  /** CSV 는 화면과 **같은 조건**으로 내려받는다(페이지 조건은 빼고 전부). */
+  function exportReviews() {
+    window.location.href = "/reviews/export.csv?" + reviewParams(false);
   }
 
   function confirmReview(purchaseId, value, note) {
@@ -1501,8 +1642,23 @@
   }
 
   function initReview() {
-    el("review-filter").addEventListener("change", loadReviews);
+    // 조건이 바뀌면 1페이지부터 다시 본다.
+    ["review-status", "review-decision", "review-history", "review-candidates",
+     "review-sort", "review-direction", "review-page-size"].forEach(function (id) {
+      el(id).addEventListener("change", reloadFromFirstPage);
+    });
+    el("review-search").addEventListener("input", debounce(reloadFromFirstPage, 300));
     el("review-reload").addEventListener("click", loadReviews);
+    el("review-export").addEventListener("click", exportReviews);
+
+    // 페이지 이동은 조건을 그대로 유지한 채 번호만 바꾼다.
+    el("review-prev").addEventListener("click", function () {
+      if (reviewPage > 1) { reviewPage -= 1; loadReviews(); }
+    });
+    el("review-next").addEventListener("click", function () {
+      reviewPage += 1;
+      loadReviews();
+    });
     // 선택지 목록은 백엔드가 소유한다. 화면이 만들지 않는다.
     fetchJson("/reviews/options").then(function (options) {
       reviewOptions = options;

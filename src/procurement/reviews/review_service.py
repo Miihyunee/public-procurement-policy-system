@@ -29,9 +29,11 @@ procurement.reviews.review_service
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from procurement.core.description_classifier import DescriptionClassifier
+from procurement.core.description_key import normalize_description
 from procurement.core.period import PeriodFilter
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.database.review_repository import ReviewRepository
@@ -42,7 +44,28 @@ from procurement.models.review import (
     ReviewHistoryEntry,
     ReviewProgress,
 )
-from procurement.reviews.past_labels import EMPTY_SUMMARY, PastLabelIndex, PastLabelSummary
+from procurement.reviews.past_labels import (
+    EMPTY_SUMMARY,
+    MIXED_TYPES,
+    PastLabelIndex,
+    PastLabelSummary,
+)
+from procurement.reviews.query import (
+    ANY,
+    DECIDED,
+    HAS_HISTORY,
+    HISTORY_AGREES,
+    HISTORY_MIXED,
+    MANY_CANDIDATES,
+    NO_CANDIDATE,
+    NO_HISTORY_ONLY,
+    ONE_CANDIDATE,
+    PRESENT_FIRST,
+    UNDECIDED,
+    PageInfo,
+    ReviewQuery,
+    sort_bucket,
+)
 
 #: 필터 — 전체.
 FILTER_ALL = "ALL"
@@ -89,6 +112,131 @@ class ReviewTarget:
     past_labels: PastLabelSummary = EMPTY_SUMMARY
 
 
+@dataclass(frozen=True, kw_only=True)
+class ReviewPage:
+    """조건에 맞는 한 페이지.
+
+    Attributes:
+        items: 이 페이지의 항목.
+        page: 페이지 상태(현재 페이지 · 크기 · 전체 건수).
+    """
+
+    items: list[ReviewTarget]
+    page: PageInfo
+
+
+def _keeps(target: ReviewTarget, query: ReviewQuery) -> bool:
+    """조건에 맞는 항목인가.
+
+    ⛔ 값을 바꾸지 않고 **보여줄지 말지**만 정합니다.
+    """
+    review = target.review
+
+    if query.search:
+        needle = normalize_description(query.search)
+        if needle and needle not in normalize_description(target.purchase.description):
+            return False
+
+    if query.status != ANY and review.review_status != query.status:
+        return False
+
+    if query.decision == DECIDED and review.review_status != CONFIRMED:
+        return False
+    if query.decision == UNDECIDED and review.review_status == CONFIRMED:
+        return False
+
+    count = len(review.candidates)
+    if query.candidates == NO_CANDIDATE and count != 0:
+        return False
+    if query.candidates == ONE_CANDIDATE and count != 1:
+        return False
+    if query.candidates == MANY_CANDIDATES and count < 2:
+        return False
+
+    if query.ambiguous_only and not review.is_ambiguous:
+        return False
+
+    return _keeps_by_history(target, query.history)
+
+
+def _keeps_by_history(target: ReviewTarget, history: str) -> bool:
+    """과거 이력 조건에 맞는가."""
+    if history == ANY:
+        return True
+
+    past = target.past_labels
+    if history == HAS_HISTORY:
+        return past.total > 0
+    if history == NO_HISTORY_ONLY:
+        return past.total == 0
+    if history == HISTORY_MIXED:
+        return past.consistency == MIXED_TYPES
+
+    # 아래 둘은 **분석 후보와 과거를 비교**하므로 둘 다 있어야 의미가 있다.
+    top = target.review.top_candidate
+    if top is None or past.total == 0:
+        return False
+    differs = past.differs_from(top.purchase_type)
+    return not differs if history == HISTORY_AGREES else differs
+
+
+def _sort_value(target: ReviewTarget, key: str) -> object | None:
+    """정렬에 쓸 값. **값이 없으면** ``None``.
+
+    ``None`` 은 "0" 이나 "빈 문자열" 과 다릅니다 — 예를 들어 후보가 1개면
+    점수차라는 것이 **존재하지 않습니다.**
+    """
+    purchase = target.purchase
+    review = target.review
+    past = target.past_labels
+
+    if key == "resolution_date":
+        return purchase.resolution_date
+    if key == "issue_date":
+        return purchase.issue_date
+    if key == "amount":
+        return purchase.amount
+    if key == "description":
+        return normalize_description(purchase.description) or None
+    if key == "status":
+        return review.review_status
+    if key == "candidate_count":
+        return len(review.candidates)
+    if key == "score_gap":
+        candidates = review.candidates
+        return candidates[0].score - candidates[1].score if len(candidates) > 1 else None
+    if key == "has_history":
+        return past.total
+    if key == "dominant_ratio":
+        return past.dominant_ratio if past.total else None
+    return purchase.purchase_id
+
+
+def _sorted(targets: list[ReviewTarget], key: str, *, descending: bool) -> list[ReviewTarget]:
+    """정렬합니다. **값 없는 항목은 방향과 무관하게 늘 뒤**로 갑니다.
+
+    한 번에 ``reverse=True`` 로 정렬하면 "값 없음" 표식까지 뒤집혀, 내림차순일
+    때 빈 값이 **맨 앞으로** 몰려옵니다. 담당자 입장에서는 정렬 방향을 바꿨을
+    뿐인데 빈 칸부터 보이는 셈이라, 값이 있는 것과 없는 것을 나눠 정렬합니다.
+
+    같은 값끼리는 구매 ID 오름차순으로 마무리해, 같은 조건이면 늘 같은 순서가
+    나오게 합니다.
+    """
+    present: list[ReviewTarget] = []
+    missing: list[ReviewTarget] = []
+    for target in targets:
+        bucket = sort_bucket(_sort_value(target, key))
+        (present if bucket == PRESENT_FIRST else missing).append(target)
+
+    def identity(target: ReviewTarget) -> int:
+        return target.purchase.purchase_id or 0
+
+    present.sort(key=identity)
+    present.sort(key=lambda target: _sort_value(target, key), reverse=descending)  # type: ignore[arg-type,return-value]
+    missing.sort(key=identity)
+    return present + missing
+
+
 class ReviewService:
     """검토 대상을 모으고, 담당자의 확정을 기록합니다."""
 
@@ -109,6 +257,10 @@ class ReviewService:
         self._purchase_repository = purchase_repository
         self._review_repository = review_repository
         self._classifier = classifier
+        # 과거 이력 색인과, 그것을 만들 때의 DB 지문.
+        # 지문이 그대로면 다시 만들지 않는다 (:meth:`_past_label_index`).
+        self._index: PastLabelIndex | None = None
+        self._index_fingerprint: tuple[int, str | None] | None = None
 
     # ------------------------------------------------------------------
     # 조회
@@ -148,8 +300,7 @@ class ReviewService:
         purchases = self._purchase_repository.find_for_calculation(period)
         stored = self._review_repository.find_all()
         reviews = {review.purchase_id: review for review in stored}
-        # 목록 한 번에 대해 색인을 한 번만 만든다 (건마다 재조회하면 O(n²)).
-        index = PastLabelIndex(purchases, stored)
+        index = self._past_label_index(purchases, stored)
 
         targets: list[ReviewTarget] = []
         for purchase in purchases:
@@ -170,6 +321,56 @@ class ReviewService:
 
         end = None if limit is None else offset + limit
         return targets[offset:end]
+
+    def search(self, query: ReviewQuery, *, period: PeriodFilter | None = None) -> ReviewPage:
+        """조건에 맞는 **한 페이지**를 반환합니다.
+
+        거르고 줄 세우는 일을 **서버에서** 합니다. 전체를 브라우저로 내려보내지
+        않으므로, 건수가 늘어도 화면이 받는 양은 페이지 크기로 고정됩니다.
+
+        Args:
+            query: 검색·필터·정렬·페이지 조건.
+            period: 기간 조건. ``None`` 이면 제한 없음.
+
+        Returns:
+            :class:`ReviewPage` — 해당 페이지의 항목과 **조건에 맞는 전체 건수**.
+        """
+        targets = self.search_all(query, period=period)
+        start = query.offset
+        return ReviewPage(
+            items=targets[start : start + query.page_size],
+            page=PageInfo(page=query.page, page_size=query.page_size, total=len(targets)),
+        )
+
+    def search_all(
+        self, query: ReviewQuery, *, period: PeriodFilter | None = None
+    ) -> list[ReviewTarget]:
+        """조건에 맞는 **전부**를 반환합니다(페이지 무시).
+
+        CSV 내보내기처럼 "지금 보고 있는 조건의 전체" 가 필요한 경우에만
+        씁니다. 화면 목록은 :meth:`search` 를 써서 한 페이지만 가져갑니다.
+        """
+        purchases = self._purchase_repository.find_for_calculation(period)
+        stored = self._review_repository.find_all()
+        reviews = {review.purchase_id: review for review in stored}
+        index = self._past_label_index(purchases, stored)
+
+        targets: list[ReviewTarget] = []
+        for purchase in purchases:
+            if purchase.purchase_id is None:
+                continue
+            review = reviews.get(purchase.purchase_id) or PurchaseReview(
+                purchase_id=purchase.purchase_id
+            )
+            target = ReviewTarget(
+                purchase=purchase,
+                review=review,
+                past_labels=index.summary_for(purchase.description),
+            )
+            if _keeps(target, query):
+                targets.append(target)
+
+        return _sorted(targets, query.sort, descending=query.descending)
 
     def get_target(self, purchase_id: int) -> ReviewTarget:
         """검토 대상 한 건을 반환합니다.
@@ -335,17 +536,51 @@ class ReviewService:
     # ------------------------------------------------------------------
     # 내부 헬퍼
     # ------------------------------------------------------------------
+    def _past_label_index(
+        self,
+        purchases: Sequence[Purchase] | None = None,
+        reviews: Sequence[PurchaseReview] | None = None,
+    ) -> PastLabelIndex:
+        """과거 이력 색인을 돌려줍니다. **확정 내용이 그대로면 다시 만들지
+        않습니다.**
+
+        판단 근거는 서비스가 기억하는 값이 아니라
+        :meth:`~procurement.database.review_repository.ReviewRepository.confirmed_fingerprint`
+        — 즉 **DB 의 현재 상태**입니다. 그래서 다음 경우가 전부 안전합니다.
+
+        - 이 서비스로 확정·재검토한 경우
+        - 테스트나 다른 코드가 Repository 를 **직접** 고친 경우
+        - 확정 유형만 바꾼 경우(건수는 같지만 갱신 시각이 달라짐)
+        - ``CONFIRMED`` → ``REOPENED`` (건수가 줄어듦)
+
+        Args:
+            purchases: 이미 읽어 둔 구매 목록. 있으면 재조회하지 않습니다.
+            reviews: 이미 읽어 둔 검토 목록. 〃
+
+        Returns:
+            :class:`~procurement.reviews.past_labels.PastLabelIndex`.
+        """
+        fingerprint = self._review_repository.confirmed_fingerprint()
+        if self._index is not None and self._index_fingerprint == fingerprint:
+            return self._index
+
+        rows = (
+            list(purchases)
+            if purchases is not None
+            else self._purchase_repository.find_for_calculation(None)
+        )
+        states = list(reviews) if reviews is not None else self._review_repository.find_all()
+        self._index = PastLabelIndex(rows, states)
+        self._index_fingerprint = fingerprint
+        return self._index
+
     def _past_labels_for(self, purchase: Purchase) -> PastLabelSummary:
         """한 건에 대한 과거 확정 이력.
 
         ⛔ 자기 자신의 확정도 이력에 포함됩니다 — 화면에서 "이 적요는 지금까지
         용역 3건으로 확정됨" 을 그대로 보여주는 것이 목적이기 때문입니다.
         """
-        index = PastLabelIndex(
-            self._purchase_repository.find_for_calculation(None),
-            self._review_repository.find_all(),
-        )
-        return index.summary_for(purchase.description)
+        return self._past_label_index().summary_for(purchase.description)
 
     def _require_purchase(self, purchase_id: int) -> Purchase:
         """구매를 조회하고 없으면 예외를 냅니다."""

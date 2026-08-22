@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |---|---|
 | 작성일 | 2026-08-22 (STEP 6) |
-| 최종 갱신 | 2026-08-22 (STEP 7) |
+| 최종 갱신 | 2026-08-22 (STEP 8) |
 | 목적 | **고객 답변을 받는 즉시 무엇을 하면 되는지**를 미리 정해 둔다 |
 | 상위 문서 | `DESCRIPTION_CLASSIFICATION_DATA_ANALYSIS.md` §12 · `CUSTOMER_DATA_QUESTIONS.md` Q5 계열 |
 | ⛔ 이 문서가 하지 않는 것 | 답변을 **추측**하는 것 · 어느 쪽이 맞다고 정하는 것 |
@@ -136,6 +136,9 @@ Q5-7 (공사 키워드 가부)   ─→ 공사/용역 판별 근거
 | **그룹 단위 일관성 분석** | ✅ 실험 모듈 | `experiments/label_consistency.py` |
 | **반복형/혼합형 분포** | ✅ 통계만 (⛔ 가르는 규칙 없음) | `DESCRIPTION_GROUPING_ANALYSIS.md` §8 |
 | **과거 이력이 확정값을 덮지 않음** | ✅ 검증 완료 (STEP 7) | `TestPastLabelsStayIndependent` |
+| **검색 · 필터 · 정렬 · 페이지** | ✅ 서버 처리 · 해당 페이지만 응답 (STEP 8) | `reviews/query.py` · `REVIEW_INTERFACE_DESIGN.md` §9 |
+| **확정 이력 CSV 내보내기** | ✅ 20열 · BOM · 조건 연동 (STEP 8) | `reviews/export.py` |
+| **과거 이력 색인 재사용** | ✅ DB 지문 기반 · stale 방지 (STEP 8) | `ReviewRepository.confirmed_fingerprint()` |
 
 # 9. 답변이 와도 **바로는 못 하는 것**
 
