@@ -343,6 +343,8 @@ class PeriodOptionResponseModel(BaseModel):
             DB 에 들어오지 않았고, 처리 방식은 고객 확인 사항입니다(Q5-8).
         confirmed: 담당자가 확정한 건수(진행률 분자).
         pending: 아직 확정하지 않은 건수 = ``stored - confirmed``.
+        reasons: 이 기간(현재 배치)의 **사유별** 미적재 건수. 미적재가 없으면
+            빈 목록입니다. ⛔ 사실 표시일 뿐이며 어떤 처리도 뜻하지 않습니다.
         current_batch_count: 이 기간에 현재 상태인 배치 수. 정상이면 1.
     """
 
@@ -356,6 +358,7 @@ class PeriodOptionResponseModel(BaseModel):
     rejected: int
     confirmed: int
     pending: int
+    reasons: tuple[RejectionReasonResponseModel, ...]
     current_batch_count: int
 
     @classmethod
@@ -370,6 +373,7 @@ class PeriodOptionResponseModel(BaseModel):
             rejected=option.rejected,
             confirmed=option.confirmed,
             pending=option.pending,
+            reasons=_reason_models(option.reasons),
             current_batch_count=option.current_batch_count,
         )
 

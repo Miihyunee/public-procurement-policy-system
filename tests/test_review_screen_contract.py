@@ -85,11 +85,19 @@ class TestKeyboardShortcutsAreSafe:
         """⛔ **가장 중요** — 어떤 키도 확정으로 이어지지 않는다.
 
         Enter 한 번에 확정되면, 담당자가 보지도 않은 건이 확정될 수 있다.
+
+        STEP 17 에서 ``Enter`` 를 **카드 안으로 들어가는 키**로 쓰기 시작했으므로,
+        ``Enter`` 라는 글자를 금지하던 검사를 지키려던 사실 — *키는 확정 함수를
+        부르지 않는다* — 로 좁혔습니다. Enter 가 하는 일은 포커스 이동뿐이며,
+        그 사실은 아래 두 줄로 함께 고정합니다.
         """
         handler = _function_body(page, "handleReviewKey")
 
-        for banned in ("confirmReview", "Enter", "reopenReview"):
+        for banned in ("confirmReview", "reopenReview", "runUndo"):
             assert banned not in handler, banned
+        # Enter 가 있다면 **포커스 이동**이어야 한다.
+        if '"Enter"' in handler:
+            assert "controls[0].focus()" in handler
 
 
 class TestNextTargetMovesOnly:

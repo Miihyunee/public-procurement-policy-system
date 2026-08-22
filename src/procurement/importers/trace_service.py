@@ -130,6 +130,11 @@ class PeriodOption:
             DB 에 들어오지 않았고, 어떻게 처리할지는 고객 확인 사항입니다
             (Q5-8). 보조 정보로 함께 보여줄 뿐입니다.
         confirmed: 그 배치에서 담당자가 확정한 건수.
+        reasons: 그 배치의 **사유별** 미적재 건수.
+
+            ⛔ 사실 표시일 뿐입니다. 어떤 사유든 "제외" · "검토 불필요" 를
+            뜻하지 않습니다(Q5-8 미확정). 사유 코드는 세지 않고 **있는 것을
+            그대로** 담습니다 — 나중에 사유가 늘어도 화면이 그대로 동작하도록.
         current_batch_count: 이 기간에 현재 상태인 배치 수.
 
             정상이면 1 입니다. 2 이상이면 대체 처리가 중간에 멈춘 것이므로
@@ -144,6 +149,7 @@ class PeriodOption:
     stored: int = 0
     rejected: int = 0
     confirmed: int = 0
+    reasons: dict[str, int] | None = None
     current_batch_count: int = 1
 
     @property
@@ -294,10 +300,13 @@ class ImportTraceService:
         Returns:
             :class:`PeriodOption` 목록. 업로드가 없으면 빈 목록.
         """
+        # ⚠️ `find_current()` — 대체된 배치의 미적재 기록은 여기 오지 않는다.
+        #    전체를 읽으면 같은 기간을 다시 올릴 때마다 사유별 건수가 불어난다
+        #    (STEP 13 에서 실제로 겪은 문제).
         rejections = self._rejection_repository.find_current()
-        rejected_by_batch: dict[int | None, int] = {}
+        rejected_by_batch: dict[int | None, list[ImportRejection]] = {}
         for item in rejections:
-            rejected_by_batch[item.batch_id] = rejected_by_batch.get(item.batch_id, 0) + 1
+            rejected_by_batch.setdefault(item.batch_id, []).append(item)
 
         stored_by_batch, confirmed_by_batch = self._review_counts()
 
@@ -321,8 +330,9 @@ class ImportTraceService:
                     # row_count 와 확정 건수를 다른 곳에서 가져오면 둘이
                     # 어긋날 수 있다.
                     stored=stored_by_batch.get(latest.batch_id, 0),
-                    rejected=rejected_by_batch.get(latest.batch_id, 0),
+                    rejected=len(rejected_by_batch.get(latest.batch_id, [])),
                     confirmed=confirmed_by_batch.get(latest.batch_id, 0),
+                    reasons=_count_reasons(rejected_by_batch.get(latest.batch_id, [])),
                     current_batch_count=len(batches),
                 )
             )

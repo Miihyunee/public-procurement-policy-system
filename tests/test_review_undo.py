@@ -617,10 +617,15 @@ class TestUndoAccessibility:
         assert handler.index("undoIsOpen") < handler.index('=== "n"')
 
     def test_no_shortcut_triggers_the_undo(self, page: str) -> None:
-        """⛔ 어떤 키도 되돌리기를 실행하지 않는다."""
+        """⛔ 어떤 키도 되돌리기를 실행하지 않는다.
+
+        STEP 17 에서 ``Enter`` 가 카드 안으로 들어가는 키가 되었으므로, 글자
+        자체를 금지하던 검사를 지키려던 사실 — *키로는 되돌리기가 실행되지
+        않는다* — 로 좁혔습니다. 확인창을 여는 ``askUndo`` 조차 키에는 없습니다.
+        """
         handler = _function_body(page, "handleReviewKey")
 
-        for banned in ("runUndo", "askUndo", "confirmReview", "Enter"):
+        for banned in ("runUndo", "askUndo", "confirmReview"):
             assert banned not in handler, banned
 
     def test_shortcut_hint_is_shown(self, page: str) -> None:

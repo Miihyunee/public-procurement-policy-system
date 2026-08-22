@@ -222,13 +222,20 @@ class TestScreenStaysConsistent:
         assert duplicates == set(), duplicates
 
     def test_review_shortcuts_are_untouched(self, page: str) -> None:
+        """기존 단축키가 그대로 있고, **어떤 키도 확정하지 않는다**.
+
+        STEP 17 에서 ``Enter`` 를 "카드 안으로 들어가기" 로 쓰기 시작했으므로,
+        ``Enter`` 라는 글자 자체를 금지하던 검사를 지키려던 사실 — *키로는
+        확정도 취소도 되지 않는다* — 로 좁혔습니다. 상태를 바꾸는 함수
+        (``confirmReview`` · ``runUndo``)는 여전히 이 핸들러에 없어야 합니다.
+        """
         handler = _function_body(page, "handleReviewKey")
 
         assert 'key === "n"' in handler
         assert 'key === "p"' in handler
         assert '"Escape"' in handler
-        # ⛔ 여전히 어떤 키도 확정으로 이어지지 않는다.
-        for banned in ("confirmReview", "Enter", "runUndo"):
+        # ⛔ 여전히 어떤 키도 확정·취소를 실행하지 않는다.
+        for banned in ("confirmReview", "runUndo", "askUndo"):
             assert banned not in handler, banned
 
     def test_focus_visible_still_styled(self, page: str) -> None:

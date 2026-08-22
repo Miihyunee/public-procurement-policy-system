@@ -101,6 +101,11 @@
   }
   .rv-pager { justify-content: center; align-items: center; gap: 12px; }
   .rv-current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  /* 카드 자체에 포커스가 올 수 있다(키보드 이동). 지금 어느 행에 있는지
+     보이기만 하면 되므로 색으로 업무 의미를 만들지 않는다 — 진행률 구간색과
+     무관한 표시다. */
+  .rv:focus { outline: none; }
+  .rv:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   /* 키보드로 옮겨 다닐 때 지금 어디에 있는지 분명하게. 마우스 클릭에는
      테두리가 생기지 않도록 :focus 가 아니라 :focus-visible 을 쓴다. */
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
@@ -628,8 +633,12 @@
       </div>
 
       <p class="card-sub rv-keys">
-        키보드: <kbd>N</kbd> 다음 대상 · <kbd>P</kbd> 이전 대상 · <kbd>Esc</kbd> 창 닫기
-        <span class="rv-key">— 입력창에 글자를 쓰는 중에는 동작하지 않습니다. 확정 단축키는 없습니다.</span>
+        키보드: <kbd>↓</kbd><kbd>↑</kbd> 또는 <kbd>N</kbd><kbd>P</kbd> 대상 이동 ·
+        <kbd>Enter</kbd> 카드 안으로 · <kbd>Tab</kbd> 확정 컨트롤 이동 ·
+        <kbd>Esc</kbd> 창 닫기
+        <span class="rv-key">— 입력창·선택상자에 있을 때는 동작하지 않습니다.
+        ↑↓ 는 목록에 포커스가 있을 때만 움직입니다. 확정 단축키는 없습니다 —
+        확정은 담당자가 버튼으로 직접 합니다.</span>
       </p>
 
       <!-- 변경 이력 — 현재 값과 과거 기록을 분리해서 보여준다 -->
@@ -1847,6 +1856,9 @@
   var reviewCursor = 0;   // 현재 검토 대상 (reviewItems 안의 위치)
   var reviewPageInfo = null;
   var reviewPendingCursor = null;  // 페이지를 넘어간 뒤 커서를 어디에 둘지
+  var reviewPendingFocus = false;  // 다시 그린 뒤 카드로 포커스를 옮길지
+  var reviewJustConfirmed = null;  // 방금 확정한 구매 ID — 다음 대상으로 넘어가려고
+  var lastProgress = null;         // 마지막으로 그린 진행률 payload (다시 그릴 때 재사용)
 
   function reviewNotice(message) {
     var node = el("review-notice");
@@ -2056,6 +2068,13 @@
     var card = make("div", "rv");
     card.dataset.index = String(index);
     card.dataset.purchaseId = String(item.source.purchase_id);
+    // 키보드로 행을 옮겨 다닐 수 있게 카드 자체를 포커스 대상으로 둔다.
+    // roving tabindex — 현재 행만 Tab 순서에 넣어, Tab 을 한 번 누를 때마다
+    // 수백 개 카드를 지나가지 않게 한다(실제 목록은 한 쪽에 최대 100건).
+    card.setAttribute("role", "group");
+    card.setAttribute("aria-label", "검토 대상 " + (index + 1) + "번째 · 구매 "
+      + item.source.purchase_id);
+    card.tabIndex = -1;
     card.appendChild(reviewSource(item.source));
     card.appendChild(reviewAnalysis(item.analysis));
     card.appendChild(reviewPastLabels(item.past_labels));
@@ -2101,6 +2120,7 @@
    */
   function renderProgress(payload) {
     var node = el("review-progress");
+    lastProgress = payload;
     clear(node);
     var whole = payload.progress;
     var condition = payload.condition;
@@ -2131,7 +2151,7 @@
    */
   function appendPeriodNote(node) {
     var value = el("review-period").value;
-    if (!value) { return; }
+    if (!value) { appendWholeRejectionNote(node); return; }
     var item = periodOptions.filter(function (option) {
       return String(option.batch_id) === value;
     })[0];
@@ -2143,6 +2163,40 @@
       text += " · 미적재 " + numberFormat(item.rejected) + "건(검토 대상 밖)";
     }
     node.appendChild(make("div", "rv-cond", text));
+    appendReasonNote(node, item.rejected, item.reasons);
+  }
+
+  /**
+   * 기간을 고르지 않았을 때(= 전체)의 미적재 요약.
+   *
+   * ⚠️ 이미 받아 둔 ``/imports/trace`` 결과를 다시 쓴다 — 같은 숫자를 위해
+   *    API 를 또 부르지 않는다.
+   */
+  function appendWholeRejectionNote(node) {
+    if (!lastTrace) { return; }
+    appendReasonNote(node, lastTrace.rejected, lastTrace.reasons);
+  }
+
+  /**
+   * 미적재 **사유별 건수**. 서버가 준 사유 목록을 그대로 편다.
+   *
+   * ⛔ 사실 표시일 뿐이다. 어떤 사유도 "제외" · "검토 불필요" · "오류" 를 뜻하지
+   *    않는다 — 미적재 행의 처리 방식은 아직 확인 전이다(Q5-8).
+   * ⛔ 사유를 화면이 만들거나 골라 내지 않는다. 코드도 이름도 하드코딩하지
+   *    않으므로, 사유가 늘면 그대로 한 줄씩 늘어난다.
+   */
+  function appendReasonNote(node, rejected, reasons) {
+    if (!rejected) {
+      node.appendChild(make("div", "rv-key", "미적재 없음"));
+      return;
+    }
+    var box = make("div", "rv-key");
+    box.appendChild(make("div", null, "미적재 사유 (검토 대상 밖 · 처리 방식 확인 전)"));
+    (reasons || []).forEach(function (reason) {
+      box.appendChild(make("div", null,
+        "· " + reason.label + ": " + numberFormat(reason.count) + "건"));
+    });
+    node.appendChild(box);
   }
 
   function renderReviews(payload) {
@@ -2166,7 +2220,26 @@
     // 확정 등으로 목록이 줄어들면 커서가 끝을 넘어갈 수 있다.
     if (reviewCursor >= payload.items.length) { reviewCursor = payload.items.length - 1; }
     if (reviewCursor < 0) { reviewCursor = 0; }
+    advanceAfterConfirm();
     focusCursor(false);
+    if (reviewPendingFocus) { reviewPendingFocus = false; focusCurrentCard(); }
+  }
+
+  /**
+   * 확정한 건이 그대로 남아 있으면 **한 칸 내려 놓는다**(연속 검토).
+   *
+   * 조건에 따라 확정한 건이 목록에서 빠지면 같은 자리에 다음 건이 들어오므로
+   * 아무것도 하지 않아도 된다. 남아 있을 때(예: 상태 = 전체)만 옮긴다.
+   *
+   * ⛔ **이동뿐이다.** 다음 건의 유형을 미리 고르거나 확정하지 않는다. 자동확정은
+   *    없다 — 확정은 담당자가 카드마다 직접 누른다.
+   */
+  function advanceAfterConfirm() {
+    if (reviewJustConfirmed === null) { return; }
+    var here = reviewItems[reviewCursor];
+    var stayed = here && String(here.source.purchase_id) === String(reviewJustConfirmed);
+    reviewJustConfirmed = null;
+    if (stayed && reviewCursor + 1 < reviewItems.length) { reviewCursor += 1; }
   }
 
   /**
@@ -2256,16 +2329,49 @@
   //    순서 그대로** 다음 칸으로 옮길 뿐이다.
   // ------------------------------------------------------------------
 
-  /** 현재 대상 카드를 강조하고 화면에 보이게 한다. */
+  /**
+   * 현재 대상 카드를 강조하고 화면에 보이게 한다.
+   *
+   * ⛔ **커서는 화면 상태일 뿐이다.** DB 에 저장하지 않고, URL 에도 넣지 않으며,
+   *    옮긴다고 해서 서버에 아무것도 보내지 않는다.
+   */
   function focusCursor(scroll) {
     var cards = el("review-list").querySelectorAll(".rv");
     for (var i = 0; i < cards.length; i += 1) {
-      cards[i].classList.toggle("rv-current", i === reviewCursor);
+      var on = i === reviewCursor;
+      cards[i].classList.toggle("rv-current", on);
+      cards[i].tabIndex = on ? 0 : -1;
+      if (on) {
+        cards[i].setAttribute("aria-current", "true");
+      } else {
+        cards[i].removeAttribute("aria-current");
+      }
     }
     if (scroll && cards[reviewCursor]) {
       cards[reviewCursor].scrollIntoView({ block: "center", behavior: "smooth" });
     }
     renderCursorInfo();
+  }
+
+  /** 현재 카드 요소. 없으면 ``null``. */
+  function currentCard() {
+    return el("review-list").querySelectorAll(".rv")[reviewCursor] || null;
+  }
+
+  /**
+   * 현재 카드로 포커스를 옮긴다 — 키보드로 이동했을 때만 부른다.
+   *
+   * 마우스로 조건을 바꿔 목록을 다시 그릴 때까지 포커스를 빼앗으면, 담당자가
+   * 조작하던 자리를 잃는다. 그래서 :func:`focusCursor` 와 나눠 두었다.
+   */
+  function focusCurrentCard() {
+    var card = currentCard();
+    if (card) { card.focus(); }
+  }
+
+  /** 카드 안에서 담당자가 조작할 수 있는 요소들(Tab 순서 그대로). */
+  function cardControls(card) {
+    return card.querySelectorAll("button, input, select, textarea, [href]");
   }
 
   function renderCursorInfo() {
@@ -2280,7 +2386,7 @@
    * 페이지 끝을 넘어가면 다음 페이지를 불러온다. 조건(검색·필터·정렬·페이지
    * 크기)은 **그대로 유지**된다.
    */
-  function moveCursor(step) {
+  function moveCursor(step, takeFocus) {
     if (!reviewItems.length) { return; }
     var next = reviewCursor + step;
 
@@ -2288,6 +2394,7 @@
       if (reviewPageInfo && reviewPageInfo.has_next) {
         reviewPage += 1;
         reviewPendingCursor = "first";
+        reviewPendingFocus = takeFocus === true;
         loadReviews();
       } else {
         reviewNotice("마지막 검토 대상입니다. 조건을 바꾸거나 목록을 다시 확인하세요.");
@@ -2298,6 +2405,7 @@
       if (reviewPageInfo && reviewPageInfo.has_previous) {
         reviewPage -= 1;
         reviewPendingCursor = "last";
+        reviewPendingFocus = takeFocus === true;
         loadReviews();
       } else {
         reviewNotice("첫 검토 대상입니다.");
@@ -2306,6 +2414,8 @@
     }
     reviewCursor = next;
     focusCursor(true);
+    // ⛔ 서버에 아무것도 보내지 않는다 — 같은 페이지 안의 자리 이동일 뿐이다.
+    if (takeFocus === true) { focusCurrentCard(); }
   }
 
   // ------------------------------------------------------------------
@@ -2334,6 +2444,9 @@
     return fetchJson("/imports/trace").then(function (trace) {
       lastTrace = trace;
       renderTrace(trace);
+      // 목록이 대조 결과보다 먼저 그려졌다면, 전체 기준 미적재 요약이 빠진 채로
+      // 남아 있다. ⛔ 목록을 다시 받지 않고 **이미 받은 값으로** 다시 그린다.
+      if (lastProgress) { renderProgress(lastProgress); }
     }).catch(function () {
       // 대조 정보를 못 받아도 검토는 계속할 수 있어야 한다.
       el("review-trace").hidden = true;
@@ -2694,6 +2807,7 @@
     }).then(function (response) {
       if (!response.ok) { throw httpError(response); }
       delete reviewPicks[purchaseId];
+      reviewJustConfirmed = purchaseId;
       reviewNotice("확정했습니다. 원본 데이터는 변경되지 않았습니다.");
       // 기간별 확정 건수가 바뀌었다. 목록보다 **먼저** 받아야 진행률 보조
       // 정보가 갱신된 숫자로 그려진다.
@@ -2716,7 +2830,7 @@
   //
   // ⛔ **확정 단축키를 만들지 않았다.** Enter 나 숫자 키로 확정하면 실수로
   //    담당자가 보지 않은 건이 확정된다. 이동만 단축키로 제공하고, 확정은
-  //    반드시 버튼을 누르게 한다.
+  //    반드시 버튼을 누르게 한다. Enter 는 카드 **안으로 들어갈** 뿐이다.
   // ------------------------------------------------------------------
 
   /** 지금 글자를 입력하는 중인가 — 그렇다면 단축키를 가로채면 안 된다. */
@@ -2725,6 +2839,37 @@
     var tag = (target.tagName || "").toUpperCase();
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") { return true; }
     return target.isContentEditable === true;
+  }
+
+  /** 지금 포커스가 검토 목록 안에 있는가. */
+  function insideList(target) {
+    var list = el("review-list");
+    return !!(target && list && list.contains(target));
+  }
+
+  /** 포커스가 카드 자체(안의 컨트롤이 아니라)에 있는가. */
+  function onCard(target) {
+    return !!(target && target.classList && target.classList.contains("rv"));
+  }
+
+  /**
+   * 모달 안에서 Tab 이 바깥으로 새지 않게 한다.
+   *
+   * 확인창 뒤의 목록으로 포커스가 빠지면, 담당자는 확인창이 떠 있는데도
+   * 보이지 않는 버튼을 누르게 된다.
+   */
+  function trapTab(event, modalId) {
+    var focusable = el(modalId).querySelectorAll("button, input, select, textarea, [href]");
+    if (!focusable.length) { return; }
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      last.focus();
+      event.preventDefault();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      first.focus();
+      event.preventDefault();
+    }
   }
 
   function handleReviewKey(event) {
@@ -2742,12 +2887,40 @@
       return;
     }
     // 모달이 열려 있으면 뒤쪽 목록을 움직이지 않는다.
-    if (historyIsOpen() || undoIsOpen()) { return; }
+    if (undoIsOpen()) {
+      if (event.key === "Tab") { trapTab(event, "review-undo-modal"); }
+      return;
+    }
+    if (historyIsOpen()) {
+      if (event.key === "Tab") { trapTab(event, "review-modal"); }
+      return;
+    }
     if (isTyping(event.target)) { return; }
 
+    // ↑/↓ 는 **검토 목록 안에 포커스가 있을 때만** 가로챈다. 화면 아무 데서나
+    // 빼앗으면 담당자가 방향키로 화면을 내려 보는 평소 동작이 사라진다.
+    // 입력창·목록상자 안에서는 위 `isTyping` 에서 이미 걸러진다.
+    if (event.key === "ArrowDown" && insideList(event.target)) {
+      moveCursor(1, true);
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "ArrowUp" && insideList(event.target)) {
+      moveCursor(-1, true);
+      event.preventDefault();
+      return;
+    }
+    // Enter — 카드에서 **그 카드 안의 첫 조작 요소**로 들어간다. 여기서 확정이
+    // 일어나지 않는다. 버튼 위에서는 브라우저 기본 동작(누르기)을 그대로 둔다.
+    if (event.key === "Enter" && onCard(event.target)) {
+      var controls = cardControls(event.target);
+      if (controls.length) { controls[0].focus(); event.preventDefault(); }
+      return;
+    }
+
     var key = event.key.toLowerCase();
-    if (key === "n") { moveCursor(1); event.preventDefault(); return; }
-    if (key === "p") { moveCursor(-1); event.preventDefault(); }
+    if (key === "n") { moveCursor(1, insideList(event.target)); event.preventDefault(); return; }
+    if (key === "p") { moveCursor(-1, insideList(event.target)); event.preventDefault(); }
   }
 
   function initReview() {
