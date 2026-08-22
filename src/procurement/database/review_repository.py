@@ -33,10 +33,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
 from procurement.database.base import BaseRepository
 from procurement.models.classification import (
@@ -155,6 +155,10 @@ def _candidates_from_json(raw: str | None) -> list[TypeCandidate]:
         )
         for item in parsed
     ]
+
+
+#: 한 질의에 넣을 ID 개수. SQLite 기본 변수 한도(999)보다 넉넉히 아래로 둔다.
+_ID_CHUNK: Final = 500
 
 
 class ReviewRepository(BaseRepository):
@@ -291,6 +295,37 @@ class ReviewRepository(BaseRepository):
             (purchase_id,),
         )
         return [self._row_to_history(row) for row in rows]
+
+    def find_history_of(self, purchase_ids: Iterable[int]) -> list[ReviewHistoryEntry]:
+        """여러 구매의 변경 이력을 한 번에 조회합니다.
+
+        ``find_history`` 를 건마다 부르면 2,000건 내보내기에 2,000번 질의하게
+        됩니다. 내보내기처럼 **대상이 이미 정해진** 경우에 씁니다.
+
+        ⛔ 이력을 고르거나 줄이지 않습니다 — 준 구매들의 기록을 **전부** 그대로
+        돌려줍니다. 확정 → 취소 → 재확정도 세 줄 그대로 남습니다.
+
+        Args:
+            purchase_ids: 대상 구매 ID들. 비어 있으면 빈 목록을 돌려줍니다.
+
+        Returns:
+            ``(purchase_id, changed_at, history_id)`` 순으로 정렬된 이력.
+        """
+        ids = list(dict.fromkeys(purchase_ids))
+        if not ids:
+            return []
+        rows: list[sqlite3.Row] = []
+        # SQLite 는 한 질의의 변수 개수에 한계가 있다(기본 999). 나눠 묻고 합친다.
+        for start in range(0, len(ids), _ID_CHUNK):
+            chunk = ids[start : start + _ID_CHUNK]
+            marks = ",".join("?" for _ in chunk)
+            rows += self.execute(
+                f"SELECT * FROM purchase_review_history WHERE purchase_id IN ({marks})",
+                tuple(chunk),
+            )
+        entries = [self._row_to_history(row) for row in rows]
+        entries.sort(key=lambda item: (item.purchase_id, item.changed_at, item.history_id or 0))
+        return entries
 
     def count(self) -> int:
         """검토 행 수를 반환합니다."""

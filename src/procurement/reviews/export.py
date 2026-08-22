@@ -33,6 +33,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Final
 
+from procurement.core.purchase_type import PURCHASE_TYPE_LABELS
+from procurement.models.purchase import Purchase
+from procurement.models.review import ReviewHistoryEntry
 from procurement.reviews.review_service import ReviewTarget
 
 #: 열 순서. **고정**입니다 — 담당자가 만든 엑셀 수식이 깨지지 않도록.
@@ -153,6 +156,82 @@ def export_lines(targets: Iterable[ReviewTarget]) -> Iterator[str]:
     yield "﻿" + _line(EXPORT_COLUMNS)
     for target in targets:
         yield _line(export_row(target))
+
+
+#: 변경 이력 CSV 의 열 순서. **고정**입니다.
+#:
+#: ⚠️ :data:`EXPORT_COLUMNS` 와 다른 표입니다. 저쪽은 구매 한 건의 **현재 상태**
+#: 한 줄이고, 이쪽은 그 구매에 있었던 **변경 한 번**이 한 줄입니다. 확정 → 취소
+#: → 재확정이면 세 줄이 나옵니다.
+HISTORY_COLUMNS: Final[tuple[str, ...]] = (
+    "구매ID",
+    "업로드 배치 ID",
+    "결의일자",
+    "적요",
+    "거래처명",
+    "사업자번호",
+    "동작",
+    "변경 시각",
+    "변경자",
+    "변경 전 유형",
+    "변경 후 유형",
+    "메모",
+)
+
+
+def history_row(purchase: Purchase, entry: ReviewHistoryEntry) -> tuple[str, ...]:
+    """변경 한 번을 CSV 한 줄로 만듭니다.
+
+    ⛔ 기록을 해석하지 않습니다. 저장된 값을 그대로 옮길 뿐이며, 어떤 줄이
+    최종인지 표시하거나 중복을 지우지 않습니다.
+
+    Args:
+        purchase: 그 이력이 붙은 원본 구매(어느 행의 이력인지 알아보도록).
+        entry: 변경 이력 한 건.
+
+    Returns:
+        :data:`HISTORY_COLUMNS` 와 **같은 순서**의 문자열 묶음.
+    """
+    return (
+        _text(entry.purchase_id),
+        _text(purchase.batch_id),
+        _text(purchase.resolution_date),
+        _text(purchase.description),
+        _text(purchase.company_name),
+        _text(purchase.business_no),
+        _text(entry.action),
+        _text(entry.changed_at),
+        _text(entry.changed_by),
+        _text(_type_label(entry.before_type)),
+        _text(_type_label(entry.after_type)),
+        _text(entry.note),
+    )
+
+
+def _type_label(code: str | None) -> str | None:
+    """유형 코드를 담당자가 읽는 이름으로. 모르는 코드는 그대로 둡니다.
+
+    ⛔ 이름을 새로 짓지 않습니다 — 화면·CSV 가 쓰는 같은 표를 봅니다.
+    """
+    if code is None:
+        return None
+    return PURCHASE_TYPE_LABELS.get(code, code)
+
+
+def history_lines(pairs: Iterable[tuple[Purchase, ReviewHistoryEntry]]) -> Iterator[str]:
+    """변경 이력 CSV 를 **한 줄씩** 흘려보냅니다.
+
+    :func:`export_lines` 와 같은 규약입니다 — UTF-8 BOM · CRLF · 수식 주입 방지.
+
+    Args:
+        pairs: ``(구매, 이력)`` 쌍.
+
+    Yields:
+        줄바꿈이 포함된 CSV 한 줄.
+    """
+    yield "﻿" + _line(HISTORY_COLUMNS)
+    for purchase, entry in pairs:
+        yield _line(history_row(purchase, entry))
 
 
 def _line(values: tuple[str, ...]) -> str:

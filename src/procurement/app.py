@@ -94,7 +94,7 @@ from procurement.importers.trace_response import (
     build_trace_response,
 )
 from procurement.importers.trace_service import ImportTraceService
-from procurement.reviews.export import export_lines
+from procurement.reviews.export import export_lines, history_lines
 from procurement.reviews.query import (
     ANY as QUERY_ANY,
 )
@@ -816,6 +816,43 @@ def create_app(
             export_lines(targets),
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": 'attachment; filename="reviews.csv"'},
+        )
+
+    @app.get(
+        "/reviews/history.csv",
+        summary="검토 변경 이력 CSV 내려받기",
+        tags=["reviews"],
+        response_class=StreamingResponse,
+    )
+    def export_review_history(
+        batch_id: int | None = Query(
+            None, description="이 업로드 배치로 들어온 행만 (기간 필터). 생략하면 전체"
+        ),
+    ) -> StreamingResponse:
+        """검토 **변경 이력**을 CSV 로 내려줍니다.
+
+        ``/reviews/export.csv`` 와 다른 표입니다 — 저쪽은 구매 한 건의 **현재
+        상태**가 한 줄이고, 여기서는 그 구매에 있었던 **변경 한 번**이 한 줄입니다.
+        확정 → 취소 → 재확정이면 세 줄이 그대로 나옵니다.
+
+        기간은 화면·목록·CSV 와 **같은 뜻**입니다 — 현재 배치(``batch_id``)로만
+        좁히며, 대체된 배치의 이력은 나오지 않습니다. ⛔ 날짜로 기간을 다시
+        계산하지 않습니다(어느 날짜로 나눌지는 아직 확정되지 않은 업무규칙).
+
+        ⛔ 이력을 고르거나 줄이지 않습니다 — 최신만 남기거나 취소 기록을 빼지
+        않습니다. 기록이 곧 근거이기 때문입니다.
+
+        Raises:
+            HTTPException: ``batch_id`` 가 1 보다 작으면 422.
+        """
+        if batch_id is not None and batch_id < 1:
+            raise HTTPException(status_code=422, detail="batch_id 는 1 이상이어야 합니다")
+
+        pairs = review_service.history_of_batch(batch_id)
+        return StreamingResponse(
+            history_lines(pairs),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="review-history.csv"'},
         )
 
     @app.get(

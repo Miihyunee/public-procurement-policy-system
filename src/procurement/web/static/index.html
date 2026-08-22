@@ -636,7 +636,14 @@
                  aria-label="확정자 이름 — 비워 두면 변경 이력에 담당자가 기록되지 않습니다" />
         </span>
         <button id="review-reload" class="control" type="button">새로고침</button>
-        <button id="review-export" class="control" type="button">CSV 내려받기</button>
+        <button id="review-export" class="control" type="button"
+                aria-label="지금 조건의 검토 내역 CSV 내려받기">검토 CSV 내려받기</button>
+        <!--
+          변경 이력 CSV — 확정 → 취소 → 재확정이 **각각 한 줄**로 남는다.
+          위 "검토 CSV" 는 지금 상태 한 줄이므로 서로 다른 표다.
+        -->
+        <button id="review-export-history" class="control" type="button"
+                aria-label="지금 기간의 검토 변경 이력 CSV 내려받기">이력 CSV 내려받기</button>
       </div>
 
       <div id="review-notice" class="notice" hidden></div>
@@ -2412,6 +2419,20 @@
     window.location.href = "/reviews/export.csv?" + reviewParams(false);
   }
 
+  /**
+   * 변경 이력 CSV — **지금 보고 있는 기간**의 이력만 내려받는다.
+   *
+   * ⚠️ 기간 외의 조건(검색·상태·정렬)은 보내지 않는다. 이력은 "그 구매에 무슨
+   *    일이 있었는가" 의 기록이라, 지금 상태로 걸러 내면 취소된 기록처럼 **조건에
+   *    맞지 않게 된 과거**가 통째로 빠진다.
+   * ⛔ 화면에 이미 있는 값을 그대로 쓴다 — 누르기 전에 아무것도 다시 받지 않는다.
+   */
+  function exportReviewHistory() {
+    var period = el("review-period").value;
+    window.location.href = "/reviews/history.csv"
+      + (period ? "?batch_id=" + encodeURIComponent(period) : "");
+  }
+
   // ------------------------------------------------------------------
   // 연속 검토 — 현재 대상 커서
   //
@@ -3021,6 +3042,7 @@
     el("review-search").addEventListener("input", debounce(reloadFromFirstPage, 300));
     el("review-reload").addEventListener("click", loadReviews);
     el("review-export").addEventListener("click", exportReviews);
+    el("review-export-history").addEventListener("click", exportReviewHistory);
 
     // 페이지 이동은 조건을 그대로 유지한 채 번호만 바꾼다.
     el("review-prev").addEventListener("click", function () {

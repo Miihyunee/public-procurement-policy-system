@@ -300,7 +300,13 @@ class TestNothingElseMoved:
         assert "/imports/trace.csv" in page
 
     def test_no_new_endpoint_appeared(self, page: str) -> None:
-        """지시 §23 — 새 API 를 만들지 않았다."""
+        """화면이 부르는 엔드포인트는 **알려진 목록뿐**이다.
+
+        STEP 19 에서는 "새 API 를 만들지 않았다" 를 확인하는 검사였습니다.
+        STEP 20 에서 검토 **변경 이력** CSV(``/reviews/history.csv``)를 새로
+        열었으므로 목록에 한 줄을 더했습니다 — 지키려는 사실(화면이 아무 경로나
+        부르지 않는다)은 그대로이며, 목록에 없는 경로가 생기면 여전히 실패합니다.
+        """
         found = set(re.findall(r'"(/(?:imports|reviews)[a-z_./{}]*)', page))
         allowed = {
             "/imports/periods",
@@ -313,5 +319,6 @@ class TestNothingElseMoved:
             "/reviews/",
             "/reviews/options",
             "/reviews/export.csv",
+            "/reviews/history.csv",
         }
         assert found <= allowed, found - allowed

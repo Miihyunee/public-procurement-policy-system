@@ -453,6 +453,33 @@ class ReviewService:
         """변경 이력을 시간순으로 반환합니다."""
         return self._review_repository.find_history(purchase_id)
 
+    def history_of_batch(self, batch_id: int | None) -> list[tuple[Purchase, ReviewHistoryEntry]]:
+        """한 기간(=배치)에 속한 구매들의 **변경 이력 전부**를 반환합니다.
+
+        기간은 화면·목록·CSV 와 **같은 뜻**이어야 하므로, 여기서도 날짜를 다시
+        계산하지 않고 :meth:`PurchaseRepository.find_for_calculation` 이 주는
+        **현재 배치의 구매**만 대상으로 삼습니다. 그래서 대체된(SUPERSEDED)
+        배치의 이력은 자연히 빠집니다 — 그 배치의 구매가 애초에 나오지 않기
+        때문입니다.
+
+        ⛔ 이력을 고르거나 줄이지 않습니다. 확정 → 취소 → 재확정이면 세 줄이
+        그대로 나옵니다. 어떤 줄이 "진짜" 인지 판단하지 않습니다.
+
+        Args:
+            batch_id: 기간(=현재 배치) ID. ``None`` 이면 현재 배치 전부.
+
+        Returns:
+            ``(구매, 이력)`` 쌍. 구매 ID · 변경 시각 순입니다.
+        """
+        by_id: dict[int, Purchase] = {
+            purchase.purchase_id: purchase
+            for purchase in self._purchase_repository.find_for_calculation(None)
+            if purchase.purchase_id is not None
+            and (batch_id is None or purchase.batch_id == batch_id)
+        }
+        entries = self._review_repository.find_history_of(by_id)
+        return [(by_id[entry.purchase_id], entry) for entry in entries]
+
     def progress(self, period: PeriodFilter | None = None) -> ReviewProgress:
         """검토 진행 상황을 집계합니다.
 
