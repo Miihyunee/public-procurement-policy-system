@@ -528,10 +528,20 @@ class TestUploadScreen:
             assert banned not in body, banned
 
     def test_reason_summary_uses_backend_labels(self, page: str) -> None:
-        """⛔ 화면이 사유 이름을 새로 만들지 않는다."""
-        body = _function_body(page, "renderUploadTrace")
+        """⛔ 화면이 사유 이름을 새로 만들지 않는다.
 
-        assert "item.label" in body
+        STEP 19 에서 사유 요약을 검토 화면과 **같은 함수**(``appendReasonNote``)로
+        합쳤으므로, 라벨을 읽는 자리가 그 함수로 옮겨졌습니다. 지키려던 사실은
+        그대로라서, 검사도 라벨이 실제로 오는 곳까지 따라갑니다 — 백엔드가 준
+        ``label`` 을 쓰고, 사유 이름을 화면에 적어 두지 않는다.
+        """
+        body = _function_body(page, "renderUploadTrace")
+        shared = _function_body(page, "appendReasonNote")
+
+        assert "appendReasonNote(" in body
+        assert "reason.label" in shared
+        for banned in ("NON_POSITIVE_AMOUNT", "MISSING_REQUIRED", "금액이 0 이하"):
+            assert banned not in shared, banned
 
     def test_nothing_is_shown_before_saving(self, page: str) -> None:
         """검증만 하고 저장하지 않았으면 적재/미적재를 말할 수 없다."""

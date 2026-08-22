@@ -221,6 +221,15 @@
 
   /* ------------------------------------------------------------ 레이아웃 */
   .row { display: grid; gap: 14px; margin-top: 14px; }
+  /*
+    ⚠️ grid 칸은 기본이 `min-width: auto` 라, 안에 줄바꿈되지 않는 넓은 표가
+    하나라도 있으면 **칸 자체가 그 표만큼 넓어진다**. 그러면 표에 걸어 둔
+    `overflow-x: auto` 가 일할 기회를 잃고, 대신 화면 전체에 가로 스크롤이
+    생긴다(실측: 미적재 행 표 때문에 문서 폭이 어느 화면에서나 1354px 로 고정).
+    칸이 줄어들 수 있게 열어 주면, 넘치는 표는 제 안에서 스크롤된다.
+    ⛔ `overflow-x: hidden` 으로 덮지 않는다 — 그러면 표를 볼 방법이 사라진다.
+  */
+  .row > * { min-width: 0; }
   .row-kpi { grid-template-columns: 2fr 1fr; }
   .row-mid { grid-template-columns: 1.6fr 1fr; }
   .row-bottom { grid-template-columns: 320px 1fr; }
@@ -1345,8 +1354,9 @@
     }
 
     if (!rejected) {
-      box.appendChild(make("div", "rv-key",
-        "미적재 행 없음 — 원본 행이 모두 검토 대상에 들어왔습니다."));
+      // 검토 화면과 같은 함수를 쓴다 — 같은 사실은 같은 말로 적는다.
+      appendReasonNote(box, 0, [],
+        "미적재 행 없음 — 원본 행이 모두 검토 대상에 들어왔습니다.");
       box.hidden = false;
       actions.hidden = true;
       return;
@@ -1355,10 +1365,7 @@
     box.appendChild(make("div", null,
       "미적재 행 " + numberFormat(rejected) + "건 확인 — 원본에는 있으나 현재 검토 대상 DB 에 " +
       "적재되지 않았습니다. 사유와 원본 값을 확인해 주세요."));
-    (result.rejection_reasons || []).forEach(function (item) {
-      box.appendChild(make("div", "rv-key",
-        "- " + item.label + ": " + numberFormat(item.count) + "건"));
-    });
+    appendReasonNote(box, rejected, result.rejection_reasons);
     box.hidden = false;
     actions.hidden = false;
   }
@@ -1628,10 +1635,8 @@
         + "건 · 미적재 " + numberFormat(item.rejected)
         + "건 · 설명되지 않는 행 "
         + (item.unexplained === null ? "-" : numberFormat(item.unexplained)) + "건"));
-      (item.reasons || []).forEach(function (reason) {
-        box.appendChild(make("div", "rv-key",
-          "- " + reason.label + ": " + numberFormat(reason.count) + "건"));
-      });
+      // 검토 화면과 같은 함수를 쓴다 — 같은 사실은 같은 말로 적는다.
+      appendReasonNote(box, item.rejected, item.reasons);
       box.hidden = false;
     }).catch(function (error) {
       historyError("업로드 상세를 불러오지 못했습니다: " + error.message);
@@ -2259,14 +2264,20 @@
   /**
    * 미적재 **사유별 건수**. 서버가 준 사유 목록을 그대로 편다.
    *
+   * 검토 화면(진행률·원본 대조)과 업로드 화면(업로드 결과·이력 상세)이 **모두
+   * 이 함수 하나**를 쓴다. 같은 사실을 화면마다 다른 말로 적으면, 담당자는 서로
+   * 다른 뜻으로 읽게 된다.
+   *
    * ⛔ 사실 표시일 뿐이다. 어떤 사유도 "제외" · "검토 불필요" · "오류" 를 뜻하지
    *    않는다 — 미적재 행의 처리 방식은 아직 확인 전이다(Q5-8).
    * ⛔ 사유를 화면이 만들거나 골라 내지 않는다. 코드도 이름도 하드코딩하지
    *    않으므로, 사유가 늘면 그대로 한 줄씩 늘어난다.
+   *
+   * @param emptyText 미적재가 0건일 때 쓸 문장. 없으면 "미적재 없음".
    */
-  function appendReasonNote(node, rejected, reasons) {
+  function appendReasonNote(node, rejected, reasons, emptyText) {
     if (!rejected) {
-      node.appendChild(make("div", "rv-key", "미적재 없음"));
+      node.appendChild(make("div", "rv-key", emptyText || "미적재 없음"));
       return;
     }
     var box = make("div", "rv-key");
@@ -2547,10 +2558,8 @@
     }
 
     box.appendChild(make("div", null, trace.notice));
-    var reasons = (trace.reasons || []).map(function (item) {
-      return item.label + " " + item.count.toLocaleString() + "건";
-    }).join(" · ");
-    if (reasons) { box.appendChild(make("div", "rv-key", "사유: " + reasons)); }
+    // 업로드 화면·진행률과 같은 함수를 쓴다 — 같은 사실은 같은 말로 적는다.
+    appendReasonNote(box, trace.rejected, trace.reasons);
     box.hidden = false;
 
     if (!trace.rows || !trace.rows.length) { rows.hidden = true; return; }
