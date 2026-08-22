@@ -17,6 +17,7 @@ from procurement.dashboard.status_service import DataStatusService
 from procurement.database.bootstrap import init_db, seed_policies
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Company, Purchase
@@ -40,6 +41,7 @@ def service(db_path: Path) -> DataStatusService:
         CompanyRepository(db_path),
         CertificationRepository(db_path),
         PolicyRepository(db_path),
+        ImportBatchRepository(db_path),
     )
 
 

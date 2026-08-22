@@ -15,8 +15,10 @@ from procurement.calculators.rules.base import PolicyRule
 from procurement.calculators.rules.date_rules import (
     CONTRACT_DATE,
     PAYMENT_DATE,
+    RESOLUTION_OR_CONTRACT_DATE,
     ContractDateRule,
     PaymentDateRule,
+    ResolutionOrContractDateRule,
 )
 
 
@@ -72,6 +74,7 @@ def build_default_registry() -> RuleRegistry:
 
     - ``PAYMENT_DATE`` → :class:`PaymentDateRule`
     - ``CONTRACT_DATE`` → :class:`ContractDateRule`
+    - ``RESOLUTION_OR_CONTRACT_DATE`` → :class:`ResolutionOrContractDateRule` (창업기업)
 
     미등록 기준값은 지급일 기준(:class:`PaymentDateRule`)으로 처리하여 기존
     계산기 동작을 그대로 보존합니다.
@@ -83,4 +86,5 @@ def build_default_registry() -> RuleRegistry:
     registry = RuleRegistry(default_rule=payment_date_rule)
     registry.register(PAYMENT_DATE, payment_date_rule)
     registry.register(CONTRACT_DATE, ContractDateRule())
+    registry.register(RESOLUTION_OR_CONTRACT_DATE, ResolutionOrContractDateRule())
     return registry

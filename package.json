@@ -1,0 +1,18 @@
+{
+  "name": "procurement-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "공공기관 우선구매 정책 달성률 관리 데스크톱 앱 (Electron + Python backend)",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "verify:backend": "node scripts/verify-backend.js"
+  },
+  "devDependencies": {
+    "electron": "^43.4.0"
+  },
+  "//": [
+    "electron-builder(배포 설정)는 아직 추가하지 않았다. PM 승인 후 결정한다.",
+    "Python backend 번들 방식(PyInstaller 등)도 미확정이다."
+  ]
+}

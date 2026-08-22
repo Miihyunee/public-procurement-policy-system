@@ -10,7 +10,8 @@ procurement.models
 
 from procurement.models.certification import Certification
 from procurement.models.company import Company
+from procurement.models.import_batch import ImportBatch
 from procurement.models.policy import Policy
 from procurement.models.purchase import Purchase
 
-__all__ = ["Certification", "Company", "Policy", "Purchase"]
+__all__ = ["Certification", "Company", "ImportBatch", "Policy", "Purchase"]

@@ -23,6 +23,7 @@ from decimal import Decimal
 
 from procurement.calculators.achievement_result import AchievementResult
 from procurement.calculators.procurement_achievement import ProcurementAchievementCalculator
+from procurement.core.period import PeriodFilter
 from procurement.dashboard.models import (
     DashboardStatus,
     DashboardSummary,
@@ -58,7 +59,9 @@ class DashboardDataService:
         self._calculator = calculator
         self._policy_repository = policy_repository
 
-    def build_summary(self, target_rates: dict[int, Decimal]) -> DashboardSummary:
+    def build_summary(
+        self, target_rates: dict[int, Decimal], period: PeriodFilter | None = None
+    ) -> DashboardSummary:
         """대시보드 전체 요약을 생성합니다.
 
         전체 구매액은 정책 목표 입력과 무관하게 항상 집계하며, 정책별 요약은
@@ -67,6 +70,8 @@ class DashboardDataService:
         Args:
             target_rates: ``{policy_id: 목표율}`` 형태의 매핑. 비어 있으면
                 정책 요약 없이 전체 구매액만 담긴 요약을 반환합니다.
+            period: 적용할 기간 조건. 계산기에 그대로 전달합니다. ``None`` 이면
+                기간 제한 없음(기존 동작).
 
         Returns:
             :class:`DashboardSummary`.
@@ -75,15 +80,17 @@ class DashboardDataService:
             CalculatorValidationError: 목표율이 0 이하이거나 존재하지 않는
                 정책이 포함된 경우(계산기 검증 전파).
         """
-        total_amount = self._calculator.calculate_total_purchase()
-        results = self._calculator.calculate_all(target_rates)
+        total_amount = self._calculator.calculate_total_purchase(period)
+        results = self._calculator.calculate_all(target_rates, period)
 
         summaries = [
             self._to_policy_summary(result, target_rates[result.policy_id]) for result in results
         ]
         return DashboardSummary(total_purchase_amount=total_amount, policy_summaries=summaries)
 
-    def build_summary_from_registered_targets(self) -> DashboardSummary:
+    def build_summary_from_registered_targets(
+        self, period: PeriodFilter | None = None
+    ) -> DashboardSummary:
         """시스템에 등록된 목표율로 대시보드 전체 요약을 생성합니다.
 
         외부 입력 없이 :class:`PolicyRepository` 에서 **활성 정책 전체**를 조회한
@@ -98,8 +105,11 @@ class DashboardDataService:
         "정책은 있으나 목표율이 아직 등록되지 않음"을 구분하기 위해서입니다.
         달성률을 ``0`` 으로 처리하지 않습니다.
 
-        Calculator 는 변경하지 않으며, 목표율이 있는 정책만 골라 dict 로 넘기는
-        방식은 기존과 같습니다.
+        목표율이 있는 정책만 골라 dict 로 넘기는 방식은 기존과 같습니다.
+
+        Args:
+            period: 적용할 기간 조건. 계산기에 그대로 전달합니다. ``None`` 이면
+                기간 제한 없음(기존 동작).
 
         Returns:
             :class:`DashboardSummary`. 활성 정책이 없으면 정책 요약은 빈 목록이
@@ -128,10 +138,11 @@ class DashboardDataService:
             if policy.policy_id is not None and policy.target_rate is not None
         }
 
-        total_amount = self._calculator.calculate_total_purchase()
+        total_amount = self._calculator.calculate_total_purchase(period)
         # 목표율이 있는 정책만 계산 대상으로 넘긴다(기존 계산 경로 그대로).
         results = {
-            result.policy_id: result for result in self._calculator.calculate_all(target_rates)
+            result.policy_id: result
+            for result in self._calculator.calculate_all(target_rates, period)
         }
 
         summaries: list[PolicySummary] = []

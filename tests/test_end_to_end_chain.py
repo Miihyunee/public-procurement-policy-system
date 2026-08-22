@@ -190,23 +190,38 @@ class TestEndToEndCalculation:
         return seeded
 
     def test_dashboard_returns_200(self, matched: Path) -> None:
-        response = TestClient(create_app(matched)).get("/dashboard/summary")
+        response = TestClient(create_app(matched, period_date_field="payment_date")).get(
+            "/dashboard/summary?year=2026"
+        )
         assert response.status_code == 200
 
     def test_total_purchase_amount_includes_unmatched(self, matched: Path) -> None:
-        """전체 구매액은 매칭 실패·미인증 건을 모두 포함합니다."""
-        payload = TestClient(create_app(matched)).get("/dashboard/summary").json()
-        assert payload["total_purchase_amount"] == "10000000"
+        """전체 구매액은 매칭 실패·미인증 건을 모두 포함합니다.
+
+        단 **2026년 조회이므로 지급일이 2027년인 구매 ②(1,000,000)는 제외**됩니다.
+        (D-27 적용으로 연도 지정이 필수가 되면서 분모가 기간 기준으로 좁혀집니다.)
+        """
+        payload = (
+            TestClient(create_app(matched, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
+        assert payload["total_purchase_amount"] == "9000000"
 
     def test_payment_date_policy_calculation(self, matched: Path) -> None:
         """중소기업(지급일 기준) — 유효기간 내 3,000,000 만 인정됩니다."""
-        payload = TestClient(create_app(matched)).get("/dashboard/summary").json()
+        payload = (
+            TestClient(create_app(matched, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         item = {p["policy_code"]: p for p in payload["policies"]}["SMALL_BUSINESS"]
 
-        assert item["purchase_amount"] == "3000000"  # 기간 밖 1,000,000 제외
+        assert item["purchase_amount"] == "3000000"  # 유효기간 밖 1,000,000 제외
         assert item["target_rate"] == "50"
-        assert item["achievement_rate"] == "60.00"  # 구매비율 30% / 목표 50%
-        assert item["shortage_rate"] == "40.00"
+        # 분모가 9,000,000(2026년)이므로 구매비율 33.33% / 목표 50% → 66.67%
+        assert item["achievement_rate"] == "66.67"
+        assert item["shortage_rate"] == "33.33"
         assert item["status"] == "SHORTAGE"
 
     def test_contract_date_policy_calculation(self, matched: Path) -> None:
@@ -216,17 +231,26 @@ class TestEndToEndCalculation:
         유효기간 내이므로 인정됩니다. 정책별 판정 기준일이 실제로 다르게
         적용되는지 확인하는 케이스입니다.
         """
-        payload = TestClient(create_app(matched)).get("/dashboard/summary").json()
+        payload = (
+            TestClient(create_app(matched, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         item = {p["policy_code"]: p for p in payload["policies"]}["STARTUP"]
 
         assert item["purchase_amount"] == "2000000"
-        assert item["achievement_rate"] == "100.00"  # 구매비율 20% / 목표 20%
+        # 분모가 9,000,000(2026년)이므로 구매비율 22.22% / 목표 20% → 111.11%
+        assert item["achievement_rate"] == "111.11"
         assert item["shortage_rate"] == "0.00"
         assert item["status"] == "NORMAL"
 
     def test_uncertified_company_purchase_is_excluded_from_policy(self, matched: Path) -> None:
         """인증이 없는 기업의 구매는 어떤 정책 실적에도 포함되지 않습니다."""
-        payload = TestClient(create_app(matched)).get("/dashboard/summary").json()
+        payload = (
+            TestClient(create_app(matched, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         policy_total = sum(
             Decimal(p["purchase_amount"])
             for p in payload["policies"]
@@ -242,15 +266,20 @@ class TestMatchingRateImpact:
     def test_unmatched_purchase_lowers_achievement_rate(self, seeded: Path) -> None:
         """매칭 실패 건은 분모(전체 구매액)에만 들어가 달성률을 낮춥니다.
 
-        하이픈 표기 2,000,000원이 매칭되었다면 중소기업 구매액은 5,000,000원
-        (50%)이 되어 달성률 100% 였을 것입니다. 매칭 실패로 60% 로 계산됩니다.
+        2026년 분모는 9,000,000원입니다(지급일 2027년 건 제외).
+        하이픈 표기 2,000,000원이 매칭되었다면 중소기업 구매액은 5,000,000원이
+        되어 달성률이 더 높았을 것입니다. 매칭 실패로 66.67% 로 계산됩니다.
         **매칭률을 함께 보고해야 하는 이유**를 보여주는 케이스입니다.
         """
         CompanyMatcher(CompanyRepository(seeded), PurchaseRepository(seeded)).match_all()
-        payload = TestClient(create_app(seeded)).get("/dashboard/summary").json()
+        payload = (
+            TestClient(create_app(seeded, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         item = {p["policy_code"]: p for p in payload["policies"]}["SMALL_BUSINESS"]
 
-        assert item["achievement_rate"] == "60.00"
+        assert item["achievement_rate"] == "66.67"
 
         matched_count = len(
             [p for p in PurchaseRepository(seeded).find_all() if p.company_id is not None]
@@ -268,8 +297,6 @@ class TestMatchingRateImpact:
         )
         assert target.purchase_id is not None
 
-        company = CompanyRepository(seeded).find_by_business_no(
-            target.business_no.replace("-", "")
-        )
+        company = CompanyRepository(seeded).find_by_business_no(target.business_no.replace("-", ""))
         assert company is not None
         assert company.business_no == BUSINESS_NO_A

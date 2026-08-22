@@ -222,3 +222,14 @@ __marimo__/
 *.db
 *.sqlite
 *.sqlite3
+
+# ------------------------------------------------------------------
+# Electron / Node (데스크톱 앱)
+# ------------------------------------------------------------------
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# electron-builder 산출물
+release/
+out/

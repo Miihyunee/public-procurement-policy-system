@@ -26,6 +26,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from procurement.api.response import DashboardResponseModel
+from procurement.core.period import PeriodFilter
 from procurement.dashboard.data_service import DashboardDataService
 
 
@@ -42,12 +43,15 @@ class DashboardApiService:
         """
         self._dashboard_service = dashboard_service
 
-    def get_dashboard(self) -> DashboardResponseModel:
+    def get_dashboard(self, period: PeriodFilter | None = None) -> DashboardResponseModel:
         """시스템에 등록된 목표율 기반 대시보드 응답을 반환합니다.
 
         내부적으로
         :meth:`DashboardDataService.build_summary_from_registered_targets` 를
         호출합니다.
+
+        Args:
+            period: 적용할 기간 조건. ``None`` 이면 기간 제한 없음(기존 동작).
 
         Returns:
             :class:`DashboardResponseModel`.
@@ -57,7 +61,7 @@ class DashboardApiService:
                 ``policy_repository`` 가 설정되지 않은 경우(그대로 전파).
             CalculatorValidationError: 계산기 검증 실패 시(그대로 전파).
         """
-        summary = self._dashboard_service.build_summary_from_registered_targets()
+        summary = self._dashboard_service.build_summary_from_registered_targets(period)
         return DashboardResponseModel.from_summary(summary)
 
     def get_dashboard_with_targets(

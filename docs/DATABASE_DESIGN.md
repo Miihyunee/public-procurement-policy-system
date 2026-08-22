@@ -4,9 +4,9 @@
 
 | Item | Value |
 |------|------|
-| Version | v1.1 |
+| Version | v1.2 |
 | Status | Draft |
-| Last Updated | 2026-08-04 |
+| Last Updated | 2026-08-12 |
 
 ---
 
@@ -128,6 +128,7 @@
 ### Related Tables
 
 - Company
+- ImportBatch
 
 ### Columns
 
@@ -140,12 +141,70 @@
 | contract_date | DATE | Yes | 계약일 (창업기업 판정 기준일) |
 | payment_date | DATE | Yes | 대금 지급일(지출완료) (일반 정책 판정 기준일) |
 | amount | NUMERIC | Yes | 구매금액 |
+| batch_id | INTEGER | No | ImportBatch 테이블 참조 (업로드 단위) |
 | created_at | DATETIME | Yes | 데이터 생성일시 |
 | updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
+> `batch_id`는 월별 누적 적재를 위해 v1.2 에서 추가하였다. **NULL 을 허용**하며,
+> NULL 인 행(배치 도입 이전 데이터)은 **계산에 계속 포함**된다.
+> 인덱스: `idx_purchase_batch (batch_id)`
 
 > `purchase_date`(단일 구매일)는 판정 기준 이원화를 위해 제거하고 `payment_date`로 대체하였다.
 > `contract_date`는 창업기업(계약일 기준) 판정을 위해 신규 추가하였다. (Issue #12)
 > 품목 수(`item_count`)는 자활용사촌 등 향후 정책에서 사용하므로 MVP 범위에 포함하지 않는다.
+
+---
+
+## ImportBatch
+
+### Purpose
+
+**한 번의 업로드 단위**를 저장한다.
+
+매월 데이터를 누적으로 올리는 운영 방식에서, 같은 기간을 다시 올렸을 때
+이전 업로드를 **대체**하기 위해 사용한다(D-25). 행을 물리적으로 삭제하지 않고
+상태로만 구분하므로, 무엇이 언제 대체되었는지 추적할 수 있다.
+
+### Primary Key
+
+- batch_id
+
+### Related Tables
+
+- Purchase (1 : N, 논리 참조)
+
+### Columns
+
+| Column | Type | Required | Description |
+|---------|------|----------|-------------|
+| batch_id | INTEGER | Yes | 내부 고유 ID (Primary Key) |
+| file_name | TEXT | Yes | 원본 파일명 |
+| file_hash | TEXT | No | 원본 파일 내용 해시 (같은 파일 재업로드 감지용) |
+| period_start | DATE | Yes | 대상 기간 시작일 |
+| period_end | DATE | Yes | 대상 기간 종료일 |
+| uploaded_at | DATETIME | Yes | 업로드 시각 |
+| row_count | INTEGER | Yes | 적재된 행 수 |
+| total_amount | NUMERIC | Yes | 적재된 금액 합계 |
+| status | TEXT | Yes | `ACTIVE` / `SUPERSEDED` |
+| superseded_by | INTEGER | No | 이 배치를 대체한 배치 ID |
+| created_at | DATETIME | Yes | 데이터 생성일시 |
+| updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
+인덱스: `idx_import_batch_period (period_start, period_end, status)`
+
+### 계산 대상 판정
+
+```text
+계산에 포함되는 purchase
+  = batch_id 가 NULL 이거나
+    batch_id 가 status='ACTIVE' 인 배치를 가리키는 행
+```
+
+> `status` 값은 **2개로 한정**한다. `FAILED`·`PARTIAL` 등은 실제로 필요해질 때 추가한다.
+>
+> `period_start` / `period_end` 는 **호출자가 지정**한다. 파일 내용에서 자동으로
+> 유추하지 않는다 — 어느 날짜 컬럼으로 기간을 잡을지가 **D-24 (미확정)** 에
+> 종속되기 때문이다.
 
 ---
 
@@ -290,3 +349,14 @@ Company, Certification, Purchase, Policy 테이블의 기본 컬럼은 정의되
 컬럼의 실제 스키마 반영(Model/Repository)은 Issue #13 이후에서 구현한다.
 
 인덱스(Index), 외래키(Foreign Key), 상세 제약조건(Constraint) 및 Dataset, AuditLog의 컬럼 정의는 다음 버전에서 보완한다.
+
+## v1.2 변경 이력 (Issue #26 — 기간 필터 · 월별 누적 적재)
+
+매월 데이터를 누적으로 올리는 운영 방식을 지원하기 위해 다음을 개정하였다.
+
+- **ImportBatch 테이블 신규 추가** — 업로드 단위, 대상 기간, 상태(`ACTIVE`/`SUPERSEDED`)
+- Purchase: `batch_id`(NULL 허용) 추가 + 인덱스 `idx_purchase_batch`
+- 계산 조회는 `find_for_calculation()` 을 사용하며, 대체된 배치의 행을 제외한다
+- 기존 `find_all()` 의 동작은 **변경하지 않았다**(하위 호환)
+
+Foreign Key 제약은 걸지 않는다. `purchase.company_id` 와 같은 기존 방식(논리 참조)을 유지한다.
