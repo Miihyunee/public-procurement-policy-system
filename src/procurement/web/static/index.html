@@ -416,6 +416,12 @@
                    aria-label="미적재 행 검색 — 적요, 거래처명, 사업자번호, 원본 행 번호" />
           </span>
           <span class="control">
+            <span class="control-label">기간</span>
+            <select id="rejection-period" class="control-input" aria-label="미적재 행 기간">
+              <option value="">전체</option>
+            </select>
+          </span>
+          <span class="control">
             <span class="control-label">사유</span>
             <select id="rejection-reason" class="control-input" aria-label="미적재 사유 필터">
               <option value="ALL">전체</option>
@@ -465,6 +471,12 @@
             이전 업로드는 <b>대체됨</b> 으로 남고 기록은 지워지지 않습니다
           </p>
         </div>
+        <span class="control">
+          <span class="control-label">기간</span>
+          <select id="history-period" class="control-input" aria-label="업로드 이력 기간">
+            <option value="">전체 기간</option>
+          </select>
+        </span>
         <button id="history-reload" class="control" type="button"
                 aria-label="업로드 이력 새로고침">새로고침</button>
       </div>
@@ -499,6 +511,16 @@
         검색·필터·정렬·페이지는 전부 서버가 처리하고, 해당 페이지만 내려온다.
       -->
       <div class="upload-actions">
+        <span class="control">
+          <span class="control-label">기간</span>
+          <!--
+            선택지는 백엔드가 준다(/imports/periods). ⛔ 화면이 달을 계산하거나
+            만들어 내지 않는다. 값은 그 기간의 **현재 배치 ID** 다.
+          -->
+          <select id="review-period" class="control-input" aria-label="검토 대상 기간">
+            <option value="">전체</option>
+          </select>
+        </span>
         <span class="control control-grow">
           <span class="control-label">적요 검색</span>
           <input id="review-search" class="control-input" type="search"
@@ -1327,6 +1349,58 @@
   /** 가장 최근에 받은 ``/imports/trace`` 결과. 같은 것을 두 번 받지 않으려고 둔다. */
   var lastTrace = null;
 
+  // ------------------------------------------------------------------
+  // 기간 선택지 (STEP 15)
+  //
+  // ⛔ 화면이 달을 만들지 않는다. 백엔드가 준 배치의 기간을 그대로 쓰고,
+  //    고른 기간의 **현재 배치 ID** 를 조회 조건으로 보낸다. 대체된 배치는
+  //    애초에 목록에 없다.
+  // ------------------------------------------------------------------
+
+  /** 마지막으로 받은 기간 목록. 세 화면이 함께 쓴다. */
+  var periodOptions = [];
+
+  /**
+   * 기간 선택지를 채운다.
+   *
+   * 값이 서로 다르므로 화면마다 무엇을 담을지 정한다 —
+   * 검토·미적재는 ``batch_id``, 업로드 이력은 기간 자체다.
+   */
+  function loadPeriods() {
+    return fetchJson("/imports/periods").then(function (payload) {
+      periodOptions = payload.items || [];
+      fillPeriodSelect("review-period", function (item) { return String(item.batch_id); });
+      fillPeriodSelect("rejection-period", function (item) { return String(item.batch_id); });
+      fillPeriodSelect("history-period", function (item) {
+        return item.period_start + "," + item.period_end;
+      });
+    }).catch(function () {
+      // 기간 목록을 못 받아도 "전체" 로는 볼 수 있어야 한다.
+    });
+  }
+
+  function fillPeriodSelect(id, valueOf) {
+    var select = el(id);
+    var chosen = select.value;
+    // 첫 항목("전체")만 남기고 다시 채운다.
+    while (select.options.length > 1) { select.remove(1); }
+    periodOptions.forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = valueOf(item);
+      option.textContent = item.label;
+      select.appendChild(option);
+    });
+    // 고르고 있던 기간이 아직 있으면 그대로 둔다(업로드 후에도 유지).
+    select.value = chosen;
+    if (select.selectedIndex < 0) { select.selectedIndex = 0; }
+  }
+
+  /** 선택된 기간을 조회 조건 조각으로. 고르지 않았으면 빈 문자열. */
+  function batchParam(id) {
+    var value = el(id).value;
+    return value ? "&batch_id=" + encodeURIComponent(value) : "";
+  }
+
   /** [미적재 행 확인] — 조건 패널을 열고 닫는다. */
   function showUploadRejections() {
     var panel = el("rejection-panel");
@@ -1358,18 +1432,30 @@
     }).catch(function () { /* 선택지를 못 받아도 전체 조회는 된다 */ });
   }
 
+  /**
+   * 미적재 조회 조건.
+   *
+   * ⚠️ **목록과 CSV 가 같은 함수를 쓴다.** 조건을 두 곳에서 만들면 화면에서
+   *    보던 것과 다른 파일이 내려온다. 페이지만 CSV 에서 빠진다(서버 계약).
+   */
   function rejectionParams() {
     return "search=" + encodeURIComponent(el("rejection-search").value.trim())
       + "&reason=" + encodeURIComponent(el("rejection-reason").value)
       + "&sort=" + encodeURIComponent(el("rejection-sort").value)
       + "&direction=" + encodeURIComponent(el("rejection-direction").value)
-      + "&page=" + rejectionPage
-      + "&page_size=50";
+      + batchParam("rejection-period");
+  }
+
+  /** 현재 조건 그대로의 CSV 주소. 페이지 조건은 넣지 않는다. */
+  function rejectionCsvUrl() {
+    return "/imports/trace.csv?" + rejectionParams();
   }
 
   function loadRejections() {
     uploadError("");
-    fetchJson("/imports/rejections?" + rejectionParams()).then(function (page) {
+    el("upload-trace-csv").href = rejectionCsvUrl();
+    fetchJson("/imports/rejections?" + rejectionParams()
+              + "&page=" + rejectionPage + "&page_size=50").then(function (page) {
       renderRejectionTable(el("upload-trace-rows"), page);
       text(el("rejection-page-info"),
         page.total
@@ -1404,7 +1490,13 @@
 
   function loadHistory() {
     historyError("");
-    fetchJson("/imports/batches").then(renderHistory).catch(function (error) {
+    // 값은 "시작,끝" 이며 백엔드가 준 그대로다. ⛔ 화면이 날짜를 만들지 않는다.
+    var chosen = el("history-period").value;
+    var query = chosen
+      ? "?period_start=" + encodeURIComponent(chosen.split(",")[0])
+        + "&period_end=" + encodeURIComponent(chosen.split(",")[1])
+      : "";
+    fetchJson("/imports/batches" + query).then(renderHistory).catch(function (error) {
       historyError("업로드 이력을 불러오지 못했습니다: " + error.message);
     });
   }
@@ -1517,7 +1609,9 @@
     );
 
     renderUploadTrace(result);
-    if (result.stored) { loadHistory(); }
+    // 새 기간이 생겼을 수 있으므로 목록을 **서버에서 다시 읽는다.**
+    // ⛔ 화면이 기간을 만들어 넣지 않는다.
+    if (result.stored) { loadPeriods().then(loadHistory); }
 
     if (!result.issues.length) {
       issues.hidden = true;
@@ -1635,6 +1729,8 @@
     // 먼저 연결한다(파일 선택만 데스크톱 앱 기능이다).
     el("upload-trace-show").addEventListener("click", showUploadRejections);
     el("history-reload").addEventListener("click", loadHistory);
+    el("history-period").addEventListener("change", loadHistory);
+    el("rejection-period").addEventListener("change", reloadRejectionsFromFirstPage);
     ["rejection-reason", "rejection-sort", "rejection-direction"].forEach(function (id) {
       el(id).addEventListener("change", reloadRejectionsFromFirstPage);
     });
@@ -1647,7 +1743,7 @@
       rejectionPage += 1;
       loadRejections();
     });
-    loadHistory();
+    loadPeriods().then(loadHistory);
 
     if (!desktop()) {
       pick.disabled = true;
@@ -2022,6 +2118,10 @@
       "sort=" + encodeURIComponent(el("review-sort").value),
       "direction=" + encodeURIComponent(el("review-direction").value)
     ];
+    // 기간을 고르지 않았으면 조건 자체를 보내지 않는다(= 전체).
+    if (el("review-period").value) {
+      parts.push("batch_id=" + encodeURIComponent(el("review-period").value));
+    }
     if (withPage) {
       parts.push("page=" + reviewPage);
       parts.push("page_size=" + encodeURIComponent(el("review-page-size").value));
@@ -2571,8 +2671,9 @@
 
   function initReview() {
     // 조건이 바뀌면 1페이지부터 다시 본다.
-    ["review-status", "review-decision", "review-history", "review-candidates",
-     "review-sort", "review-direction", "review-page-size"].forEach(function (id) {
+    ["review-period", "review-status", "review-decision", "review-history",
+     "review-candidates", "review-sort", "review-direction",
+     "review-page-size"].forEach(function (id) {
       el(id).addEventListener("change", reloadFromFirstPage);
     });
     el("review-search").addEventListener("input", debounce(reloadFromFirstPage, 300));

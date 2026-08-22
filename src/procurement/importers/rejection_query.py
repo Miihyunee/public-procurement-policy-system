@@ -61,6 +61,10 @@ class RejectionQuery:
             전체. 띄어쓰기 차이는 무시합니다.
         reason: :data:`~procurement.models.import_rejection.REJECTION_REASONS`
             중 하나, 또는 :data:`ANY`.
+        batch_id: 이 업로드 배치의 기록만. ``None`` 이면 제한 없음.
+
+            ⚠️ 검토 목록과 같은 규약입니다 — 화면이 만들지 않고, 백엔드가 알려
+            준 **현재 배치 ID** 를 그대로 보냅니다.
         sort: :data:`SORT_KEYS` 중 하나.
         direction: :data:`ASCENDING` 또는 :data:`DESCENDING`.
         page: 1부터 시작하는 페이지 번호.
@@ -69,6 +73,7 @@ class RejectionQuery:
 
     search: str = ""
     reason: str = ANY
+    batch_id: int | None = None
     sort: str = "row_number"
     direction: str = ASCENDING
     page: int = 1
@@ -89,6 +94,8 @@ class RejectionQuery:
             raise RejectionQueryError(f"허용되지 않는 정렬 기준입니다: {self.sort}")
         if self.direction not in SORT_DIRECTIONS:
             raise RejectionQueryError(f"허용되지 않는 정렬 방향입니다: {self.direction}")
+        if self.batch_id is not None and self.batch_id < 1:
+            raise RejectionQueryError(f"배치 ID 는 1 이상이어야 합니다: {self.batch_id}")
         if self.page < 1:
             raise RejectionQueryError(f"페이지는 1 이상이어야 합니다: {self.page}")
         if not 1 <= self.page_size <= MAX_PAGE_SIZE:

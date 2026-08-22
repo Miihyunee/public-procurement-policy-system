@@ -180,6 +180,11 @@ def _keeps(target: ReviewTarget, query: ReviewQuery) -> bool:
     """
     review = target.review
 
+    # 기간(=배치) 조건. ⛔ 날짜를 다시 계산하지 않고 배치로만 좁힌다 —
+    #    어느 날짜로 기간을 나눌지는 아직 확정되지 않은 업무규칙이다(D-24).
+    if query.batch_id is not None and target.purchase.batch_id != query.batch_id:
+        return False
+
     if query.search:
         needle = normalize_description(query.search)
         if needle and needle not in normalize_description(target.purchase.description):

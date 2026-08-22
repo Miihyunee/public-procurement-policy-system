@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -86,8 +87,10 @@ from procurement.importers.trace_response import (
     BatchHistoryListResponseModel,
     BatchHistoryResponseModel,
     ImportTraceResponseModel,
+    PeriodListResponseModel,
     RejectionPageResponseModel,
     build_history_response,
+    build_period_response,
     build_trace_response,
 )
 from procurement.importers.trace_service import ImportTraceService
@@ -133,6 +136,38 @@ from procurement.web import (
     parse_thresholds,
     read_index_html,
 )
+
+
+def _rejection_query(
+    *,
+    search: str,
+    reason: str,
+    batch_id: int | None,
+    sort: str,
+    direction: str,
+    page: int,
+    page_size: int,
+) -> RejectionQuery:
+    """미적재 조회 조건을 만듭니다.
+
+    ⚠️ **목록과 CSV 가 같은 함수를 씁니다.** 조건 해석을 두 곳에 두면 화면에서
+    보던 것과 다른 파일이 내려옵니다(STEP 15 지시 §13).
+
+    Raises:
+        HTTPException: 허용되지 않는 조건값이면 422.
+    """
+    try:
+        return RejectionQuery(
+            search=search,
+            reason=reason,
+            batch_id=batch_id,
+            sort=sort,
+            direction=direction,
+            page=page,
+            page_size=page_size,
+        )
+    except RejectionQueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def build_dashboard_api(db_path: str | Path | None = None) -> DashboardApiService:
@@ -664,6 +699,9 @@ def create_app(
         decision: str = QUERY_ANY,
         history: str = QUERY_ANY,
         candidates: str = QUERY_ANY,
+        batch_id: int | None = Query(
+            None, description="이 업로드 배치로 들어온 행만 (기간 필터). 생략하면 전체"
+        ),
         ambiguous_only: bool = False,
         sort: str = "purchase_id",
         direction: str = ASCENDING,
@@ -705,6 +743,7 @@ def create_app(
                 decision=decision,
                 history=history,
                 candidates=candidates,
+                batch_id=batch_id,
                 ambiguous_only=ambiguous_only,
                 sort=sort,
                 direction=direction,
@@ -735,6 +774,9 @@ def create_app(
         decision: str = QUERY_ANY,
         history: str = QUERY_ANY,
         candidates: str = QUERY_ANY,
+        batch_id: int | None = Query(
+            None, description="이 업로드 배치로 들어온 행만 (기간 필터). 생략하면 전체"
+        ),
         ambiguous_only: bool = False,
         sort: str = "purchase_id",
         direction: str = ASCENDING,
@@ -756,6 +798,7 @@ def create_app(
                 decision=decision,
                 history=history,
                 candidates=candidates,
+                batch_id=batch_id,
                 ambiguous_only=ambiguous_only,
                 sort=sort,
                 direction=direction,
@@ -791,12 +834,38 @@ def create_app(
         return build_trace_response(import_trace.overview(), import_trace.rejections())
 
     @app.get(
+        "/imports/periods",
+        response_model=PeriodListResponseModel,
+        summary="조회에 쓸 수 있는 기간 목록",
+        tags=["imports"],
+    )
+    def list_import_periods() -> PeriodListResponseModel:
+        """검토·미적재 조회에 쓸 수 있는 기간을 최근 순으로 반환합니다.
+
+        ⛔ **화면이 기간을 만들지 않습니다.** 업로드된 배치의 기간을 그대로
+        내려보내고, 화면은 담당자가 고른 기간의 ``batch_id`` 를 조회 조건에
+        넣기만 합니다.
+
+        ⛔ **현재 배치가 있는 기간만** 나옵니다. 같은 기간을 다시 올려 이전
+        배치가 대체되었다면 기간은 하나이고 ``batch_id`` 는 새 배치입니다.
+        대체된 배치는 업로드 이력(``GET /imports/batches``)에서 봅니다.
+        """
+        return build_period_response(import_trace.periods())
+
+    @app.get(
         "/imports/batches",
         response_model=BatchHistoryListResponseModel,
         summary="업로드 이력",
         tags=["imports"],
     )
-    def list_import_batches() -> BatchHistoryListResponseModel:
+    def list_import_batches(
+        # ``Annotated`` 로 적는다 — 기본값 자리에서 ``Query(...)`` 를 부르면
+        # 날짜 타입에서는 ruff(B008)가 걸린다.
+        period_start: Annotated[date | None, Query(description="이 기간의 업로드만")] = None,
+        period_end: Annotated[
+            date | None, Query(description="``period_start`` 와 함께 지정")
+        ] = None,
+    ) -> BatchHistoryListResponseModel:
         """업로드 이력을 최근 순으로 반환합니다.
 
         매월 원본 파일을 올리는 운영을 전제로, **어느 달 파일이 언제 올라왔고
@@ -806,8 +875,18 @@ def create_app(
 
         ⛔ 새 상태값을 만들지 않았습니다. ``status`` 는 기존 배치 lifecycle 의
         ``ACTIVE`` / ``SUPERSEDED`` 그대로입니다.
+
+        기간을 주면 그 기간의 업로드만 봅니다. 두 값은 **함께** 주어야 하며,
+        화면은 ``GET /imports/periods`` 가 준 값을 그대로 돌려보냅니다.
+
+        Raises:
+            HTTPException: 기간을 한쪽만 주면 422.
         """
-        return build_history_response(import_trace.history())
+        if (period_start is None) != (period_end is None):
+            raise HTTPException(status_code=422, detail="기간은 시작과 끝을 함께 지정해야 합니다.")
+        return build_history_response(
+            import_trace.history(period_start=period_start, period_end=period_end)
+        )
 
     @app.get(
         "/imports/batches/{batch_id}",
@@ -832,9 +911,12 @@ def create_app(
         summary="미적재 원본 행 조회(검색·필터·정렬·페이지)",
         tags=["imports"],
     )
-    def search_import_rejections(
+    def search_import_rejections(  # noqa: PLR0913 — 조회 조건이 그만큼 있다
         search: str = Query("", description="적요·거래처명·사업자번호·원본 행 번호"),
         reason: str = Query(REJECTION_ANY, description="미적재 사유 코드 또는 ALL"),
+        batch_id: int | None = Query(
+            None, description="이 업로드 배치의 기록만 (기간 필터). 생략하면 전체"
+        ),
         sort: str = Query("row_number", description="정렬 기준"),
         direction: str = Query(REJECTION_ASCENDING, description="asc | desc"),
         page: int = Query(1, ge=1, description="1부터 시작하는 페이지 번호"),
@@ -850,17 +932,15 @@ def create_app(
         Raises:
             HTTPException: 조건 값이 허용 범위를 벗어나면 422.
         """
-        try:
-            query = RejectionQuery(
-                search=search,
-                reason=reason,
-                sort=sort,
-                direction=direction,
-                page=page,
-                page_size=page_size,
-            )
-        except RejectionQueryError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        query = _rejection_query(
+            search=search,
+            reason=reason,
+            batch_id=batch_id,
+            sort=sort,
+            direction=direction,
+            page=page,
+            page_size=page_size,
+        )
         return RejectionPageResponseModel.from_page(import_trace.search_rejections(query))
 
     @app.get(
@@ -869,19 +949,40 @@ def create_app(
         tags=["imports"],
         response_class=StreamingResponse,
     )
-    def export_import_trace() -> StreamingResponse:
-        """적재되지 않은 원본 행을 CSV 로 내려보냅니다.
+    def export_import_trace(
+        search: str = Query("", description="적요·거래처명·사업자번호·원본 행 번호"),
+        reason: str = Query(REJECTION_ANY, description="미적재 사유 코드 또는 ALL"),
+        batch_id: int | None = Query(None, description="이 업로드 배치의 기록만 (기간 필터)"),
+        sort: str = Query("row_number", description="정렬 기준"),
+        direction: str = Query(REJECTION_ASCENDING, description="asc | desc"),
+    ) -> StreamingResponse:
+        """**화면과 같은 조건**의 미적재 원본 행을 CSV 로 내려보냅니다.
 
         담당자가 **원본 엑셀과 나란히 놓고 대조**하기 위한 파일입니다. 원본 행
         번호와 원본 값(음수 금액 포함)을 그대로 싣습니다.
 
+        조건은 목록(``GET /imports/rejections``)과 **같은 규칙**으로 해석합니다
+        — 화면에서 보던 것과 다른 것이 내려오면 안 되기 때문입니다.
+
+        페이지 조건은 받지 않습니다 — 내보내기는 **조건에 맞는 전부**입니다
+        (검토 이력 CSV 와 같은 계약).
+
         ⛔ **"제외 목록" 이 아닙니다.** 처리 방식은 고객 확인 사항입니다(Q5-8).
 
-        검토 이력 CSV 와 같은 규약입니다 — UTF-8 BOM · CRLF · 수식 인젝션 방어 ·
-        한 줄씩 흘려보내기.
+        Raises:
+            HTTPException: 허용되지 않는 조건값이면 422.
         """
+        query = _rejection_query(
+            search=search,
+            reason=reason,
+            batch_id=batch_id,
+            sort=sort,
+            direction=direction,
+            page=1,
+            page_size=REJECTION_MAX_PAGE_SIZE,
+        )
         return StreamingResponse(
-            rejection_export_lines(import_trace.rejections()),
+            rejection_export_lines(import_trace.search_rejections_all(query)),
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": 'attachment; filename="import-rejections.csv"'},
         )

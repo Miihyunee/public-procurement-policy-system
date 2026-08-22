@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict
 from procurement.importers.trace_service import (
     BatchHistoryEntry,
     ImportTraceOverview,
+    PeriodOption,
     RejectionPage,
 )
 from procurement.models.import_rejection import (
@@ -325,4 +326,64 @@ def _reason_models(
             count=count,
         )
         for reason, count in sorted((reasons or {}).items())
+    )
+
+
+class PeriodOptionResponseModel(BaseModel):
+    """검토·조회에 쓸 수 있는 기간 하나.
+
+    Attributes:
+        label: 사람이 읽는 기간 이름(``2026-03`` 또는 ``시작 ~ 끝``).
+        period_start: 대상 기간 시작일.
+        period_end: 대상 기간 종료일.
+        batch_id: 이 기간의 **현재 배치** ID. 화면은 이 값을 그대로 조회 조건에
+            넣습니다 — ⛔ 기간을 직접 만들지 않습니다.
+        stored: 적재된 행 수.
+        rejected: 미적재 행 수.
+        current_batch_count: 이 기간에 현재 상태인 배치 수. 정상이면 1.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    period_start: date
+    period_end: date
+    batch_id: int
+    stored: int
+    rejected: int
+    current_batch_count: int
+
+    @classmethod
+    def from_option(cls, option: PeriodOption) -> PeriodOptionResponseModel:
+        """기간 항목을 응답 모델로 변환합니다."""
+        return cls(
+            label=option.label,
+            period_start=option.period_start,
+            period_end=option.period_end,
+            batch_id=option.batch_id,
+            stored=option.stored,
+            rejected=option.rejected,
+            current_batch_count=option.current_batch_count,
+        )
+
+
+class PeriodListResponseModel(BaseModel):
+    """기간 목록.
+
+    Attributes:
+        items: 최근 기간 순. **현재 배치가 있는 기간만** 들어갑니다.
+        total: 기간 수.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[PeriodOptionResponseModel, ...]
+    total: int
+
+
+def build_period_response(options: list[PeriodOption]) -> PeriodListResponseModel:
+    """기간 목록을 응답 모델로 변환합니다."""
+    return PeriodListResponseModel(
+        items=tuple(PeriodOptionResponseModel.from_option(option) for option in options),
+        total=len(options),
     )

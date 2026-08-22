@@ -24,6 +24,23 @@ ELECTRON_DIR = PROJECT_ROOT / "electron"
 INDEX_HTML = PROJECT_ROOT / "src" / "procurement" / "web" / "static" / "index.html"
 
 
+def _function_body(page: str, name: str) -> str:
+    """``function name(`` 부터 짝이 맞는 닫는 중괄호까지."""
+    start = page.index("function " + name + "(")
+    depth = 0
+    started = False
+    for index in range(start, len(page)):
+        char = page[index]
+        if char == "{":
+            depth += 1
+            started = True
+        elif char == "}":
+            depth -= 1
+            if started and depth == 0:
+                return page[start : index + 1]
+    raise AssertionError(f"{name} 의 끝을 찾지 못했습니다")
+
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -155,9 +172,17 @@ class TestRendererUsesBackendOnly:
         # 용도로만 쓴다. 그 외 날짜 조립은 없다.
         assert set(re.findall(r"new Date\([^)]*\)[.\w()]*", source)) == {"new Date().getFullYear()"}
 
-        # ③ 기간이 등장하는 곳은 **백엔드가 준 값을 읽는 자리**뿐이다.
-        for match in re.findall(r"[\w.]*period_(?:start|end)", source):
-            assert match.startswith("item."), match
+        # ③ 기간 값의 출처는 **백엔드가 준 목록**뿐이다.
+        #    STEP 15 에서 업로드 이력에 기간 필터가 붙어 ``period_start`` 가
+        #    질의 파라미터 **이름**으로도 등장합니다. 이름이 아니라 **값이 어디서
+        #    오는지**를 봅니다.
+        options = _function_body(source, "fillPeriodSelect")
+        assert "item.period_start" in options or "valueOf(item)" in options
+
+        history = _function_body(source, "loadHistory")
+        assert 'el("history-period").value' in history
+        # 고른 값을 쪼개 쓸 뿐, 날짜를 만들지 않는다.
+        assert "chosen.split" in history
 
     def test_upload_ui_elements_exist(self) -> None:
         source = _read(INDEX_HTML)

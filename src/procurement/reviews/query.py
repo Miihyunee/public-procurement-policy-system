@@ -147,6 +147,12 @@ class ReviewQuery:
         decision: :data:`DECISION_FILTERS` 중 하나.
         history: :data:`HISTORY_FILTERS` 중 하나.
         candidates: :data:`CANDIDATE_FILTERS` 중 하나.
+        batch_id: 이 업로드 배치로 들어온 행만. ``None`` 이면 제한 없음.
+
+            ⚠️ **화면이 만들어 내는 값이 아닙니다.** 담당자가 기간을 고르면
+            백엔드가 알려 준 그 기간의 **현재 배치 ID** 를 그대로 보냅니다
+            (``GET /imports/periods``). 대체된 배치는 애초에 목록에 없으므로
+            여기로 들어오지 않습니다.
         ambiguous_only: 분석기가 애매하다고 표시한 건만.
         sort: :data:`SORT_KEYS` 중 하나.
         direction: :data:`ASCENDING` 또는 :data:`DESCENDING`.
@@ -159,6 +165,7 @@ class ReviewQuery:
     decision: str = ANY
     history: str = ANY
     candidates: str = ANY
+    batch_id: int | None = None
     ambiguous_only: bool = False
     sort: str = "purchase_id"
     direction: str = ASCENDING
@@ -181,6 +188,8 @@ class ReviewQuery:
         _require(self.sort, frozenset(SORT_KEYS), "정렬 기준")
         _require(self.direction, SORT_DIRECTIONS, "정렬 방향")
 
+        if self.batch_id is not None and self.batch_id < 1:
+            raise ReviewQueryError(f"배치 ID 는 1 이상이어야 합니다: {self.batch_id}")
         if self.page < 1:
             raise ReviewQueryError(f"페이지는 1 이상이어야 합니다: {self.page}")
         if not 1 <= self.page_size <= MAX_PAGE_SIZE:

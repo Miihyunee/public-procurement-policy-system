@@ -198,9 +198,14 @@ class TestUploadResultNumbers:
         assert "맞지 않습니다" in body
 
     def test_history_refreshes_after_a_save(self, page: str) -> None:
+        """저장 후 이력을 다시 읽는다.
+
+        STEP 15 에서 기간 목록도 함께 다시 읽습니다 — 새 달을 올렸으면 기간
+        선택지에 나타나야 하고, 그 목록은 **서버에서** 받아야 하기 때문입니다.
+        """
         body = _function_body(page, "renderUploadResult")
 
-        assert "loadHistory()" in body
+        assert "loadPeriods().then(loadHistory)" in body
 
 
 class TestScreenStaysConsistent:
@@ -254,3 +259,86 @@ def _function_body(page: str, name: str) -> str:
             if started and depth == 0:
                 return page[start : index + 1]
     raise AssertionError(f"{name} 의 끝을 찾지 못했습니다")
+
+
+class TestPeriodFilters:
+    """STEP 15 — 기간 선택지는 백엔드가 준다."""
+
+    def test_three_period_selects_exist(self, page: str) -> None:
+        for element_id in ("review-period", "rejection-period", "history-period"):
+            assert f'id="{element_id}"' in page, element_id
+
+    def test_options_come_from_the_backend(self, page: str) -> None:
+        """⛔ 화면이 달을 만들지 않는다."""
+        body = _function_body(page, "loadPeriods")
+
+        assert "/imports/periods" in body
+        assert "fillPeriodSelect" in body
+
+    def test_option_values_are_backend_values(self, page: str) -> None:
+        body = _function_body(page, "loadPeriods")
+
+        assert "item.batch_id" in body
+        assert "item.period_start" in body
+        assert "item.period_end" in body
+
+    def test_labels_are_not_built_on_screen(self, page: str) -> None:
+        body = _function_body(page, "fillPeriodSelect")
+
+        assert "item.label" in body
+
+    def test_default_is_everything(self, page: str) -> None:
+        """⛔ 최신 달을 자동으로 고르지 않는다 (지시 §20)."""
+        body = _function_body(page, "fillPeriodSelect")
+
+        assert "select.selectedIndex = 0" in body
+        for banned in ("periodOptions[0]", "items[0].batch_id"):
+            assert banned not in body, banned
+
+    def test_chosen_period_survives_a_refresh(self, page: str) -> None:
+        """업로드 후 목록을 다시 받아도 고르고 있던 기간이 유지된다."""
+        body = _function_body(page, "fillPeriodSelect")
+
+        assert "var chosen = select.value" in body
+        assert "select.value = chosen" in body
+
+    def test_review_query_carries_the_period(self, page: str) -> None:
+        body = _function_body(page, "reviewParams")
+
+        assert 'el("review-period").value' in body
+        assert "batch_id=" in body
+
+    def test_period_change_reloads_from_the_first_page(self, page: str) -> None:
+        body = _function_body(page, "initReview")
+
+        assert '"review-period"' in body
+        assert "reloadFromFirstPage" in body
+
+    def test_rejection_query_carries_the_period(self, page: str) -> None:
+        body = _function_body(page, "rejectionParams")
+
+        assert 'batchParam("rejection-period")' in body
+
+    def test_csv_uses_the_same_conditions(self, page: str) -> None:
+        """⛔ 화면과 CSV 의 조건이 갈라지면 안 된다 (지시 §13)."""
+        body = _function_body(page, "rejectionCsvUrl")
+
+        assert "rejectionParams()" in body
+        # 페이지는 CSV 에 넣지 않는다 (서버 계약).
+        assert "page=" not in body
+
+    def test_csv_link_follows_the_current_conditions(self, page: str) -> None:
+        body = _function_body(page, "loadRejections")
+
+        assert 'el("upload-trace-csv").href = rejectionCsvUrl()' in body
+
+    def test_history_period_uses_backend_values(self, page: str) -> None:
+        body = _function_body(page, "loadHistory")
+
+        assert 'el("history-period").value' in body
+        assert "period_start=" in body
+        assert "period_end=" in body
+
+    def test_period_selects_are_labelled(self, page: str) -> None:
+        for label in ("검토 대상 기간", "미적재 행 기간", "업로드 이력 기간"):
+            assert f'aria-label="{label}"' in page, label

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from procurement.core.description_key import normalize_description
@@ -106,6 +106,49 @@ class BatchHistoryEntry:
     def is_current(self) -> bool:
         """지금 검토·계산에 쓰이는 배치인가(기존 lifecycle 기준)."""
         return self.batch.is_active
+
+
+@dataclass(frozen=True, kw_only=True)
+class PeriodOption:
+    """검토·조회에 쓸 수 있는 **기간 하나**.
+
+    ⚠️ 기간은 화면이 만들지 않습니다. 업로드된 배치의 ``period_start`` /
+    ``period_end`` 를 그대로 씁니다.
+
+    ⛔ **대체된 배치의 기간은 여기 오지 않습니다** — 운영 조회는 현재 배치만
+    봅니다. 과거 배치는 업로드 이력에서 봅니다.
+
+    Attributes:
+        period_start: 대상 기간 시작일.
+        period_end: 대상 기간 종료일.
+        batch_id: 이 기간의 **현재 배치** ID.
+        stored: 그 배치로 적재된 행 수.
+        rejected: 그 배치의 미적재 행 수.
+        current_batch_count: 이 기간에 현재 상태인 배치 수.
+
+            정상이면 1 입니다. 2 이상이면 대체 처리가 중간에 멈춘 것이므로
+            화면이 그 사실을 드러낼 수 있게 함께 내려보냅니다
+            (:meth:`~procurement.database.import_batch_repository.ImportBatchRepository.find_active_by_period_all`
+            의 점검 목적과 같습니다). ⛔ 여기서 고치지 않습니다.
+    """
+
+    period_start: date
+    period_end: date
+    batch_id: int
+    stored: int = 0
+    rejected: int = 0
+    current_batch_count: int = 1
+
+    @property
+    def label(self) -> str:
+        """사람이 읽는 기간 이름.
+
+        한 달에 정확히 맞아떨어지면 ``2026-03``, 아니면 ``시작 ~ 끝`` 입니다.
+        ⛔ 달을 만들어 내는 것이 아니라 **배치의 기간을 읽어 적는 것**입니다.
+        """
+        if self.period_start.day == 1 and self.period_end == _month_end(self.period_start):
+            return f"{self.period_start.year}-{self.period_start.month:02d}"
+        return f"{self.period_start.isoformat()} ~ {self.period_end.isoformat()}"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -221,7 +264,48 @@ class ImportTraceService:
             batches=tuple(batches),
         )
 
-    def history(self) -> list[BatchHistoryEntry]:
+    def periods(self) -> list[PeriodOption]:
+        """운영 조회에 쓸 수 있는 기간 목록을 **최근 순**으로 반환합니다.
+
+        ⛔ **현재 배치가 있는 기간만** 나옵니다. 같은 기간을 다시 올려 이전
+        배치가 대체되었다면 기간은 하나만 나오고, 그 기간의 ``batch_id`` 는
+        **새 배치**를 가리킵니다.
+
+        Returns:
+            :class:`PeriodOption` 목록. 업로드가 없으면 빈 목록.
+        """
+        rejections = self._rejection_repository.find_current()
+        rejected_by_batch: dict[int | None, int] = {}
+        for item in rejections:
+            rejected_by_batch[item.batch_id] = rejected_by_batch.get(item.batch_id, 0) + 1
+
+        by_period: dict[tuple[date, date], list[ImportBatch]] = {}
+        for batch in self._batch_repository.find_all():
+            if not batch.is_active or batch.batch_id is None:
+                continue
+            by_period.setdefault((batch.period_start, batch.period_end), []).append(batch)
+
+        options: list[PeriodOption] = []
+        for (start, end), batches in by_period.items():
+            # 정상이라면 1건이다. 여러 건이면 가장 최근 것을 쓰고 건수를 알린다.
+            latest = max(batches, key=lambda item: item.batch_id or 0)
+            assert latest.batch_id is not None
+            options.append(
+                PeriodOption(
+                    period_start=start,
+                    period_end=end,
+                    batch_id=latest.batch_id,
+                    stored=latest.row_count,
+                    rejected=rejected_by_batch.get(latest.batch_id, 0),
+                    current_batch_count=len(batches),
+                )
+            )
+        options.sort(key=lambda option: (option.period_start, option.period_end), reverse=True)
+        return options
+
+    def history(
+        self, *, period_start: date | None = None, period_end: date | None = None
+    ) -> list[BatchHistoryEntry]:
         """업로드 이력을 **최근 순**으로 반환합니다.
 
         ⛔ 대체된 배치도 함께 보여 줍니다 — 무엇이 무엇으로 바뀌었는지
@@ -229,8 +313,18 @@ class ImportTraceService:
 
         ⚠️ 적재 행 수는 배치에 기록된 ``row_count`` 를 씁니다. 대체된 배치의
         구매 행은 현재 조회에서 빠지므로, 지금 다시 세면 0 이 나옵니다.
+
+        Args:
+            period_start: 이 기간의 업로드만. ``None`` 이면 전체.
+            period_end: 〃. ``period_start`` 와 **함께** 주어야 합니다.
         """
         batches = self._batch_repository.find_all()
+        if period_start is not None and period_end is not None:
+            batches = [
+                batch
+                for batch in batches
+                if batch.period_start == period_start and batch.period_end == period_end
+            ]
         rejections = self._rejection_repository.find_all()
 
         by_batch: dict[int | None, list[ImportRejection]] = {}
@@ -281,6 +375,19 @@ class ImportTraceService:
             page_size=query.page_size,
         )
 
+    def search_rejections_all(self, query: RejectionQuery) -> list[ImportRejection]:
+        """조건에 맞는 미적재 행 **전부**를 반환합니다(페이지 무시).
+
+        CSV 내보내기처럼 "지금 보고 있는 조건의 전체" 가 필요한 경우에만
+        씁니다. 화면 목록은 :meth:`search_rejections` 를 써서 한 페이지만
+        가져갑니다.
+
+        ⚠️ **거르고 줄 세우는 규칙은 화면 목록과 같은 것을 씁니다** — 두 곳에
+        따로 두면 화면과 CSV 의 결과가 갈라집니다.
+        """
+        items = self._rejection_repository.find_current()
+        return _sorted([item for item in items if _keeps(item, query)], query)
+
     def rejections(self, *, limit: int | None = None) -> list[ImportRejection]:
         """미적재 행 목록을 반환합니다.
 
@@ -293,6 +400,13 @@ class ImportTraceService:
         return items if limit is None else items[:limit]
 
 
+def _month_end(start: date) -> date:
+    """그 달의 마지막 날."""
+    if start.month == 12:
+        return date(start.year, 12, 31)
+    return date(start.year, start.month + 1, 1) - timedelta(days=1)
+
+
 def _history_order(entry: BatchHistoryEntry) -> tuple[datetime, int]:
     """최근 업로드가 먼저. 시각이 같으면 배치 ID 순."""
     uploaded = entry.batch.uploaded_at or datetime.min
@@ -301,6 +415,8 @@ def _history_order(entry: BatchHistoryEntry) -> tuple[datetime, int]:
 
 def _keeps(item: ImportRejection, query: RejectionQuery) -> bool:
     """조건에 맞는 행인가."""
+    if query.batch_id is not None and item.batch_id != query.batch_id:
+        return False
     if query.reason != ANY and item.reason != query.reason:
         return False
     if not query.search:
