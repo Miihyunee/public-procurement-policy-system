@@ -76,6 +76,7 @@ from procurement.reviews.query import (
     ReviewQueryError,
 )
 from procurement.reviews.response import (
+    ConditionProgressResponseModel,
     ConfirmReviewRequest,
     PageResponseModel,
     PurchaseTypeOptionResponseModel,
@@ -656,8 +657,10 @@ def create_app(
         result = review_service.search(query)
         return ReviewListResponseModel(
             items=[ReviewItemResponseModel.from_target(target) for target in result.items],
+            # 전체 진행률과 현재 조건 진행률은 **다른 값**이며, 둘 다 보여준다.
             progress=ReviewProgressResponseModel.from_progress(review_service.progress()),
             page=PageResponseModel.from_page(result.page),
+            condition=ConditionProgressResponseModel.from_progress(result.condition),
         )
 
     @app.get(

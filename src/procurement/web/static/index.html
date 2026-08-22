@@ -100,6 +100,27 @@
     color: var(--muted); margin-bottom: 6px;
   }
   .rv-pager { justify-content: center; align-items: center; gap: 12px; }
+  .rv-current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .rv-cond { color: var(--accent); font-weight: 600; }
+  .rv-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50;
+  }
+  .rv-modal[hidden] { display: none; }
+  .rv-modal-box {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; max-width: 760px; width: 100%; max-height: 80vh; overflow: auto;
+  }
+  .rv-modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .rv-hist-row {
+    display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline;
+    padding: 6px 0; border-top: 1px dashed var(--line); font-size: 13px;
+  }
+  .rv-hist-when { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rv-hist-act {
+    border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 12px;
+  }
+  .rv-hist-type { font-weight: 600; }
   .control-grow { flex: 1 1 260px; }
   .rv-past {
     border: 1px solid var(--line); border-radius: 999px;
@@ -472,9 +493,20 @@
       <div id="review-list" class="upload-summary"></div>
 
       <div class="upload-actions rv-pager">
-        <button id="review-prev" class="control" type="button">← 이전</button>
+        <button id="review-prev-target" class="control" type="button">↑ 이전 대상 (P)</button>
+        <span id="review-cursor-info" class="card-sub"></span>
+        <button id="review-next-target" class="control" type="button">다음 대상 (N) ↓</button>
+      </div>
+
+      <div class="upload-actions rv-pager">
+        <button id="review-prev" class="control" type="button">← 이전 쪽</button>
         <span id="review-page-info" class="card-sub"></span>
-        <button id="review-next" class="control" type="button">다음 →</button>
+        <button id="review-next" class="control" type="button">다음 쪽 →</button>
+      </div>
+
+      <!-- 변경 이력 — 현재 값과 과거 기록을 분리해서 보여준다 -->
+      <div id="review-modal" class="rv-modal" hidden>
+        <div id="review-history-box" class="rv-modal-box"></div>
       </div>
     </section>
   </div>
@@ -1315,6 +1347,10 @@
   var reviewOptions = [];
   var reviewPicks = {};   // purchase_id -> 담당자가 지금 고른 값 (아직 확정 전)
   var reviewPage = 1;     // 현재 페이지 (1부터)
+  var reviewItems = [];   // 지금 페이지에 그려진 항목
+  var reviewCursor = 0;   // 현재 검토 대상 (reviewItems 안의 위치)
+  var reviewPageInfo = null;
+  var reviewPendingCursor = null;  // 페이지를 넘어간 뒤 커서를 어디에 둘지
 
   function reviewNotice(message) {
     var node = el("review-notice");
@@ -1494,8 +1530,18 @@
     return wrap;
   }
 
-  function reviewCard(item) {
+  /** 이력 보기 버튼 — 이 카드 한 건의 이력만 불러온다(목록을 다시 받지 않는다). */
+  function historyButton(purchaseId) {
+    var button = make("button", "control", "이력 보기");
+    button.type = "button";
+    button.addEventListener("click", function () { openHistory(purchaseId); });
+    return button;
+  }
+
+  function reviewCard(item, index) {
     var card = make("div", "rv");
+    card.dataset.index = String(index);
+    card.dataset.purchaseId = String(item.source.purchase_id);
     card.appendChild(reviewSource(item.source));
     card.appendChild(reviewAnalysis(item.analysis));
     card.appendChild(reviewPastLabels(item.past_labels));
@@ -1517,30 +1563,71 @@
       again.addEventListener("click", function () { reopenReview(item.source.purchase_id); });
       var row = make("div", "rv-pick");
       row.appendChild(again);
+      row.appendChild(historyButton(item.source.purchase_id));
       card.appendChild(row);
       return card;
     }
 
     card.appendChild(reviewPicker(item));
+    var extra = make("div", "rv-pick");
+    extra.appendChild(historyButton(item.source.purchase_id));
+    card.appendChild(extra);
     return card;
+  }
+
+  /**
+   * 진행률 두 가지를 나란히 보여준다.
+   *
+   * ⛔ 이 값은 **현황**이지 평가 기준이 아니다. 몇 % 면 위험/적정 같은 판정을
+   *    붙이지 않는다.
+   *
+   * 조건이 전체와 같으면 같은 숫자가 두 번 나오므로, 그때는 하나만 보여준다.
+   */
+  function renderProgress(payload) {
+    var node = el("review-progress");
+    clear(node);
+    var whole = payload.progress;
+    var condition = payload.condition;
+
+    var wholeText = "전체 확정 " + numberFormat(whole.confirmed)
+      + " / " + numberFormat(whole.total)
+      + " · 확인 권장 " + numberFormat(whole.ambiguous);
+    node.appendChild(make("div", null, wholeText));
+
+    if (!condition) { return; }
+    // 조건이 전체와 같으면 중복이므로 생략한다.
+    if (condition.total === whole.total && condition.confirmed === whole.confirmed) {
+      node.appendChild(make("div", "rv-cond", "현재 조건 = 전체"));
+      return;
+    }
+    node.appendChild(make("div", "rv-cond",
+      "현재 조건 확정 " + numberFormat(condition.confirmed)
+      + " / " + numberFormat(condition.total)
+      + " (" + condition.ratio + "%)"));
   }
 
   function renderReviews(payload) {
     var list = el("review-list");
     clear(list);
 
-    text(el("review-progress"),
-      "확정 " + numberFormat(payload.progress.confirmed)
-      + " / " + numberFormat(payload.progress.total)
-      + " · 확인 권장 " + numberFormat(payload.progress.ambiguous));
-
+    reviewItems = payload.items;
+    renderProgress(payload);
     renderPager(payload.page);
 
     if (!payload.items.length) {
-      list.appendChild(make("div", "empty", "조건에 맞는 검토 대상이 없습니다."));
+      reviewCursor = -1;
+      list.appendChild(make("div", "empty", "현재 조건에 맞는 검토 대상이 없습니다."));
+      renderCursorInfo();
       return;
     }
-    payload.items.forEach(function (item) { list.appendChild(reviewCard(item)); });
+    payload.items.forEach(function (item, index) {
+      list.appendChild(reviewCard(item, index));
+    });
+
+    // 확정 등으로 목록이 줄어들면 커서가 끝을 넘어갈 수 있다.
+    if (reviewCursor >= payload.items.length) { reviewCursor = payload.items.length - 1; }
+    if (reviewCursor < 0) { reviewCursor = 0; }
+    focusCursor(false);
   }
 
   /**
@@ -1565,17 +1652,27 @@
     return parts.join("&");
   }
 
-  function loadReviews() {
+  function loadReviews(pushEntry) {
     reviewError("");
+    syncUrl(pushEntry === true);
     fetchJson("/reviews?" + reviewParams(true))
-      .then(renderReviews)
+      .then(function (payload) {
+        reviewPageInfo = payload.page || null;
+        if (reviewPendingCursor === "first") { reviewCursor = 0; }
+        if (reviewPendingCursor === "last") {
+          reviewCursor = Math.max(0, (payload.items || []).length - 1);
+        }
+        reviewPendingCursor = null;
+        renderReviews(payload);
+      })
       .catch(function (error) { reviewError("검토 목록을 불러오지 못했습니다: " + error.message); });
   }
 
   /** 조건이 바뀌면 1페이지로 돌아간다 — 3페이지에 있던 채로 걸러지면 빈 화면이 된다. */
   function reloadFromFirstPage() {
     reviewPage = 1;
-    loadReviews();
+    reviewCursor = 0;
+    loadReviews(true);
   }
 
   /** 타자 칠 때마다 요청하지 않도록 잠시 기다린다. */
@@ -1609,6 +1706,191 @@
     window.location.href = "/reviews/export.csv?" + reviewParams(false);
   }
 
+  // ------------------------------------------------------------------
+  // 연속 검토 — 현재 대상 커서
+  //
+  // ⛔ "먼저 볼 것" 을 시스템이 고르지 않는다. 지금 화면에 보이는 **정렬
+  //    순서 그대로** 다음 칸으로 옮길 뿐이다.
+  // ------------------------------------------------------------------
+
+  /** 현재 대상 카드를 강조하고 화면에 보이게 한다. */
+  function focusCursor(scroll) {
+    var cards = el("review-list").querySelectorAll(".rv");
+    for (var i = 0; i < cards.length; i += 1) {
+      cards[i].classList.toggle("rv-current", i === reviewCursor);
+    }
+    if (scroll && cards[reviewCursor]) {
+      cards[reviewCursor].scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    renderCursorInfo();
+  }
+
+  function renderCursorInfo() {
+    var node = el("review-cursor-info");
+    if (!reviewItems.length) { text(node, ""); return; }
+    text(node, "현재 " + (reviewCursor + 1) + " / " + reviewItems.length + " 번째");
+  }
+
+  /**
+   * 다음(또는 이전) 검토 대상으로 옮긴다.
+   *
+   * 페이지 끝을 넘어가면 다음 페이지를 불러온다. 조건(검색·필터·정렬·페이지
+   * 크기)은 **그대로 유지**된다.
+   */
+  function moveCursor(step) {
+    if (!reviewItems.length) { return; }
+    var next = reviewCursor + step;
+
+    if (next >= reviewItems.length) {
+      if (reviewPageInfo && reviewPageInfo.has_next) {
+        reviewPage += 1;
+        reviewPendingCursor = "first";
+        loadReviews();
+      } else {
+        reviewNotice("마지막 검토 대상입니다. 조건을 바꾸거나 목록을 다시 확인하세요.");
+      }
+      return;
+    }
+    if (next < 0) {
+      if (reviewPageInfo && reviewPageInfo.has_previous) {
+        reviewPage -= 1;
+        reviewPendingCursor = "last";
+        loadReviews();
+      } else {
+        reviewNotice("첫 검토 대상입니다.");
+      }
+      return;
+    }
+    reviewCursor = next;
+    focusCursor(true);
+  }
+
+  // ------------------------------------------------------------------
+  // 변경 이력
+  // ------------------------------------------------------------------
+
+  /** 유형 코드를 한글 라벨로. 선택지 목록은 백엔드가 준 것을 그대로 쓴다. */
+  function typeLabel(code) {
+    if (!code) { return "-"; }
+    for (var i = 0; i < reviewOptions.length; i += 1) {
+      if (reviewOptions[i].value === code) { return reviewOptions[i].label; }
+    }
+    return code;
+  }
+
+  /** 이력 한 줄. ⛔ 과거 값이지 현재 확정값이 아니라는 것을 라벨로 못 박는다. */
+  function historyRow(entry) {
+    var row = make("div", "rv-hist-row");
+    row.appendChild(make("span", "rv-hist-when", entry.changed_at || "-"));
+    row.appendChild(make("span", "rv-hist-act", entry.action));
+    row.appendChild(make("span", null, entry.changed_by || "-"));
+    var change = typeLabel(entry.before_type) + " → " + typeLabel(entry.after_type);
+    row.appendChild(make("span", "rv-hist-type", change));
+    if (entry.note) { row.appendChild(make("span", "rv-why", entry.note)); }
+    return row;
+  }
+
+  function openHistory(purchaseId) {
+    reviewError("");
+    var current = null;
+    for (var i = 0; i < reviewItems.length; i += 1) {
+      if (reviewItems[i].source.purchase_id === purchaseId) { current = reviewItems[i]; }
+    }
+    // 이력만 불러온다 — 목록 전체를 다시 가져오지 않는다.
+    fetchJson("/reviews/" + encodeURIComponent(purchaseId) + "/history")
+      .then(function (payload) { showHistory(purchaseId, current, payload.items); })
+      .catch(function (error) { reviewError("이력을 불러오지 못했습니다: " + error.message); });
+  }
+
+  function showHistory(purchaseId, current, entries) {
+    // ⚠️ id 를 "review-history" 로 두면 과거 이력 **필터 select** 와 겹친다.
+    var box = el("review-history-box");
+    clear(box);
+
+    var head = make("div", "rv-modal-head");
+    head.appendChild(make("h3", "card-title", "검토 변경 이력 · 구매 " + purchaseId));
+    var close = make("button", "control", "닫기");
+    close.type = "button";
+    close.addEventListener("click", closeHistory);
+    head.appendChild(close);
+    box.appendChild(head);
+
+    // ⛔ 현재 확정값을 **맨 위에 따로** 보여준다. 아래 이력의 과거 값과
+    //    섞이면 어느 것이 지금 값인지 알 수 없다.
+    if (current) {
+      var now = make("div", "rv-block");
+      now.appendChild(reviewHeading("지금 값 (현재 상태 기준)"));
+      var line = make("div", "rv-src");
+      line.appendChild(reviewField("상태", current.review.status));
+      line.appendChild(reviewField("확정 유형",
+        current.review.status === "PENDING"
+          ? "(미확정)"
+          : (current.review.final_purchase_type_label || "판단 보류")));
+      line.appendChild(reviewField("확정자", current.review.reviewed_by));
+      now.appendChild(line);
+      box.appendChild(now);
+    }
+
+    var list = make("div", "rv-block");
+    list.appendChild(reviewHeading("변경 이력 (과거 기록 · 시간순)"));
+    if (!entries.length) {
+      list.appendChild(make("div", "rv-key", "변경 이력이 없습니다."));
+    } else {
+      entries.forEach(function (entry) { list.appendChild(historyRow(entry)); });
+    }
+    box.appendChild(list);
+
+    el("review-modal").hidden = false;
+  }
+
+  function closeHistory() {
+    el("review-modal").hidden = true;
+  }
+
+  function historyIsOpen() {
+    return !el("review-modal").hidden;
+  }
+
+  // ------------------------------------------------------------------
+  // URL 상태 — 새로고침·뒤로가기·공유
+  // ------------------------------------------------------------------
+
+  /** 현재 조건을 URL 에 반영한다. 조건 변경은 history 에 쌓고, 그 외는 교체한다. */
+  function syncUrl(pushEntry) {
+    var url = window.location.pathname + "?" + reviewParams(true);
+    if (pushEntry) {
+      window.history.pushState(null, "", url);
+    } else {
+      window.history.replaceState(null, "", url);
+    }
+  }
+
+  /** URL 의 조건을 화면 입력에 되돌려 놓는다. */
+  function applyUrl() {
+    var params = new URLSearchParams(window.location.search);
+    var pairs = [
+      ["search", "review-search"], ["status", "review-status"],
+      ["decision", "review-decision"], ["history", "review-history"],
+      ["candidates", "review-candidates"], ["sort", "review-sort"],
+      ["direction", "review-direction"], ["page_size", "review-page-size"]
+    ];
+    pairs.forEach(function (pair) {
+      var value = params.get(pair[0]);
+      if (value === null) { return; }
+      var node = el(pair[1]);
+      if (node.tagName === "SELECT") {
+        // 허용되지 않는 값이면 무시한다 — 서버가 422 를 주기 전에 화면이 막는다.
+        for (var i = 0; i < node.options.length; i += 1) {
+          if (node.options[i].value === value) { node.value = value; return; }
+        }
+        return;
+      }
+      node.value = value;
+    });
+    var page = parseInt(params.get("page") || "1", 10);
+    reviewPage = isNaN(page) || page < 1 ? 1 : page;
+  }
+
   function confirmReview(purchaseId, value, note) {
     reviewError("");
     var actor = el("review-actor").value;
@@ -1624,6 +1906,8 @@
       if (!response.ok) { throw new Error("HTTP " + response.status); }
       delete reviewPicks[purchaseId];
       reviewNotice("확정했습니다. 원본 데이터는 변경되지 않았습니다.");
+      // 확정한 건이 현재 조건에서 빠지면 같은 자리에 다음 건이 들어온다.
+      // ⛔ 다음 건의 유형을 미리 고르거나 확정하지 않는다 — 이동만 한다.
       loadReviews();
     }).catch(function (error) { reviewError("확정하지 못했습니다: " + error.message); });
   }
@@ -1641,6 +1925,40 @@
     }).catch(function (error) { reviewError("되돌리지 못했습니다: " + error.message); });
   }
 
+  // ------------------------------------------------------------------
+  // 키보드 단축키
+  //
+  // ⛔ **확정 단축키를 만들지 않았다.** Enter 나 숫자 키로 확정하면 실수로
+  //    담당자가 보지 않은 건이 확정된다. 이동만 단축키로 제공하고, 확정은
+  //    반드시 버튼을 누르게 한다.
+  // ------------------------------------------------------------------
+
+  /** 지금 글자를 입력하는 중인가 — 그렇다면 단축키를 가로채면 안 된다. */
+  function isTyping(target) {
+    if (!target) { return false; }
+    var tag = (target.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") { return true; }
+    return target.isContentEditable === true;
+  }
+
+  function handleReviewKey(event) {
+    // 브라우저·OS 단축키를 빼앗지 않는다.
+    if (event.ctrlKey || event.metaKey || event.altKey) { return; }
+
+    if (event.key === "Escape" && historyIsOpen()) {
+      closeHistory();
+      event.preventDefault();
+      return;
+    }
+    // 모달이 열려 있으면 뒤쪽 목록을 움직이지 않는다.
+    if (historyIsOpen()) { return; }
+    if (isTyping(event.target)) { return; }
+
+    var key = event.key.toLowerCase();
+    if (key === "n") { moveCursor(1); event.preventDefault(); return; }
+    if (key === "p") { moveCursor(-1); event.preventDefault(); }
+  }
+
   function initReview() {
     // 조건이 바뀌면 1페이지부터 다시 본다.
     ["review-status", "review-decision", "review-history", "review-candidates",
@@ -1653,12 +1971,27 @@
 
     // 페이지 이동은 조건을 그대로 유지한 채 번호만 바꾼다.
     el("review-prev").addEventListener("click", function () {
-      if (reviewPage > 1) { reviewPage -= 1; loadReviews(); }
+      if (reviewPage > 1) { reviewPage -= 1; reviewCursor = 0; loadReviews(true); }
     });
     el("review-next").addEventListener("click", function () {
       reviewPage += 1;
-      loadReviews();
+      reviewCursor = 0;
+      loadReviews(true);
     });
+    el("review-next-target").addEventListener("click", function () { moveCursor(1); });
+    el("review-prev-target").addEventListener("click", function () { moveCursor(-1); });
+    el("review-modal").addEventListener("click", function (event) {
+      if (event.target === el("review-modal")) { closeHistory(); }
+    });
+    document.addEventListener("keydown", handleReviewKey);
+    window.addEventListener("popstate", function () {
+      // 뒤로/앞으로 — URL 이 정본이므로 그대로 복원한다.
+      applyUrl();
+      reviewCursor = 0;
+      loadReviews(false);
+    });
+    // URL 에 담긴 조건을 먼저 화면에 되돌린 뒤 불러온다 (새로고침·공유 대응).
+    applyUrl();
     // 선택지 목록은 백엔드가 소유한다. 화면이 만들지 않는다.
     fetchJson("/reviews/options").then(function (options) {
       reviewOptions = options;

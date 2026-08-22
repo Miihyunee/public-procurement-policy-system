@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 
 from procurement.core.description_classifier import DescriptionClassifier
 from procurement.core.description_key import normalize_description
@@ -113,16 +114,59 @@ class ReviewTarget:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ConditionProgress:
+    """**지금 걸어 둔 조건 안에서의** 확정 진행 상황.
+
+    상단의 전체 진행률과 다릅니다. 미확정만 걸러 보고 있을 때 "전체 1,740 /
+    2,292" 만 보이면 지금 남은 일이 얼마인지 알 수 없기 때문입니다.
+
+    .. warning::
+        ⛔ **평가 기준이 아닙니다.** "50% 미만이면 위험" 같은 판정을 하지
+        않으며, 그런 값을 담는 필드도 두지 않았습니다. 현황을 세어 보여줄
+        뿐입니다.
+
+    Attributes:
+        total: 조건에 맞는 건수.
+        confirmed: 그중 담당자가 확정한 건수.
+    """
+
+    total: int = 0
+    confirmed: int = 0
+
+    @property
+    def pending(self) -> int:
+        """조건 안에서 아직 확정하지 않은 건수(재검토 포함)."""
+        return self.total - self.confirmed
+
+    @property
+    def ratio(self) -> Decimal:
+        """확정 비율(%). 조건에 맞는 건이 없으면 0."""
+        if self.total <= 0:
+            return Decimal("0.00")
+        return (Decimal(self.confirmed) / Decimal(self.total) * 100).quantize(Decimal("0.01"))
+
+
+def _condition_progress(targets: Sequence[ReviewTarget]) -> ConditionProgress:
+    """조건에 맞는 목록에서 확정 건수를 셉니다."""
+    return ConditionProgress(
+        total=len(targets),
+        confirmed=sum(1 for target in targets if target.review.review_status == CONFIRMED),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class ReviewPage:
     """조건에 맞는 한 페이지.
 
     Attributes:
         items: 이 페이지의 항목.
         page: 페이지 상태(현재 페이지 · 크기 · 전체 건수).
+        condition: 조건 안에서의 확정 진행 상황.
     """
 
     items: list[ReviewTarget]
     page: PageInfo
+    condition: ConditionProgress = ConditionProgress()
 
 
 def _keeps(target: ReviewTarget, query: ReviewQuery) -> bool:
@@ -333,13 +377,15 @@ class ReviewService:
             period: 기간 조건. ``None`` 이면 제한 없음.
 
         Returns:
-            :class:`ReviewPage` — 해당 페이지의 항목과 **조건에 맞는 전체 건수**.
+            :class:`ReviewPage` — 해당 페이지의 항목, **조건에 맞는 전체 건수**,
+            그리고 **조건 안에서의 확정 진행 상황**.
         """
         targets = self.search_all(query, period=period)
         start = query.offset
         return ReviewPage(
             items=targets[start : start + query.page_size],
             page=PageInfo(page=query.page, page_size=query.page_size, total=len(targets)),
+            condition=_condition_progress(targets),
         )
 
     def search_all(

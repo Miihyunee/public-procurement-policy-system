@@ -39,7 +39,7 @@ from procurement.models.review import (
 )
 from procurement.reviews.past_labels import PastLabelSummary
 from procurement.reviews.query import PageInfo
-from procurement.reviews.review_service import ReviewTarget
+from procurement.reviews.review_service import ConditionProgress, ReviewTarget
 
 
 class ConfirmReviewRequest(BaseModel):
@@ -352,13 +352,52 @@ class PageResponseModel(BaseModel):
         )
 
 
+class ConditionProgressResponseModel(BaseModel):
+    """**현재 조건 안에서의** 확정 진행 상황.
+
+    상단의 전체 진행률(:class:`ReviewProgressResponseModel`)과 **다른 값**
+    입니다. 둘을 나란히 보여줘야 "전체 중 얼마" 와 "지금 보고 있는 것 중
+    얼마" 를 구분할 수 있습니다.
+
+    ⛔ 평가 기준이 아니라 현황 표시입니다.
+
+    Attributes:
+        total: 조건에 맞는 건수.
+        confirmed: 그중 확정한 건수.
+        pending: 그중 아직 확정하지 않은 건수.
+        ratio: 확정 비율(%).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    total: int
+    confirmed: int
+    pending: int
+    ratio: Decimal
+
+    @field_serializer("ratio")
+    def _ratio(self, value: Decimal) -> str:
+        return str(value)
+
+    @classmethod
+    def from_progress(cls, progress: ConditionProgress) -> ConditionProgressResponseModel:
+        """집계 결과를 응답 모델로 변환합니다."""
+        return cls(
+            total=progress.total,
+            confirmed=progress.confirmed,
+            pending=progress.pending,
+            ratio=progress.ratio,
+        )
+
+
 class ReviewListResponseModel(BaseModel):
     """검토 목록 응답.
 
     Attributes:
         items: 검토 대상 목록 — 페이지 조건을 주면 **그 페이지만** 담깁니다.
-        progress: 진행 상황(필터와 무관한 전체 집계).
+        progress: **전체** 진행 상황(필터와 무관).
         page: 페이지 상태. 페이지 조건을 주지 않으면 ``null``.
+        condition: **현재 조건** 안에서의 진행 상황. 〃
     """
 
     model_config = ConfigDict(frozen=True)
@@ -366,6 +405,7 @@ class ReviewListResponseModel(BaseModel):
     items: list[ReviewItemResponseModel]
     progress: ReviewProgressResponseModel
     page: PageResponseModel | None = None
+    condition: ConditionProgressResponseModel | None = None
 
 
 class ReviewHistoryItemResponseModel(BaseModel):
