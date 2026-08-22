@@ -65,6 +65,7 @@ from procurement.database.purchase_repository import PurchaseRepository
 from procurement.database.review_repository import ReviewRepository, ReviewValidationError
 from procurement.importers.batch_import_service import BatchImportService
 from procurement.importers.purchase_importer import PurchaseImporter
+from procurement.importers.rejection_export import export_lines as rejection_export_lines
 from procurement.importers.trace_response import (
     ImportTraceResponseModel,
     build_trace_response,
@@ -768,6 +769,29 @@ def create_app(
         대상에 넣을지는 고객 확인 사항입니다(``Q5-8``).
         """
         return build_trace_response(import_trace.overview(), import_trace.rejections())
+
+    @app.get(
+        "/imports/trace.csv",
+        summary="미적재 원본 행 CSV 내려받기",
+        tags=["imports"],
+        response_class=StreamingResponse,
+    )
+    def export_import_trace() -> StreamingResponse:
+        """적재되지 않은 원본 행을 CSV 로 내려보냅니다.
+
+        담당자가 **원본 엑셀과 나란히 놓고 대조**하기 위한 파일입니다. 원본 행
+        번호와 원본 값(음수 금액 포함)을 그대로 싣습니다.
+
+        ⛔ **"제외 목록" 이 아닙니다.** 처리 방식은 고객 확인 사항입니다(Q5-8).
+
+        검토 이력 CSV 와 같은 규약입니다 — UTF-8 BOM · CRLF · 수식 인젝션 방어 ·
+        한 줄씩 흘려보내기.
+        """
+        return StreamingResponse(
+            rejection_export_lines(import_trace.rejections()),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="import-rejections.csv"'},
+        )
 
     @app.get(
         "/reviews/options",

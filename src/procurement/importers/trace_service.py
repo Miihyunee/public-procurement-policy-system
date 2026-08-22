@@ -18,6 +18,7 @@ procurement.importers.trace_service
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from procurement.database.import_batch_repository import ImportBatchRepository
@@ -53,6 +54,14 @@ class ImportTraceOverview:
         return self.rejected == 0
 
 
+def _count_reasons(items: Iterable[ImportRejection]) -> dict[str, int]:
+    """사유별 건수를 셉니다."""
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item.reason] = counts.get(item.reason, 0) + 1
+    return counts
+
+
 class ImportTraceService:
     """적재 추적 조회 서비스."""
 
@@ -79,8 +88,10 @@ class ImportTraceService:
         Returns:
             :class:`ImportTraceOverview`.
         """
+        # ⚠️ 두 쪽 다 **대체된 배치를 뺀** 같은 기준으로 읽는다. 한쪽만 전체를
+        #    읽으면 같은 기간을 다시 올렸을 때 미적재 건수만 계속 불어난다.
         stored_rows = self._purchase_repository.find_for_calculation(None)
-        rejections = self._rejection_repository.find_all()
+        rejections = self._rejection_repository.find_current()
 
         stored_by_batch: dict[int | None, int] = {}
         for purchase in stored_rows:
@@ -109,9 +120,9 @@ class ImportTraceService:
                     file_name=batch.file_name if batch is not None else "(배치 없음)",
                     stored=stored,
                     rejected=rejected,
-                    reasons=self._rejection_repository.count_by_reason(batch_id)
-                    if rejected
-                    else {},
+                    reasons=_count_reasons(
+                        item for item in rejections if item.batch_id == batch_id
+                    ),
                 )
             )
 
@@ -130,5 +141,5 @@ class ImportTraceService:
                 **몇 건을 잘랐는지** 함께 알려야 합니다 — 여기서 조용히 줄이면
                 "다 봤다" 는 오해가 다시 생깁니다.
         """
-        items = self._rejection_repository.find_all()
+        items = self._rejection_repository.find_current()
         return items if limit is None else items[:limit]

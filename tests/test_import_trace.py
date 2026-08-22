@@ -468,7 +468,11 @@ class TestTraceApi:
         response = build_upload_response(result)
 
         assert response.rejected_rows == 2
-        assert response.rejection_reasons[REASON_NON_POSITIVE_AMOUNT] == 2
+        # STEP 13 에서 사유를 (코드 · 표시 이름 · 건수) 목록으로 바꿨다 —
+        # ``/imports/trace`` 응답과 같은 모양이라야 화면이 한 가지 방식으로
+        # 읽는다. 확인하는 사실은 그대로다.
+        reasons = {item.reason: item.count for item in response.rejection_reasons}
+        assert reasons[REASON_NON_POSITIVE_AMOUNT] == 2
 
 
 class TestWordingIsNotADecision:
@@ -535,8 +539,12 @@ class TestScreenShowsTheGap:
             assert banned not in body, banned
 
     def test_truncation_is_announced(self, page: str) -> None:
-        """⛔ 목록을 조용히 자르지 않는다."""
-        body = _function_body(page, "renderTrace")
+        """⛔ 목록을 조용히 자르지 않는다.
+
+        STEP 13 에서 표 그리기를 ``renderRejectionTable`` 로 옮겨 검토 화면과
+        업로드 화면이 **같은 것**을 쓰게 했다. 확인하는 사실은 그대로다.
+        """
+        body = _function_body(page, "renderRejectionTable")
 
         assert "truncated" in body
         assert "일부만 표시" in body

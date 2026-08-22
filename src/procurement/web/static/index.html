@@ -396,6 +396,19 @@
       <div id="upload-notice" class="notice" hidden></div>
       <div id="upload-error" class="error" hidden></div>
       <div id="upload-summary" class="upload-summary" hidden></div>
+
+      <!--
+        원본 대비 적재/미적재. ⛔ "제외되었습니다" 라고 쓰지 않는다 —
+        금액 0 이하 행의 처리 방식은 고객 확인 대기(Q5-8)다.
+      -->
+      <div id="upload-trace" class="notice" hidden></div>
+      <div id="upload-trace-actions" class="upload-actions" hidden>
+        <button id="upload-trace-show" class="control" type="button">미적재 행 확인</button>
+        <a id="upload-trace-csv" class="control" href="/imports/trace.csv"
+           download="import-rejections.csv">미적재 CSV 내려받기</a>
+      </div>
+      <div id="upload-trace-rows" class="rv-trace" hidden></div>
+
       <div id="upload-issues" class="upload-issues" hidden></div>
     </section>
   </div>
@@ -1184,6 +1197,67 @@
     return node;
   }
 
+  /**
+   * 업로드 결과의 **원본 대비 적재/미적재**.
+   *
+   * ⛔ 쓰지 않는 표현 — "제외되었습니다" · "실적에서 제외합니다" ·
+   *    "검토할 필요가 없습니다" · "부적합 데이터입니다". 금액이 0 이하인 행을
+   *    어떻게 처리할지는 **고객 확인 대기**(Q5-8)이므로 사실만 적는다.
+   *
+   * 숫자는 백엔드가 센 값을 그대로 쓴다 — 맞추려고 보정하지 않는다.
+   */
+  function renderUploadTrace(result) {
+    var box = el("upload-trace");
+    var actions = el("upload-trace-actions");
+    var rows = el("upload-trace-rows");
+    clear(box);
+    clear(rows);
+    rows.hidden = true;
+
+    if (!result.stored) {
+      // 저장하지 않았으면 적재/미적재를 말할 수 없다.
+      box.hidden = true;
+      actions.hidden = true;
+      return;
+    }
+
+    var rejected = result.rejected_rows || 0;
+    box.appendChild(make("div", null,
+      "원본 행 " + numberFormat(result.total_rows) + "건 · " +
+      "검토 대상 적재 " + numberFormat(result.stored_rows) + "건 · " +
+      "미적재 " + numberFormat(rejected) + "건"));
+
+    if (!rejected) {
+      box.appendChild(make("div", "rv-key",
+        "미적재 행 없음 — 원본 행이 모두 검토 대상에 들어왔습니다."));
+      box.hidden = false;
+      actions.hidden = true;
+      return;
+    }
+
+    box.appendChild(make("div", null,
+      "미적재 행 " + numberFormat(rejected) + "건 확인 — 원본에는 있으나 현재 검토 대상 DB 에 " +
+      "적재되지 않았습니다. 사유와 원본 값을 확인해 주세요."));
+    (result.rejection_reasons || []).forEach(function (item) {
+      box.appendChild(make("div", "rv-key",
+        "- " + item.label + ": " + numberFormat(item.count) + "건"));
+    });
+    box.hidden = false;
+    actions.hidden = false;
+  }
+
+  /** [미적재 행 확인] — 이미 있는 ``/imports/trace`` 를 그대로 쓴다. */
+  function showUploadRejections() {
+    var rows = el("upload-trace-rows");
+    if (!rows.hidden) { rows.hidden = true; return; }
+    fetchJson("/imports/trace").then(function (trace) {
+      renderRejectionTable(rows, trace);
+      rows.hidden = false;
+    }).catch(function (error) {
+      uploadError("미적재 행을 불러오지 못했습니다: " + error.message);
+    });
+  }
+
   function renderUploadResult(result) {
     var summary = el("upload-summary");
     var issues = el("upload-issues");
@@ -1217,6 +1291,8 @@
         : "⚠️ ")
       + result.storage_note
     );
+
+    renderUploadTrace(result);
 
     if (!result.issues.length) {
       issues.hidden = true;
@@ -1329,6 +1405,10 @@
     var template = el("upload-template");
 
     buildUploadYearOptions();
+
+    // 미적재 행 확인은 브라우저에서도 쓸 수 있어야 하므로 데스크톱 검사보다
+    // 먼저 연결한다(파일 선택만 데스크톱 앱 기능이다).
+    el("upload-trace-show").addEventListener("click", showUploadRejections);
 
     if (!desktop()) {
       pick.disabled = true;
@@ -1876,29 +1956,38 @@
     box.hidden = false;
 
     if (!trace.rows || !trace.rows.length) { rows.hidden = true; return; }
+    renderRejectionTable(rows, trace);
+    rows.hidden = false;
+  }
+
+  /** 미적재 행 표. 검토 화면과 업로드 화면이 **같은 것**을 쓴다. */
+  function renderRejectionTable(box, trace) {
+    clear(box);
+    box.appendChild(make("div", "rv-key",
+      "미적재 행 " + numberFormat(trace.rejected) + "건"));
     var table = make("table");
     var head = make("tr");
     ["원본 행", "적요", "거래처", "금액", "예산과목", "사유"].forEach(function (label) {
       head.appendChild(make("th", null, label));
     });
     table.appendChild(head);
-    trace.rows.forEach(function (row) {
+    (trace.rows || []).forEach(function (row) {
       var tr = make("tr");
       tr.appendChild(make("td", "num", String(row.row_number)));
       tr.appendChild(make("td", null, row.description || "-"));
       tr.appendChild(make("td", null, row.company_name || "-"));
-      tr.appendChild(make("td", "num", row.amount === null ? "-" : Number(row.amount).toLocaleString()));
+      tr.appendChild(make("td", "num",
+        row.amount === null ? "-" : Number(row.amount).toLocaleString()));
       tr.appendChild(make("td", null, row.budget_account || "-"));
       tr.appendChild(make("td", null, row.reason_label));
       table.appendChild(tr);
     });
-    rows.appendChild(table);
+    box.appendChild(table);
     if (trace.truncated) {
       // ⛔ 조용히 자르지 않는다 — 자른 사실을 말한다.
-      rows.appendChild(make("div", "rv-key",
+      box.appendChild(make("div", "rv-key",
         "목록이 길어 일부만 표시했습니다. 전체 건수는 위 안내를 보세요."));
     }
-    rows.hidden = false;
   }
 
   /** 이력 한 줄. ⛔ 과거 값이지 현재 확정값이 아니라는 것을 라벨로 못 박는다. */

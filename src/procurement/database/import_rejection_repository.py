@@ -28,6 +28,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from procurement.database.base import BaseRepository
+from procurement.models.import_batch import STATUS_ACTIVE
 from procurement.models.import_rejection import (
     REJECTION_REASONS,
     ImportRejection,
@@ -158,11 +159,45 @@ class ImportRejectionRepository(BaseRepository):
         return [self._to_model(row) for row in rows]
 
     def find_all(self) -> list[ImportRejection]:
-        """모든 기록을 반환합니다(배치 → 행 번호 순)."""
+        """**대체된 배치까지 포함해** 모든 기록을 반환합니다(배치 → 행 번호 순).
+
+        ⚠️ 화면에 보여줄 "현재" 현황에는 :meth:`find_current` 를 쓰세요. 이
+        메서드는 과거 업로드까지 되짚어 볼 때만 씁니다.
+        """
         rows = self.execute(
             "SELECT * FROM import_rejection ORDER BY batch_id IS NULL, batch_id, row_number"
         )
         return [self._to_model(row) for row in rows]
+
+    def find_current(self) -> list[ImportRejection]:
+        """**지금 유효한** 기록만 반환합니다.
+
+        같은 기간을 다시 올리면 이전 배치가 ``SUPERSEDED`` 가 되고 그 배치의
+        ``purchase`` 행은 계산·검토에서 빠집니다
+        (:meth:`~procurement.database.purchase_repository.PurchaseRepository.find_for_calculation`).
+        미적재 기록도 **같은 규칙**을 따라야 원본 대비 숫자가 맞습니다 —
+        그러지 않으면 재업로드 뒤 "미적재" 건수만 계속 불어납니다.
+
+        ⛔ 대체된 기록을 **지우지 않습니다.** 조회에서 빠질 뿐이며
+        :meth:`find_all` 로 여전히 볼 수 있습니다.
+        """
+        if not self._has_import_batch_table():
+            return self.find_all()
+        rows = self.execute(
+            "SELECT * FROM import_rejection "
+            "WHERE batch_id IS NULL OR batch_id IN "
+            "(SELECT batch_id FROM import_batch WHERE status = ?) "
+            "ORDER BY batch_id IS NULL, batch_id, row_number",
+            (STATUS_ACTIVE,),
+        )
+        return [self._to_model(row) for row in rows]
+
+    def _has_import_batch_table(self) -> bool:
+        """``import_batch`` 테이블이 있는지 확인합니다(구 스키마 DB 대응)."""
+        rows = self.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'import_batch'"
+        )
+        return bool(rows)
 
     def count_by_batch(self, batch_id: int | None) -> int:
         """배치 하나의 미적재 행 수."""
