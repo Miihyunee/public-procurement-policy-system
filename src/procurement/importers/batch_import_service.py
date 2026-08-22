@@ -39,9 +39,12 @@ from decimal import Decimal
 from typing import Any
 
 from procurement.database.import_batch_repository import ImportBatchRepository
+from procurement.database.import_rejection_repository import ImportRejectionRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.importers.purchase_importer import ImportReport, PurchaseImporter
+from procurement.importers.rejection_trace import build_rejections
 from procurement.models.import_batch import ImportBatch
+from procurement.models.import_rejection import ImportRejection, ImportTrace
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -54,12 +57,33 @@ class BatchImportResult:
         superseded_batch: 이번 업로드로 대체된 이전 배치. 없으면 ``None``.
         duplicate_of: 내용이 같은 파일(해시 일치)로 이미 적재된 ACTIVE 배치.
             없으면 ``None``. **적재를 막지는 않으며 경고 목적**입니다.
+        rejections: 원본에는 있었으나 적재되지 않은 행의 기록.
+            ⛔ "제외 확정" 이 아니라 **추적 기록**입니다(Q5-8).
     """
 
     batch: ImportBatch
     report: ImportReport
     superseded_batch: ImportBatch | None = None
     duplicate_of: ImportBatch | None = None
+    rejections: tuple[ImportRejection, ...] = ()
+
+    @property
+    def trace(self) -> ImportTrace:
+        """원본 → 적재 → 미적재 대조표.
+
+        ``trace.unexplained`` 가 0 이 아니면 어딘가에서 행이 사라진 것입니다.
+        """
+        reasons: dict[str, int] = {}
+        for item in self.rejections:
+            reasons[item.reason] = reasons.get(item.reason, 0) + 1
+        return ImportTrace(
+            source_rows=self.report.total_count,
+            batch_id=self.batch.batch_id,
+            file_name=self.batch.file_name,
+            stored=self.report.stored_count,
+            rejected=len(self.rejections),
+            reasons=reasons,
+        )
 
     @property
     def replaced(self) -> bool:
@@ -79,6 +103,12 @@ class BatchImportResult:
                 f"대체: 배치 #{previous.batch_id} "
                 f"({previous.row_count}건 / 합계 {previous.total_amount}) → 계산에서 제외"
             )
+        if self.rejections:
+            trace = self.trace
+            lines.append(
+                f"원본 {trace.source_rows}행 중 {trace.rejected}행이 적재되지 않았습니다"
+                " — 사유와 함께 기록해 두었습니다(업무 처리 방식 확인 필요)."
+            )
         if self.duplicate_of is not None:
             lines.append(
                 f"⚠️ 내용이 같은 파일이 배치 #{self.duplicate_of.batch_id} 로 이미 적재되어 "
@@ -95,6 +125,7 @@ class BatchImportService:
         importer: PurchaseImporter,
         batch_repository: ImportBatchRepository,
         purchase_repository: PurchaseRepository,
+        rejection_repository: ImportRejectionRepository | None = None,
     ) -> None:
         """서비스를 초기화합니다.
 
@@ -102,10 +133,14 @@ class BatchImportService:
             importer: 행 적재에 사용할 :class:`PurchaseImporter`.
             batch_repository: 배치 저장소.
             purchase_repository: 적재 결과 집계에 사용할 구매 저장소.
+            rejection_repository: 적재되지 않은 행을 기록할 저장소.
+                ``None`` 이면 기록을 남기지 않고 **기존과 동일하게 동작**합니다
+                (하위 호환). 운영 조립(``app.py``)에서는 항상 넘깁니다.
         """
         self._importer = importer
         self._batch_repository = batch_repository
         self._purchase_repository = purchase_repository
+        self._rejection_repository = rejection_repository
 
     def import_batch(
         self,
@@ -145,7 +180,15 @@ class BatchImportService:
         )
         assert batch.batch_id is not None  # insert 가 채번을 보장
 
-        report = self._importer.import_rows(rows, batch_id=batch.batch_id)
+        # ⚠️ Importer 에 넘긴 행을 그대로 붙잡아 둔다 — 실패한 행의 원본 값을
+        #    되짚어 기록해야 하고, Iterable 은 한 번만 읽힐 수 있기 때문이다.
+        row_list = list(rows)
+        report = self._importer.import_rows(row_list, batch_id=batch.batch_id)
+
+        # 적재되지 않은 행을 사유와 함께 남긴다. ⛔ 업무 판단이 아니라 기록이다.
+        rejections = tuple(build_rejections(row_list, report, batch_id=batch.batch_id))
+        if self._rejection_repository is not None and rejections:
+            self._rejection_repository.record_many(rejections)
 
         stored = self._purchase_repository.find_by_batch(batch.batch_id)
         total_amount = sum((purchase.amount for purchase in stored), Decimal("0"))
@@ -165,6 +208,7 @@ class BatchImportService:
             report=report,
             superseded_batch=superseded,
             duplicate_of=duplicate,
+            rejections=rejections,
         )
 
     def find_active_batch(self, period_start: date, period_end: date) -> ImportBatch | None:

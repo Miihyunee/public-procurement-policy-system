@@ -56,6 +56,9 @@ class UploadResponseModel(BaseModel):
         valid_rows: 오류 없이 통과한 행 수.
         error_rows: 오류가 있는 행 수.
         stored_rows: 실제로 DB 에 저장된 행 수. 저장하지 않았으면 0.
+        rejected_rows: 원본에는 있었으나 적재되지 않아 **기록만 남은** 행 수.
+            ⛔ 제외 확정이 아닙니다 — 처리 방식은 확인 대기입니다(Q5-8).
+        rejection_reasons: 사유 코드별 미적재 행 수.
         batch_id: 저장된 배치 ID. 저장하지 않았으면 ``null``.
         file_errors: 파일 단위 오류(읽기 실패·머리글 누락 등).
         issues: 행 단위 문제 목록.
@@ -74,6 +77,8 @@ class UploadResponseModel(BaseModel):
     valid_rows: int
     error_rows: int
     stored_rows: int
+    rejected_rows: int = 0
+    rejection_reasons: dict[str, int] = {}
     batch_id: int | None
     file_errors: tuple[str, ...]
     issues: tuple[UploadIssueResponseModel, ...]
@@ -110,6 +115,8 @@ def build_upload_response(result: UploadResult) -> UploadResponseModel:
         valid_rows=result.valid_rows,
         error_rows=result.error_rows,
         stored_rows=result.stored_rows,
+        rejected_rows=result.rejected_rows,
+        rejection_reasons=result.rejection_reasons,
         batch_id=result.batch_id,
         file_errors=result.file_errors,
         issues=tuple(

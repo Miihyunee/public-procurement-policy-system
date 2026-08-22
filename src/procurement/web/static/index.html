@@ -105,6 +105,11 @@
      테두리가 생기지 않도록 :focus 가 아니라 :focus-visible 을 쓴다. */
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
   .rv-danger { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .rv-trace { margin: 8px 0 4px; font-size: 13px; overflow-x: auto; }
+  .rv-trace table { border-collapse: collapse; width: 100%; }
+  .rv-trace th, .rv-trace td { padding: 4px 8px; text-align: left; white-space: nowrap; }
+  .rv-trace th { color: var(--muted); font-weight: 600; }
+  .rv-trace td.num { text-align: right; }
   .rv-keys { margin-top: 10px; }
   .rv-keys kbd {
     border: 1px solid var(--line); border-radius: 5px; padding: 0 6px;
@@ -409,6 +414,13 @@
       </div>
 
       <!--
+        원본 → 검토 대상 대조. ⛔ "제외되었습니다" 라고 쓰지 않는다.
+        금액 0 이하 행의 처리 방식은 고객 확인 대기(Q5-8)이므로, 사실만 적는다.
+      -->
+      <div id="review-trace" class="notice" hidden></div>
+      <div id="review-trace-rows" class="rv-trace" hidden></div>
+
+      <!--
         ⛔ 어떤 조건도 "먼저 보라" 는 뜻이 아니다. 담당자가 직접 고른다.
         검색·필터·정렬·페이지는 전부 서버가 처리하고, 해당 페이지만 내려온다.
       -->
@@ -491,7 +503,10 @@
         </span>
         <span class="control">
           <span class="control-label">확정자</span>
-          <input id="review-actor" class="control-input" type="text" placeholder="이름" />
+          <!-- 비워 두면 이력에 담당자가 남지 않는다. ⛔ 가짜 이름을 채우지 않는다. -->
+          <input id="review-actor" class="control-input" type="text"
+                 placeholder="이름 (비우면 이력에 남지 않음)"
+                 aria-label="확정자 이름 — 비워 두면 변경 이력에 담당자가 기록되지 않습니다" />
         </span>
         <button id="review-reload" class="control" type="button">새로고침</button>
         <button id="review-export" class="control" type="button">CSV 내려받기</button>
@@ -1387,6 +1402,20 @@
     node.hidden = !message;
   }
 
+  /**
+   * 담당자명 표시. 값이 없으면 **비어 있다는 사실**을 그대로 보여준다.
+   *
+   * ⛔ DB 에 가짜 사용자명을 채우지 않는다. 기록에는 ``null`` 이 남고, 화면에서만
+   *    "담당자 미입력" 이라고 읽어 준다 — 나중에 계정 체계가 생겨도 과거 기록을
+   *    잘못 해석하지 않도록.
+   */
+  function actorName(value) {
+    if (value === null || value === undefined || String(value).trim() === "") {
+      return "담당자 미입력";
+    }
+    return String(value);
+  }
+
   function reviewField(label, value) {
     var wrap = make("div");
     wrap.appendChild(make("span", "rv-key", label));
@@ -1579,7 +1608,7 @@
       var line = make("div", "rv-src");
       line.appendChild(reviewField("확정 유형",
         item.review.final_purchase_type_label || "판단 보류"));
-      line.appendChild(reviewField("확정자", item.review.reviewed_by));
+      line.appendChild(reviewField("확정자", actorName(item.review.reviewed_by)));
       line.appendChild(reviewField("확정 시각", item.review.reviewed_at));
       line.appendChild(reviewField("메모", item.review.review_note));
       done.appendChild(line);
@@ -1807,12 +1836,77 @@
     return code;
   }
 
+  // ------------------------------------------------------------------
+  // 원본 → 검토 대상 대조 (STEP 12)
+  //
+  // ⛔ "제외되었습니다" · "검토할 필요가 없습니다" 라고 쓰지 않는다. 금액이
+  //    0 이하인 행을 어떻게 처리할지는 **고객 확인 대기**(Q5-8)이므로, 지금
+  //    말할 수 있는 것은 "원본에는 있는데 검토 대상에는 없다" 는 사실뿐이다.
+  // ------------------------------------------------------------------
+
+  /** 대조 결과를 불러와 안내줄을 그린다. 실패해도 검토 화면을 막지 않는다. */
+  function loadTrace() {
+    return fetchJson("/imports/trace").then(function (trace) {
+      renderTrace(trace);
+    }).catch(function () {
+      // 대조 정보를 못 받아도 검토는 계속할 수 있어야 한다.
+      el("review-trace").hidden = true;
+      el("review-trace-rows").hidden = true;
+    });
+  }
+
+  function renderTrace(trace) {
+    var box = el("review-trace");
+    var rows = el("review-trace-rows");
+    clear(box);
+    clear(rows);
+
+    if (trace.all_visible) {
+      // 모두 보이는 상태에서는 굳이 자리를 차지하지 않는다.
+      box.hidden = true;
+      rows.hidden = true;
+      return;
+    }
+
+    box.appendChild(make("div", null, trace.notice));
+    var reasons = (trace.reasons || []).map(function (item) {
+      return item.label + " " + item.count.toLocaleString() + "건";
+    }).join(" · ");
+    if (reasons) { box.appendChild(make("div", "rv-key", "사유: " + reasons)); }
+    box.hidden = false;
+
+    if (!trace.rows || !trace.rows.length) { rows.hidden = true; return; }
+    var table = make("table");
+    var head = make("tr");
+    ["원본 행", "적요", "거래처", "금액", "예산과목", "사유"].forEach(function (label) {
+      head.appendChild(make("th", null, label));
+    });
+    table.appendChild(head);
+    trace.rows.forEach(function (row) {
+      var tr = make("tr");
+      tr.appendChild(make("td", "num", String(row.row_number)));
+      tr.appendChild(make("td", null, row.description || "-"));
+      tr.appendChild(make("td", null, row.company_name || "-"));
+      tr.appendChild(make("td", "num", row.amount === null ? "-" : Number(row.amount).toLocaleString()));
+      tr.appendChild(make("td", null, row.budget_account || "-"));
+      tr.appendChild(make("td", null, row.reason_label));
+      table.appendChild(tr);
+    });
+    rows.appendChild(table);
+    if (trace.truncated) {
+      // ⛔ 조용히 자르지 않는다 — 자른 사실을 말한다.
+      rows.appendChild(make("div", "rv-key",
+        "목록이 길어 일부만 표시했습니다. 전체 건수는 위 안내를 보세요."));
+    }
+    rows.hidden = false;
+  }
+
   /** 이력 한 줄. ⛔ 과거 값이지 현재 확정값이 아니라는 것을 라벨로 못 박는다. */
   function historyRow(entry) {
     var row = make("div", "rv-hist-row");
     row.appendChild(make("span", "rv-hist-when", entry.changed_at || "-"));
     row.appendChild(make("span", "rv-hist-act", entry.action));
-    row.appendChild(make("span", null, entry.changed_by || "-"));
+    row.appendChild(make("span", null, actorName(entry.changed_by)));
     var change = typeLabel(entry.before_type) + " → " + typeLabel(entry.after_type);
     row.appendChild(make("span", "rv-hist-type", change));
     if (entry.note) { row.appendChild(make("span", "rv-why", entry.note)); }
@@ -1855,7 +1949,7 @@
         current.review.status === "PENDING"
           ? "(미확정)"
           : (current.review.final_purchase_type_label || "판단 보류")));
-      line.appendChild(reviewField("확정자", current.review.reviewed_by));
+      line.appendChild(reviewField("확정자", actorName(current.review.reviewed_by)));
       now.appendChild(line);
       box.appendChild(now);
     }
@@ -1935,7 +2029,7 @@
     var info = make("div", "rv-src");
     info.appendChild(reviewField("현재 확정 유형",
       item.review.final_purchase_type_label || "판단 보류"));
-    info.appendChild(reviewField("확정자", item.review.reviewed_by));
+    info.appendChild(reviewField("확정자", actorName(item.review.reviewed_by)));
     info.appendChild(reviewField("확정일시", item.review.reviewed_at));
     box.appendChild(info);
 
@@ -2169,6 +2263,8 @@
     });
     // URL 에 담긴 조건을 먼저 화면에 되돌린 뒤 불러온다 (새로고침·공유 대응).
     applyUrl();
+    // 원본 대조는 목록과 독립이다 — 실패해도 검토를 막지 않는다.
+    loadTrace();
     // 선택지 목록은 백엔드가 소유한다. 화면이 만들지 않는다.
     fetchJson("/reviews/options").then(function (options) {
       reviewOptions = options;

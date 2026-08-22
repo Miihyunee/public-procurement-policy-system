@@ -55,8 +55,7 @@ VALIDATION_ONLY_NOTE: str = "검증만 수행했습니다. 저장하지 않았�
 
 #: 오류 때문에 저장하지 않았을 때의 설명.
 NOT_STORED_NOTE: str = (
-    "오류가 있어 저장하지 않았습니다. 한 행이라도 오류가 있으면 정상 행도 "
-    "저장하지 않습니다."
+    "오류가 있어 저장하지 않았습니다. 한 행이라도 오류가 있으면 정상 행도 저장하지 않습니다."
 )
 
 
@@ -119,6 +118,19 @@ class UploadResult:
     def batch_id(self) -> int | None:
         """저장된 배치 ID. 저장하지 않았으면 ``None``."""
         return self.batch.batch.batch_id if self.batch is not None else None
+
+    @property
+    def rejected_rows(self) -> int:
+        """원본에는 있었으나 **적재되지 않은** 행 수.
+
+        ⛔ "제외 확정" 이 아닙니다. 사유와 함께 기록만 남긴 행입니다(Q5-8).
+        """
+        return len(self.batch.rejections) if self.batch is not None else 0
+
+    @property
+    def rejection_reasons(self) -> dict[str, int]:
+        """사유별 미적재 행 수."""
+        return dict(self.batch.trace.reasons or {}) if self.batch is not None else {}
 
 
 class UploadService:
@@ -285,8 +297,7 @@ class ExistingPeriodBatchError(RuntimeError):
         self.period_start = period_start
         self.period_end = period_end
         super().__init__(
-            f"{period_start.year}년 데이터가 이미 등록되어 있습니다"
-            f"(배치 #{existing.batch_id})."
+            f"{period_start.year}년 데이터가 이미 등록되어 있습니다(배치 #{existing.batch_id})."
         )
 
 
@@ -307,13 +318,11 @@ def _stored(result: UploadResult, batch: BatchImportResult) -> UploadResult:
     lines = [f"배치 #{batch.batch.batch_id} 로 {batch.report.stored_count:,}건을 저장했습니다."]
     if batch.replaced and batch.superseded_batch is not None:
         lines.append(
-            f"같은 기간의 이전 배치 #{batch.superseded_batch.batch_id} 는 "
-            "계산에서 제외됩니다."
+            f"같은 기간의 이전 배치 #{batch.superseded_batch.batch_id} 는 계산에서 제외됩니다."
         )
     if batch.duplicate_of is not None:
         lines.append(
-            f"⚠️ 내용이 같은 파일이 배치 #{batch.duplicate_of.batch_id} 로 "
-            "이미 올라와 있습니다."
+            f"⚠️ 내용이 같은 파일이 배치 #{batch.duplicate_of.batch_id} 로 이미 올라와 있습니다."
         )
     return UploadResult(
         file_name=result.file_name,

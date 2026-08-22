@@ -36,6 +36,7 @@ from procurement.core.config import settings
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.import_batch_repository import ImportBatchRepository
+from procurement.database.import_rejection_repository import ImportRejectionRepository
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.database.review_repository import ReviewRepository
@@ -145,6 +146,16 @@ _REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
         "row_count",
         "total_amount",
     ),
+    # 원본에는 있었으나 DB-1 에 적재되지 않은 행의 기록(STEP 12).
+    # ⛔ 업무 판단이 아니라 추적 기록이다.
+    "import_rejection": (
+        "rejection_id",
+        "batch_id",
+        "row_number",
+        "reason",
+        "message",
+        "amount",
+    ),
 }
 
 
@@ -222,6 +233,8 @@ def init_db(db_path: str | Path | None = None) -> None:
     CertificationRepository(path).create_table()
     PurchaseRepository(path).create_table()
     ImportBatchRepository(path).create_table()
+    # 적재되지 않은 원본 행의 추적 기록 — 신규 테이블만 추가한다(STEP 12).
+    ImportRejectionRepository(path).create_table()
     # DB-2 (검토·분류) — 신규 테이블만 추가한다. 기존 테이블은 건드리지 않는다.
     ReviewRepository(path).create_table()
     migrate_schema(path)

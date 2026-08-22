@@ -59,11 +59,17 @@ from procurement.database.import_batch_repository import (
     ImportBatchRepository,
     ImportBatchValidationError,
 )
+from procurement.database.import_rejection_repository import ImportRejectionRepository
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.database.review_repository import ReviewRepository, ReviewValidationError
 from procurement.importers.batch_import_service import BatchImportService
 from procurement.importers.purchase_importer import PurchaseImporter
+from procurement.importers.trace_response import (
+    ImportTraceResponseModel,
+    build_trace_response,
+)
+from procurement.importers.trace_service import ImportTraceService
 from procurement.reviews.export import export_lines
 from procurement.reviews.query import (
     ANY as QUERY_ANY,
@@ -169,7 +175,38 @@ def build_upload_service(db_path: str | Path | None = None) -> UploadService:
     company_repo = CompanyRepository(path)
     batch_repo = ImportBatchRepository(path)
     importer = PurchaseImporter(purchase_repo, company_repo)
-    return UploadService(BatchImportService(importer, batch_repo, purchase_repo))
+    return UploadService(
+        BatchImportService(
+            importer,
+            batch_repo,
+            purchase_repo,
+            # 적재되지 않은 원본 행을 사유와 함께 남긴다(STEP 12 · Q5-8).
+            ImportRejectionRepository(path),
+        )
+    )
+
+
+def build_import_trace_service(db_path: str | Path | None = None) -> ImportTraceService:
+    """적재 추적 조회 서비스를 조립합니다(composition root).
+
+    ::
+
+        ImportTraceService → PurchaseRepository        (⛔ 읽기 전용)
+                           → ImportBatchRepository     (⛔ 읽기 전용)
+                           → ImportRejectionRepository (⛔ 읽기 전용)
+
+    Args:
+        db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        조립된 :class:`ImportTraceService`.
+    """
+    path: str | Path = db_path if db_path is not None else settings.db_file
+    return ImportTraceService(
+        PurchaseRepository(path),
+        ImportBatchRepository(path),
+        ImportRejectionRepository(path),
+    )
 
 
 def build_review_service(db_path: str | Path | None = None) -> ReviewService:
@@ -341,6 +378,7 @@ def create_app(
     upload_service = build_upload_service(db_path)
     policy_admin = build_policy_admin(db_path)
     review_service = build_review_service(db_path)
+    import_trace = build_import_trace_service(db_path)
     date_field = (
         period_date_field if period_date_field is not None else settings.PURCHASE_PERIOD_DATE_FIELD
     )
@@ -712,6 +750,24 @@ def create_app(
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": 'attachment; filename="reviews.csv"'},
         )
+
+    @app.get(
+        "/imports/trace",
+        response_model=ImportTraceResponseModel,
+        summary="원본 → 적재 → 미적재 대조",
+        tags=["imports"],
+    )
+    def get_import_trace() -> ImportTraceResponseModel:
+        """원본 파일의 행이 지금 어디에 있는지 보여줍니다.
+
+        담당자가 "전체를 검토했다" 고 판단하기 전에 확인해야 할 숫자입니다.
+        원본에는 있었지만 적재되지 않아 **검토 화면에 보이지 않는 행**이 있으면
+        여기서 건수와 사유가 드러납니다.
+
+        ⛔ **업무 판단을 하지 않습니다.** 미적재 행을 실적에서 뺄지, 검토
+        대상에 넣을지는 고객 확인 사항입니다(``Q5-8``).
+        """
+        return build_trace_response(import_trace.overview(), import_trace.rejections())
 
     @app.get(
         "/reviews/options",
