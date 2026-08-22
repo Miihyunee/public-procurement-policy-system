@@ -94,6 +94,10 @@ class ReviewFilterError(ValueError):
     """허용되지 않는 필터를 받았을 때 발생합니다."""
 
 
+class ReviewStateError(ValueError):
+    """지금 상태에서 할 수 없는 동작을 요청했을 때 발생합니다."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class ReviewTarget:
     """검토 화면에 보여줄 한 건.
@@ -520,12 +524,30 @@ class ReviewService:
     def reopen(
         self, purchase_id: int, *, reopened_by: str | None = None, note: str | None = None
     ) -> ReviewTarget:
-        """확정을 되돌려 다시 검토 상태로 만듭니다.
+        """확정을 되돌려 다시 검토 상태로 만듭니다 (화면의 "확정 취소").
+
+        .. warning::
+            ⛔ **지우지 않습니다.** ``final_purchase_type`` · ``reviewed_by`` ·
+            ``reviewed_at`` · 메모를 그대로 두고 **상태만** ``REOPENED`` 로
+            바꿉니다. 담당자가 무엇을 골랐었는지 화면에서 계속 볼 수 있어야
+            하고, 이력도 그대로 남아야 하기 때문입니다.
+
+        .. note::
+            **확정된 건만** 되돌릴 수 있습니다. 확정한 적 없는 건을 "되돌린다"
+            는 것은 뜻이 통하지 않고, 허용하면 확정 이력이 없는데 상태만
+            ``REOPENED`` 인 행이 생깁니다.
 
         Raises:
             ReviewNotFoundError: 해당 구매가 없는 경우.
+            ReviewStateError: 확정된 건이 아닌 경우.
         """
         purchase = self._require_purchase(purchase_id)
+        current = self._review_repository.find_by_purchase_id(purchase_id)
+        if current is None or current.review_status != CONFIRMED:
+            state = "검토 시작 전" if current is None else current.review_status
+            raise ReviewStateError(
+                f"확정된 건만 되돌릴 수 있습니다: purchase_id={purchase_id} (현재 {state})"
+            )
         review = self._review_repository.reopen(purchase_id, reopened_by=reopened_by, note=note)
         return ReviewTarget(
             purchase=purchase, review=review, past_labels=self._past_labels_for(purchase)

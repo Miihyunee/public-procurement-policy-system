@@ -17,6 +17,7 @@ tests.test_experiments_classifiers
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 
 import pytest
@@ -33,6 +34,7 @@ from procurement.experiments import (
 )
 from procurement.experiments.comparison import (
     CandidateRow,
+    ClassifierFactory,
     ItemComparison,
     MethodReport,
     run_segmented_comparison,
@@ -663,7 +665,7 @@ class TestSegmentedComparison:
 
     def test_each_segment_gets_its_own_report(self) -> None:
         corpus = self.corpus()
-        segments = {
+        segments: dict[str, Sequence[LabeledExample]] = {
             "전체": list(corpus.examples),
             "공사": [e for e in corpus.examples if e.purchase_type == CONSTRUCTION],
             "용역": [e for e in corpus.examples if e.purchase_type == SERVICE],
@@ -678,7 +680,7 @@ class TestSegmentedComparison:
 
     def test_all_methods_run_on_every_segment(self) -> None:
         corpus = self.corpus()
-        factories = {
+        factories: dict[str, ClassifierFactory] = {
             "BM25": BM25Classifier,
             "RAG": RAGClassifier,
             "FUSE": lambda c: FUSEClassifier([BM25Classifier(c), RAGClassifier(c)]),

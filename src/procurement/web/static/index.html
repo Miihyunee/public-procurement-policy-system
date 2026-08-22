@@ -101,6 +101,15 @@
   }
   .rv-pager { justify-content: center; align-items: center; gap: 12px; }
   .rv-current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  /* 키보드로 옮겨 다닐 때 지금 어디에 있는지 분명하게. 마우스 클릭에는
+     테두리가 생기지 않도록 :focus 가 아니라 :focus-visible 을 쓴다. */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+  .rv-danger { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .rv-keys { margin-top: 10px; }
+  .rv-keys kbd {
+    border: 1px solid var(--line); border-radius: 5px; padding: 0 6px;
+    font-family: inherit; font-size: 12px;
+  }
   .rv-cond { color: var(--accent); font-weight: 600; }
   .rv-modal {
     position: fixed; inset: 0; background: rgba(0,0,0,.55);
@@ -493,20 +502,34 @@
       <div id="review-list" class="upload-summary"></div>
 
       <div class="upload-actions rv-pager">
-        <button id="review-prev-target" class="control" type="button">↑ 이전 대상 (P)</button>
+        <button id="review-prev-target" class="control" type="button"
+                aria-label="이전 검토 대상으로 이동 (단축키 P)">↑ 이전 대상 (P)</button>
         <span id="review-cursor-info" class="card-sub"></span>
-        <button id="review-next-target" class="control" type="button">다음 대상 (N) ↓</button>
+        <button id="review-next-target" class="control" type="button"
+                aria-label="다음 검토 대상으로 이동 (단축키 N)">다음 대상 (N) ↓</button>
       </div>
 
       <div class="upload-actions rv-pager">
-        <button id="review-prev" class="control" type="button">← 이전 쪽</button>
+        <button id="review-prev" class="control" type="button" aria-label="이전 쪽">← 이전 쪽</button>
         <span id="review-page-info" class="card-sub"></span>
-        <button id="review-next" class="control" type="button">다음 쪽 →</button>
+        <button id="review-next" class="control" type="button" aria-label="다음 쪽">다음 쪽 →</button>
       </div>
 
+      <p class="card-sub rv-keys">
+        키보드: <kbd>N</kbd> 다음 대상 · <kbd>P</kbd> 이전 대상 · <kbd>Esc</kbd> 창 닫기
+        <span class="rv-key">— 입력창에 글자를 쓰는 중에는 동작하지 않습니다. 확정 단축키는 없습니다.</span>
+      </p>
+
       <!-- 변경 이력 — 현재 값과 과거 기록을 분리해서 보여준다 -->
-      <div id="review-modal" class="rv-modal" hidden>
+      <div id="review-modal" class="rv-modal" role="dialog" aria-modal="true"
+           aria-label="검토 변경 이력" hidden>
         <div id="review-history-box" class="rv-modal-box"></div>
+      </div>
+
+      <!-- 확정 취소 확인 — ⛔ 확인 전에는 아무것도 바뀌지 않는다 -->
+      <div id="review-undo-modal" class="rv-modal" role="alertdialog" aria-modal="true"
+           aria-label="확정 취소 확인" hidden>
+        <div id="review-undo-box" class="rv-modal-box"></div>
       </div>
     </section>
   </div>
@@ -1534,7 +1557,11 @@
   function historyButton(purchaseId) {
     var button = make("button", "control", "이력 보기");
     button.type = "button";
-    button.addEventListener("click", function () { openHistory(purchaseId); });
+    button.setAttribute("aria-label", "구매 " + purchaseId + " 의 검토 변경 이력 보기");
+    button.addEventListener("click", function () {
+      rememberFocus();
+      openHistory(purchaseId);
+    });
     return button;
   }
 
@@ -1558,9 +1585,11 @@
       done.appendChild(line);
       card.appendChild(done);
 
-      var again = make("button", "control", "다시 검토");
+      // ⛔ 바로 되돌리지 않는다. 확인창을 먼저 띄운다.
+      var again = make("button", "control", "확정 취소");
       again.type = "button";
-      again.addEventListener("click", function () { reopenReview(item.source.purchase_id); });
+      again.setAttribute("aria-label", "확정 취소하고 다시 검토 상태로 되돌리기");
+      again.addEventListener("click", function () { askUndo(item); });
       var row = make("div", "rv-pick");
       row.appendChild(again);
       row.appendChild(historyButton(item.source.purchase_id));
@@ -1841,14 +1870,158 @@
     box.appendChild(list);
 
     el("review-modal").hidden = false;
+    focusInside(box);
   }
 
   function closeHistory() {
     el("review-modal").hidden = true;
+    restoreFocus();
   }
 
   function historyIsOpen() {
     return !el("review-modal").hidden;
+  }
+
+  // ------------------------------------------------------------------
+  // 모달 포커스 — 열면 안으로, 닫으면 원래 자리로
+  // ------------------------------------------------------------------
+
+  /** 모달을 열기 전에 포커스가 있던 요소. 닫을 때 여기로 되돌린다. */
+  var focusBeforeModal = null;
+
+  function rememberFocus() {
+    focusBeforeModal = document.activeElement;
+  }
+
+  function restoreFocus() {
+    if (focusBeforeModal && focusBeforeModal.focus) { focusBeforeModal.focus(); }
+    focusBeforeModal = null;
+  }
+
+  /** 모달 안 첫 버튼으로 포커스를 옮긴다 — 키보드 사용자가 갇히지 않도록. */
+  function focusInside(box) {
+    var target = box.querySelector("button, [href], input, select, textarea");
+    if (target) { target.focus(); }
+  }
+
+  // ------------------------------------------------------------------
+  // 확정 취소 (Undo) — 상태만 REOPENED 로. ⛔ 값을 지우지 않는다.
+  // ------------------------------------------------------------------
+
+  /** 지금 요청 중인 확정 취소 대상. 같은 건에 두 번 보내지 않는다. */
+  var undoInFlight = {};
+
+  /**
+   * 확정 취소 확인창.
+   *
+   * ⛔ 버튼을 누르자마자 상태를 바꾸지 않는다. 연속 검토 중 잘못 눌러 확정이
+   *    풀리면 담당자가 알아채기 어렵기 때문이다.
+   * ⛔ 여기서 **새 유형을 고르지 않는다.** 되돌리기만 하고, 다시 고르는 것은
+   *    되돌린 뒤 평소대로 한다.
+   */
+  function askUndo(item) {
+    rememberFocus();
+    var box = el("review-undo-box");
+    clear(box);
+
+    var head = make("div", "rv-modal-head");
+    head.appendChild(make("h3", "card-title", "확정을 취소할까요?"));
+    box.appendChild(head);
+
+    box.appendChild(make("p", "card-sub",
+      "다시 검토 상태로 되돌립니다. 지금까지의 확정 기록은 지워지지 않고 이력에 남습니다."));
+
+    // 현재 확정값은 **참고용**으로만 보여준다.
+    var info = make("div", "rv-src");
+    info.appendChild(reviewField("현재 확정 유형",
+      item.review.final_purchase_type_label || "판단 보류"));
+    info.appendChild(reviewField("확정자", item.review.reviewed_by));
+    info.appendChild(reviewField("확정일시", item.review.reviewed_at));
+    box.appendChild(info);
+
+    var actions = make("div", "rv-pick");
+    var cancel = make("button", "control", "취소");
+    cancel.type = "button";
+    cancel.addEventListener("click", closeUndo);
+
+    var ok = make("button", "control rv-danger", "확정 취소");
+    ok.type = "button";
+    ok.addEventListener("click", function () {
+      runUndo(item.source.purchase_id, ok);
+    });
+
+    actions.appendChild(cancel);
+    actions.appendChild(ok);
+    box.appendChild(actions);
+
+    el("review-undo-modal").hidden = false;
+    cancel.focus();   // 기본 포커스는 **안전한 쪽**(취소)에 둔다
+  }
+
+  function closeUndo() {
+    el("review-undo-modal").hidden = true;
+    restoreFocus();
+  }
+
+  function undoIsOpen() {
+    return !el("review-undo-modal").hidden;
+  }
+
+  /** 확인 후에만 요청을 보낸다. 같은 건에 두 번 보내지 않는다. */
+  function runUndo(purchaseId, button) {
+    if (undoInFlight[purchaseId]) { return; }
+    undoInFlight[purchaseId] = true;
+    button.disabled = true;
+    reviewError("");
+
+    fetch("/reviews/" + encodeURIComponent(purchaseId) + "/reopen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reopened_by: el("review-actor").value || null })
+    }).then(function (response) {
+      if (!response.ok) { throw httpError(response); }
+      closeUndo();
+      reviewNotice("확정을 취소했습니다. 이전 확정 기록은 이력에 남아 있습니다.");
+      loadReviews();
+    }).catch(function (error) {
+      // ⛔ 실패했으면 성공처럼 보이면 안 된다 — 화면 상태를 그대로 둔다.
+      reviewError(failureMessage(error, "확정을 취소하지 못했습니다"));
+      button.disabled = false;
+    }).finally(function () {
+      delete undoInFlight[purchaseId];
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // 오류 안내
+  // ------------------------------------------------------------------
+
+  /** 응답 상태를 담은 오류 객체. */
+  function httpError(response) {
+    var error = new Error("HTTP " + response.status);
+    error.status = response.status;
+    return error;
+  }
+
+  /**
+   * 실패 사유를 담당자가 읽을 말로 바꾼다.
+   *
+   * ⛔ 자동 재시도를 하지 않는다. 확정·취소는 상태를 바꾸는 요청이라, 조용히
+   *    다시 보내면 담당자가 모르는 사이에 두 번 처리될 수 있다. 다시 시도할지는
+   *    사람이 정한다.
+   */
+  function failureMessage(error, what) {
+    if (error && error.status === 409) {
+      return what + ": 이미 처리된 상태입니다. 새로고침 후 확인해 주세요.";
+    }
+    if (error && error.status === 404) {
+      return what + ": 대상을 찾을 수 없습니다. 목록을 새로고침해 주세요.";
+    }
+    if (error && error.status) {
+      return what + " (서버 오류 " + error.status + "). 저장되지 않았습니다. 다시 시도해 주세요.";
+    }
+    // status 가 없으면 요청 자체가 서버에 닿지 못한 것이다.
+    return "서버와 연결할 수 없습니다. 네트워크 연결을 확인한 후 다시 시도해 주세요.";
   }
 
   // ------------------------------------------------------------------
@@ -1903,27 +2076,22 @@
         review_note: note || null
       })
     }).then(function (response) {
-      if (!response.ok) { throw new Error("HTTP " + response.status); }
+      if (!response.ok) { throw httpError(response); }
       delete reviewPicks[purchaseId];
       reviewNotice("확정했습니다. 원본 데이터는 변경되지 않았습니다.");
       // 확정한 건이 현재 조건에서 빠지면 같은 자리에 다음 건이 들어온다.
       // ⛔ 다음 건의 유형을 미리 고르거나 확정하지 않는다 — 이동만 한다.
       loadReviews();
-    }).catch(function (error) { reviewError("확정하지 못했습니다: " + error.message); });
+    }).catch(function (error) {
+      // ⛔ 실패했으면 **다음 건으로 넘어가지 않는다.** 고른 값도 남겨 둬서
+      //    담당자가 그대로 다시 누를 수 있게 한다.
+      reviewError(failureMessage(error, "확정하지 못했습니다"));
+    });
   }
 
-  function reopenReview(purchaseId) {
-    reviewError("");
-    fetch("/reviews/" + encodeURIComponent(purchaseId) + "/reopen", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reopened_by: el("review-actor").value || null })
-    }).then(function (response) {
-      if (!response.ok) { throw new Error("HTTP " + response.status); }
-      reviewNotice("다시 검토 상태로 되돌렸습니다. 이전 값은 이력에 남습니다.");
-      loadReviews();
-    }).catch(function (error) { reviewError("되돌리지 못했습니다: " + error.message); });
-  }
+  // STEP 10 에서 확인창 없이 바로 되돌리던 옛 ``reopenReview`` 를 지웠다.
+  // 확인창을 거치지 않는 경로가 남아 있으면 실수로 확정이 풀릴 수 있다.
+  // 되돌리기는 askUndo → runUndo 한 갈래뿐이다.
 
   // ------------------------------------------------------------------
   // 키보드 단축키
@@ -1945,13 +2113,18 @@
     // 브라우저·OS 단축키를 빼앗지 않는다.
     if (event.ctrlKey || event.metaKey || event.altKey) { return; }
 
+    if (event.key === "Escape" && undoIsOpen()) {
+      closeUndo();
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Escape" && historyIsOpen()) {
       closeHistory();
       event.preventDefault();
       return;
     }
     // 모달이 열려 있으면 뒤쪽 목록을 움직이지 않는다.
-    if (historyIsOpen()) { return; }
+    if (historyIsOpen() || undoIsOpen()) { return; }
     if (isTyping(event.target)) { return; }
 
     var key = event.key.toLowerCase();
@@ -1982,6 +2155,10 @@
     el("review-prev-target").addEventListener("click", function () { moveCursor(-1); });
     el("review-modal").addEventListener("click", function (event) {
       if (event.target === el("review-modal")) { closeHistory(); }
+    });
+    el("review-undo-modal").addEventListener("click", function (event) {
+      // 바깥을 눌러 닫는 것은 **취소** 다 — 확정 취소가 실행되지 않는다.
+      if (event.target === el("review-undo-modal")) { closeUndo(); }
     });
     document.addEventListener("keydown", handleReviewKey);
     window.addEventListener("popstate", function () {

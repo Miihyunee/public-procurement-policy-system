@@ -302,8 +302,11 @@ class TestNoThresholdSnuckIn:
 
     def test_no_magic_ratio_comparison_in_the_level(self) -> None:
         """⛔ ``dominant_ratio > 0.8`` 같은 비교로 수준을 정하지 않는다."""
-        for owner in (past_labels_module.PastLabelSummary, GroupConsistency):
-            source = textwrap.dedent(inspect.getsource(owner.consistency.fget))  # type: ignore[attr-defined]
+        owners: tuple[type, ...] = (past_labels_module.PastLabelSummary, GroupConsistency)
+        for owner in owners:
+            # ``consistency`` 는 property 이므로 클래스에서 직접 꺼내 getter 를 본다.
+            getter = vars(owner)["consistency"].fget
+            source = textwrap.dedent(inspect.getsource(getter))
             for node in ast.walk(ast.parse(source)):
                 if not isinstance(node, ast.Compare):
                     continue

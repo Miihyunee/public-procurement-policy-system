@@ -93,6 +93,7 @@ from procurement.reviews.review_service import (
     ReviewFilterError,
     ReviewNotFoundError,
     ReviewService,
+    ReviewStateError,
 )
 from procurement.uploads.template import TEMPLATE_FILE_NAME, build_template_bytes
 from procurement.uploads.upload_response import UploadResponseModel, build_upload_response
@@ -796,13 +797,26 @@ def create_app(
         tags=["reviews"],
     )
     def reopen_review(purchase_id: int, payload: ReopenReviewRequest) -> ReviewItemResponseModel:
-        """확정을 되돌립니다. ⛔ 이전 값은 지우지 않고 이력에 남깁니다."""
+        """확정을 되돌립니다 — 화면의 **"확정 취소"**.
+
+        ⛔ **지우지 않습니다.** 이전 확정값·확정자·확정 시각·메모를 그대로 두고
+        상태만 ``REOPENED`` 로 바꾸며, 되돌린 사실 자체도 이력에 남습니다.
+
+        **확정된 건만** 되돌릴 수 있습니다. 이미 되돌렸거나 아직 확정하지 않은
+        건에 다시 요청하면 409 로 거부하므로, 버튼을 여러 번 눌러도 상태가
+        어긋나지 않습니다.
+
+        Raises:
+            HTTPException: 구매가 없으면 404, 확정된 건이 아니면 409.
+        """
         try:
             target = review_service.reopen(
                 purchase_id, reopened_by=payload.reopened_by, note=payload.note
             )
         except ReviewNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ReviewStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return ReviewItemResponseModel.from_target(target)
 
     @app.get(
