@@ -113,6 +113,19 @@
   .rv-trace { margin: 8px 0 4px; font-size: 13px; overflow-x: auto; }
   .rv-trace table { border-collapse: collapse; width: 100%; }
   .rv-trace th, .rv-trace td { padding: 4px 8px; text-align: left; white-space: nowrap; }
+  /*
+    긴 자유 텍스트 열(적요·거래처·사유)만 줄바꿈을 허용한다. 전부 nowrap 이면
+    표의 최소 폭이 내용 길이만큼 늘어나(실측 1,296px) 좁은 화면에서 담당자가
+    표 안에서 한참 옆으로 밀어야 한다.
+    ⛔ 잘라내지 않는다 — 줄을 바꿔 **전부 보여준다**(말줄임표·ellipsis 없음).
+    ⚠️ 숫자·날짜·행 번호는 위 기본값(nowrap)을 그대로 둔다. `-113,400,000`
+       같은 값이 줄바꿈되면 읽다가 오해하기 쉽다.
+    min-width 는 너무 잘게 쪼개져 한 글자씩 흐르는 것을 막고, max-width 는
+    한 열이 표를 독차지하지 않게 한다.
+  */
+  .rv-trace td.rv-text {
+    white-space: normal; overflow-wrap: anywhere; min-width: 10ch; max-width: 24ch;
+  }
   .rv-trace th { color: var(--muted); font-weight: 600; }
   .rv-trace td.num { text-align: right; }
   .rv-keys { margin-top: 10px; }
@@ -2642,12 +2655,13 @@
       var tr = make("tr");
       tr.appendChild(make("td", "num", row.batch_id === null ? "-" : "#" + row.batch_id));
       tr.appendChild(make("td", "num", String(row.row_number)));
-      tr.appendChild(make("td", null, row.description || "-"));
-      tr.appendChild(make("td", null, row.company_name || "-"));
+      // 긴 자유 텍스트는 줄바꿈을 허용한다(내용은 그대로 다 보인다).
+      tr.appendChild(make("td", "rv-text", row.description || "-"));
+      tr.appendChild(make("td", "rv-text", row.company_name || "-"));
       tr.appendChild(make("td", "num",
         row.amount === null ? "-" : Number(row.amount).toLocaleString()));
       tr.appendChild(make("td", null, row.budget_account || "-"));
-      tr.appendChild(make("td", null, row.reason_label));
+      tr.appendChild(make("td", "rv-text", row.reason_label));
       table.appendChild(tr);
     });
     box.appendChild(table);

@@ -322,3 +322,60 @@ class TestNothingElseMoved:
             "/reviews/history.csv",
         }
         assert found <= allowed, found - allowed
+
+
+# ----------------------------------------------------------------------
+# STEP 27 — 미적재 표의 열 폭
+# ----------------------------------------------------------------------
+class TestRejectionTableColumnWidths:
+    """긴 자유 텍스트 열만 줄바꿈시켜 표를 좁힌다.
+
+    전부 ``nowrap`` 이면 표의 최소 폭이 내용 길이만큼 늘어나(실측 1,296px)
+    좁은 화면에서 담당자가 표 안에서 한참 옆으로 밀어야 했습니다. 실측으로
+    1,296 → 1,162px(데스크톱) · 690px(768px 화면)로 줄었고, 어느 폭에서도
+    **잘린 칸 0개 · ellipsis 0개**입니다.
+    """
+
+    def test_long_text_columns_may_wrap(self, styles: str) -> None:
+        rule = _rule(styles, ".rv-trace td.rv-text")
+
+        assert "white-space: normal" in rule
+        assert "overflow-wrap: anywhere" in rule
+
+    def test_the_wrapping_columns_are_bounded(self, styles: str) -> None:
+        """한 글자씩 흐르지도, 한 열이 표를 독차지하지도 않게."""
+        rule = _rule(styles, ".rv-trace td.rv-text")
+
+        assert "min-width" in rule
+        assert "max-width" in rule
+
+    def test_nothing_is_cut_off(self, styles: str) -> None:
+        """⛔ 줄을 바꿔 전부 보여준다 — 말줄임표로 감추지 않는다."""
+        rule = _rule(styles, ".rv-trace td.rv-text")
+
+        assert "text-overflow" not in rule
+        assert "ellipsis" not in styles
+
+    def test_numbers_still_do_not_wrap(self, styles: str) -> None:
+        """``-113,400,000`` 이 줄바꿈되면 읽다가 오해하기 쉽다."""
+        assert "white-space: nowrap" in _rule(styles, ".rv-trace th, .rv-trace td")
+
+    def test_only_the_free_text_cells_get_the_class(self, page: str) -> None:
+        body = _function_body(page, "renderRejectionTable")
+
+        assert body.count('make("td", "rv-text"') == 3  # 적요 · 거래처 · 사유
+        assert 'make("td", "num"' in body  # 업로드 · 원본 행 · 금액은 그대로
+
+    def test_the_columns_are_unchanged(self, page: str) -> None:
+        """지시 — 기존 컬럼 순서와 데이터 내용은 바꾸지 않는다."""
+        body = _function_body(page, "renderRejectionTable")
+
+        assert '["업로드", "원본 행", "적요", "거래처", "금액", "예산과목", "사유"]' in body
+
+    def test_the_table_still_scrolls_inside_itself(self, styles: str) -> None:
+        """더 좁아지면(실측 480px 이하) 표 안에서만 밀린다 — 문서가 아니라."""
+        assert "overflow-x: auto" in _rule(styles, ".rv-trace")
+
+    def test_the_page_level_fix_is_still_there(self, styles: str) -> None:
+        """STEP 19 의 grid 칸 수축 허용이 없으면 문서 전체가 다시 밀린다."""
+        assert "min-width: 0" in _rule(styles, ".row > *")
