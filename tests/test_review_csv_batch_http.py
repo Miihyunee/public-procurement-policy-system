@@ -358,3 +358,58 @@ class TestTheTwoCsvsStayDistinct:
             raw = client.get(f"{path}?batch_id={with_history['2026-01']}").content
             assert raw.startswith(b"\xef\xbb\xbf"), path
             assert b"\r\n" in raw, path
+
+
+# ----------------------------------------------------------------------
+# STEP 26 — 배치 상세 링크가 만드는 URL 이 실제로 동작하는가
+# ----------------------------------------------------------------------
+class TestBatchDetailLinkUrlWorks:
+    """화면이 만드는 URL 과 서버가 답하는 내용을 **한 자리에서** 맞춰 본다.
+
+    화면 쪽 검사(``test_upload_history_screen.py``)는 링크가 이 모양으로 만들어
+    지는지를 보고, 여기서는 그 모양이 **실제로 통하는지**를 봅니다. 둘이 갈라지면
+    담당자는 눌러도 아무것도 못 받습니다.
+    """
+
+    #: 화면의 ``historyCsvLink()`` 가 만드는 것과 같은 모양.
+    LINK = "/reviews/history.csv?batch_id={batch_id}"
+
+    def test_the_link_for_a_current_batch_returns_that_batch(
+        self, with_history: dict[str, int], client: TestClient
+    ) -> None:
+        batch_id = with_history["2026-01"]
+
+        rows = csv_rows(client, self.LINK.format(batch_id=batch_id))
+
+        assert rows
+        assert {line[1] for line in rows} == {str(batch_id)}
+
+    def test_the_link_for_a_superseded_batch_returns_an_empty_file(
+        self, with_history: dict[str, int], client: TestClient
+    ) -> None:
+        """대체된 배치를 골랐을 때 화면이 예고한 대로 비어 있어야 한다."""
+        old = with_history["2026-03-old"]
+
+        assert csv_rows(client, self.LINK.format(batch_id=old)) == []
+
+    def test_every_batch_in_the_history_can_be_asked_for(
+        self, with_history: dict[str, int], client: TestClient
+    ) -> None:
+        """이력 화면에 보이는 배치는 **전부** 눌러도 오류가 나지 않는다."""
+        listed = client.get("/imports/batches").json()["items"]
+        assert listed
+
+        for batch in listed:
+            response = client.get(self.LINK.format(batch_id=batch["batch_id"]))
+            assert response.status_code == 200, batch["batch_id"]
+            assert response.content.startswith(b"\xef\xbb\xbf"), batch["batch_id"]
+
+    def test_the_link_keeps_the_agreed_file_name(
+        self, with_history: dict[str, int], client: TestClient
+    ) -> None:
+        """화면의 ``download`` 이름과 서버가 붙이는 이름이 같아야 한다."""
+        batch_id = with_history["2026-01"]
+
+        disposition = client.get(self.LINK.format(batch_id=batch_id)).headers["content-disposition"]
+
+        assert "review-history.csv" in disposition

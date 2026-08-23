@@ -504,3 +504,89 @@ class TestPeriodProgressOnScreen:
 
         assert "periodsPromise === null" in body
         assert "periodsPromise = loadPeriods()" in body
+
+
+# ----------------------------------------------------------------------
+# STEP 26 — 배치 상세에서 그 배치의 검토 이력 CSV 를 받는다
+# ----------------------------------------------------------------------
+class TestBatchDetailHistoryCsv:
+    """업로드 이력에서 배치를 열면 그 기간의 변경 이력을 바로 받을 수 있다.
+
+    ⚠️ 기존 ``/reviews/history.csv`` 를 그대로 씁니다 — 새 API 를 만들지
+    않았습니다(STEP 20 에서 만든 것을 연결만 했습니다).
+    """
+
+    def test_the_link_exists(self, page: str) -> None:
+        assert "function historyCsvLink(" in page
+
+    def test_batch_detail_shows_it(self, page: str) -> None:
+        body = _function_body(page, "showBatchDetail")
+
+        assert "historyCsvLink(item)" in body
+
+    def test_it_uses_the_existing_endpoint(self, page: str) -> None:
+        """⛔ 새 엔드포인트를 만들지 않았다."""
+        body = _function_body(page, "historyCsvLink")
+
+        assert '"/reviews/history.csv?batch_id="' in body
+
+    def test_it_sends_the_batch_that_was_opened(self, page: str) -> None:
+        body = _function_body(page, "historyCsvLink")
+
+        assert "encodeURIComponent(item.batch_id)" in body
+
+    def test_the_file_name_matches_the_server(self, page: str) -> None:
+        """서버 ``Content-Disposition`` 과 같은 이름 — 규격을 바꾸지 않았다."""
+        body = _function_body(page, "historyCsvLink")
+
+        assert '"review-history.csv"' in body
+
+    def test_it_follows_the_existing_download_pattern(self, page: str) -> None:
+        """미적재 CSV 버튼과 같은 방식(내려받기 링크)이다."""
+        body = _function_body(page, "historyCsvLink")
+
+        assert 'make("a", "control"' in body
+        assert '"download"' in body
+
+    def test_opening_the_detail_asks_for_nothing_extra(self, page: str) -> None:
+        """지시 — N+1 요청을 만들지 않는다. 링크는 이미 받은 값으로 만든다."""
+        body = _code_only(_function_body(page, "historyCsvLink"))
+
+        for banned in ("fetch(", "fetchJson(", "loadHistory", "loadPeriods"):
+            assert banned not in body, banned
+
+    def test_the_detail_still_makes_one_request(self, page: str) -> None:
+        body = _function_body(page, "showBatchDetail")
+
+        assert body.count("fetchJson(") == 1
+        assert "/imports/batches/" in body
+
+    def test_downloading_does_not_touch_the_url_state(self, page: str) -> None:
+        """지시 — URL 상태를 불필요하게 바꾸지 않는다."""
+        body = _code_only(_function_body(page, "historyCsvLink"))
+
+        for banned in ("pushState", "replaceState", "syncUrl", "location.href"):
+            assert banned not in body, banned
+
+    def test_a_superseded_batch_is_explained(self, page: str) -> None:
+        """대체된 배치를 고르면 파일이 비어 나온다는 사실을 미리 적는다."""
+        body = _function_body(page, "historyCsvLink")
+
+        assert "item.is_current" in body
+        assert "현재 배치 기준" in body
+
+    def test_the_note_states_a_fact_not_a_judgement(self, page: str) -> None:
+        """⛔ 업무 판단을 붙이지 않는다 — 조회 범위 설명일 뿐이다."""
+        body = _code_only(_function_body(page, "historyCsvLink"))
+
+        for banned in ("제외", "부적합", "무효", "삭제", "실적"):
+            assert banned not in body, banned
+
+    def test_the_other_csv_buttons_are_untouched(self, page: str) -> None:
+        """⛔ 미적재 CSV · 검토 CSV 동작을 건드리지 않았다."""
+        assert 'id="upload-trace-csv"' in page
+        assert 'download="import-rejections.csv"' in page
+        assert "/imports/trace.csv?" in _function_body(page, "rejectionCsvUrl")
+        assert '"/reviews/export.csv?" + reviewParams(false)' in _function_body(
+            page, "exportReviews"
+        )
