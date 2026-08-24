@@ -1611,7 +1611,9 @@
     payload.items.forEach(function (item) {
       var tr = make("tr");
       tr.appendChild(make("td", null, item.period_start + " ~ " + item.period_end));
-      tr.appendChild(make("td", null, item.file_name));
+      // 파일명은 길이가 제각각인 자유 텍스트다. 미적재 표와 **같은 규칙**으로
+      // 줄바꿈을 허용한다(잘라내지 않는다). 기간·일시·숫자는 nowrap 그대로다.
+      tr.appendChild(make("td", "rv-text", item.file_name));
       tr.appendChild(make("td", null, (item.uploaded_at || "").replace("T", " ").slice(0, 19)));
       // 원본 행 수를 모르는 옛 배치는 "-" 다. ⛔ 0 으로 적지 않는다.
       tr.appendChild(make("td", "num",

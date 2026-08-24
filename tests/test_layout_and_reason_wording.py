@@ -379,3 +379,65 @@ class TestRejectionTableColumnWidths:
     def test_the_page_level_fix_is_still_there(self, styles: str) -> None:
         """STEP 19 의 grid 칸 수축 허용이 없으면 문서 전체가 다시 밀린다."""
         assert "min-width: 0" in _rule(styles, ".row > *")
+
+
+# ----------------------------------------------------------------------
+# STEP 28 — 업로드 이력 표의 파일명 열
+# ----------------------------------------------------------------------
+class TestHistoryTableFileNameColumn:
+    """긴 파일명만 줄바꿈시켜 이력 표를 좁힌다.
+
+    실측 870 → 760px(768px 화면). 파일명은 잘리지 않고 줄을 바꿔 **전부**
+    보입니다 — 49자 파일명으로 확인했을 때 어느 폭에서도 잘린 칸 0개입니다.
+    ⚠️ 기간·업로드일시·숫자 열은 ``nowrap`` 그대로입니다.
+    """
+
+    def test_the_file_name_cell_may_wrap(self, page: str) -> None:
+        body = _function_body(page, "renderHistory")
+
+        assert 'make("td", "rv-text", item.file_name)' in body
+
+    def test_only_the_file_name_wraps(self, page: str) -> None:
+        """⛔ 기간·일시·숫자까지 줄바꿈되면 값이 이상하게 쪼개진다."""
+        body = _function_body(page, "renderHistory")
+
+        assert body.count('"rv-text"') == 1
+
+    def test_dates_and_numbers_keep_their_cells(self, page: str) -> None:
+        body = _function_body(page, "renderHistory")
+
+        assert 'make("td", null, item.period_start + " ~ " + item.period_end)' in body
+        assert 'make("td", "num", numberFormat(item.stored))' in body
+
+    def test_the_file_name_is_passed_through_whole(self, page: str) -> None:
+        """⛔ 화면이 파일명을 줄이지 않는다 — 서버가 준 값을 그대로 넣는다."""
+        body = _function_body(page, "renderHistory")
+        cell = [line for line in body.splitlines() if "item.file_name" in line][0]
+
+        for banned in ("slice(", "substr", "substring", "…", "..."):
+            assert banned not in cell, banned
+
+    def test_nothing_is_hidden_or_cut(self, styles: str) -> None:
+        """지시 §4 — ellipsis 도 overflow hidden 도 쓰지 않는다."""
+        rule = _rule(styles, ".rv-trace td.rv-text")
+
+        assert "text-overflow" not in rule
+        assert "overflow: hidden" not in rule
+
+    def test_the_columns_are_unchanged(self, page: str) -> None:
+        body = _function_body(page, "renderHistory")
+
+        assert (
+            '["기간", "파일", "업로드일시", "원본", "적재", "미적재", "설명 안 됨", "상태", ""]'
+            in body
+        )
+
+    def test_the_rejection_table_still_wraps_three_columns(self, page: str) -> None:
+        """⛔ STEP 27 의 미적재 표 동작을 건드리지 않았다."""
+        body = _function_body(page, "renderRejectionTable")
+
+        assert body.count('make("td", "rv-text"') == 3
+
+    def test_both_tables_share_one_rule(self, styles: str) -> None:
+        """같은 사실(긴 자유 텍스트)은 규칙 하나로 다룬다 — 복제하지 않는다."""
+        assert styles.count(".rv-trace td.rv-text {") == 1
