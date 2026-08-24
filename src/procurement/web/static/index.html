@@ -247,6 +247,35 @@
   .rv-opt:hover { border-color: var(--accent); color: var(--accent); }
   .rv-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
   .rv-note { flex: 1 1 200px; min-width: 160px; }
+  /*
+    휴대폰 세로(480px 이하)의 확정 선택줄(`.rv-block .rv-pick`).
+
+    360px 에서 이 줄이 **네 줄**로 흩어져 있었다(실측 155px, 카드 694px).
+      [공사 용역 물품] / [판단 보류] / [메모] / [확정]
+    원인은 두 가지였다.
+      · 유형 버튼이 제 글자 폭(56·56·56·86px)이라 3+1 로 어정쩡하게 끊겼다.
+      · 메모의 기준 폭 200px 이 남은 자리(252px)에서 확정 버튼과 함께 서지
+        못해, 메모와 확정이 각각 한 줄씩 차지했다.
+
+    그래서 480px 이하에서만 두 가지를 바꾼다.
+      · 버튼에 **공통 기준 폭**을 줘 한 줄에 몇 개가 들어갈지가 화면 폭으로
+        정해지게 한다. 6.5em(≈85px)은 480px 에서는 넷이 한 줄에(87px 씩),
+        360px 에서는 둘씩 두 줄에(122px 씩) 놓이는 값이다 — 실측으로 고른
+        범위 6.2~6.5em 의 가운데다. ⚠️ 6.8em 부터는 480px 이 3+1 로 깨진다.
+      · 메모의 기준 폭을 min-width 와 같은 160px 로 낮춰 확정 버튼과 한 줄에
+        선다(메모는 여전히 `flex-grow: 1` 로 남은 자리를 다 쓴다).
+    실측 360px: 155 → 118px, 카드 694 → 657px. 480px·768px 은 변화 없다.
+
+    ⛔ 버튼을 지우거나 숨기거나 라벨을 줄이지 않았다 — 6개 요소 그대로다.
+    ⛔ 버튼을 **축소하지 않는다.** `flex-grow` 로 넓어질 뿐이고, 위아래
+       padding 7px 을 건드리지 않아 터치 높이 34px 이 그대로다.
+    ⚠️ `.rv-block` 안의 선택줄만 고른다. 이력 보기 · 확정 취소 줄도 같은
+       `.rv-pick` 이지만 그 줄에는 `.rv-opt` 도 `.rv-note` 도 없다.
+  */
+  @media (max-width: 480px) {
+    .rv-pick .rv-opt { flex: 1 1 6.5em; }
+    .rv-pick .rv-note { flex: 1 1 160px; }
+  }
   .rv-tag {
     display: inline-block; font-size: 11.5px; padding: 2px 8px; border-radius: 999px;
     border: 1px solid var(--line); color: var(--muted); margin-left: 8px;

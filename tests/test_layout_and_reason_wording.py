@@ -812,3 +812,126 @@ class TestRejectionTableOnPhoneWidths:
 
         assert "fetch" not in body
         assert "matchMedia" not in body
+
+
+# ----------------------------------------------------------------------
+# STEP 33 — 480px 이하의 검토 카드 확정 선택줄
+# ----------------------------------------------------------------------
+def _picker_media(styles: str) -> str:
+    """확정 선택줄을 다루는 ``@media (max-width: 480px)`` 블록.
+
+    같은 조건의 블록이 여럿이다. 선택줄 블록은 ``.rv-pick`` 을 고르는 것이다.
+    """
+    rest = styles
+    while "@media (max-width: 480px) {" in rest:
+        block = _media_block(rest, "max-width: 480px")
+        if ".rv-pick" in block:
+            return block
+        rest = rest[rest.index(block) + len(block) :]
+    raise AssertionError("`.rv-pick` 을 다루는 480px 블록을 찾지 못했습니다")
+
+
+class TestReviewCardNarrowPickLayout:
+    """휴대폰 세로(480px 이하)에서 확정 선택줄이 몇 줄로 놓일지를 폭이 정한다.
+
+    실측 360px: 선택줄 155 → 118px, 카드 694 → 657px(긴 데이터 757 → 720px).
+    배치는 ``[공사 용역] / [물품 판단 보류] / [메모 확정]`` 2×2 가 됩니다.
+    480px 은 ``[공사 용역 물품 판단 보류] / [메모 확정]`` 로 **높이 76px 그대로**,
+    768px 이상은 한 줄로 STEP 32 와 동일합니다.
+
+    ⛔ 버튼·메모·확정 6개 요소는 어느 폭에서도 그대로 있습니다. 지우거나
+       숨기거나 라벨을 줄여서 공간을 얻지 않았습니다.
+    """
+
+    def test_the_rule_is_scoped_to_phone_widths(self, styles: str) -> None:
+        """768px 이상은 STEP 32 결과 그대로여야 한다."""
+        block = _picker_media(styles)
+
+        assert ".rv-pick" in block
+
+    def test_wider_screens_keep_the_original_pick_rules(self, styles: str) -> None:
+        """기본 규칙(모든 폭)은 손대지 않았다."""
+        assert "display: flex" in _rule(styles, ".rv-pick")
+        assert "flex-wrap: wrap" in _rule(styles, ".rv-pick")
+        assert "flex: 1 1 200px" in _rule(styles, ".rv-note")
+
+    def test_the_type_buttons_share_one_basis(self, styles: str) -> None:
+        """공통 기준 폭을 줘야 한 줄에 몇 개가 들어갈지 화면 폭이 정한다.
+
+        6.5em(≈85px)은 480px 에서 넷이 한 줄, 360px 에서 둘씩 두 줄이 되는 값이다
+        (실측 범위 6.2~6.5em). ⚠️ 6.8em 부터는 480px 이 3+1 로 깨진다.
+        """
+        block = _picker_media(styles)
+
+        assert ".rv-pick .rv-opt { flex: 1 1 6.5em; }" in block
+
+    def test_the_note_stands_beside_the_confirm_button(self, styles: str) -> None:
+        """기준 폭 200px 이면 360px 에서 메모와 확정이 각각 한 줄을 차지한다."""
+        block = _picker_media(styles)
+
+        assert ".rv-pick .rv-note { flex: 1 1 160px; }" in block
+
+    def test_buttons_are_never_shrunk(self, styles: str) -> None:
+        """⛔ 공간을 얻으려고 버튼을 줄이지 않는다 — 터치 높이 34px 이 걸려 있다."""
+        block = _picker_media(styles)
+
+        for banned in ("padding", "font-size", "height", "transform", "zoom"):
+            assert banned not in block, banned
+
+    def test_nothing_is_hidden_to_win_space(self, styles: str) -> None:
+        """⛔ 숨김·말줄임으로 좁히지 않는다."""
+        block = _picker_media(styles)
+
+        for banned in (
+            "display: none",
+            "visibility: hidden",
+            "text-overflow",
+            "overflow: hidden",
+            "word-break",
+        ):
+            assert banned not in block, banned
+
+    def test_every_control_is_still_drawn(self, page: str) -> None:
+        """유형 버튼 4개 · 메모 · 확정이 그대로 있다 — 라벨도 순서도 그대로."""
+        body = _function_body(page, "reviewPicker")
+
+        assert 'make("button", "rv-opt", option.label)' in body
+        assert 'make("input", "control control-input rv-note")' in body
+        assert 'make("button", "control", "확정")' in body
+        assert "메모 (선택)" in body
+
+    def test_the_button_labels_come_from_the_server(self, page: str) -> None:
+        """⛔ 화면이 유형 이름을 만들거나 줄이지 않는다."""
+        body = _code_only(_function_body(page, "reviewPicker"))
+
+        assert "reviewOptions.forEach" in body
+        for banned in ("slice(", "substr", "substring", "…"):
+            assert banned not in body, banned
+
+    def test_the_history_row_is_not_affected(self, page: str, styles: str) -> None:
+        """이력 보기 · 확정 취소 줄도 `.rv-pick` 이지만 대상이 아니다.
+
+        그 줄에는 `.rv-opt` 도 `.rv-note` 도 없으므로 선택자가 닿지 않는다.
+        실측으로도 이력 보기 버튼은 전 폭에서 80×34px 그대로다.
+        """
+        block = _picker_media(styles)
+        card = _function_body(page, "reviewCard")
+
+        assert block.count(".rv-pick") == 2  # .rv-opt · .rv-note 두 줄뿐
+        assert "rv-opt" not in _function_body(page, "historyButton")
+        assert 'make("div", "rv-pick")' in card
+
+    def test_the_two_tables_are_not_affected(self, styles: str) -> None:
+        """⛔ STEP 30·31 의 두 표는 이 블록의 대상이 아니다."""
+        block = _picker_media(styles)
+
+        assert "history-table" not in block
+        assert "rv-reject" not in block
+        assert "rv-trace" not in block
+
+    def test_no_extra_request_is_made(self, page: str) -> None:
+        """§11 — 좁은 화면 대응은 CSS 다. 서버를 다시 부르지 않는다."""
+        body = _code_only(_function_body(page, "reviewPicker"))
+
+        assert "matchMedia" not in body
+        assert 'addEventListener("resize"' not in body
