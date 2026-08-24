@@ -361,10 +361,20 @@ class TestRejectionTableColumnWidths:
         assert "white-space: nowrap" in _rule(styles, ".rv-trace th, .rv-trace td")
 
     def test_only_the_free_text_cells_get_the_class(self, page: str) -> None:
+        """자유 텍스트 열에만 붙는다 — 숫자·식별 열에는 붙지 않는다.
+
+        STEP 31 에서 예산과목이 같은 자유 텍스트로 합류해 3 → 4개가 되었다.
+        이 테스트가 지키던 사실은 개수가 아니라 *어느 열이 어느 쪽인가* 이므로,
+        검사 대상을 열별로 좁힌다.
+        """
         body = _function_body(page, "renderRejectionTable")
 
-        assert body.count('make("td", "rv-text"') == 3  # 적요 · 거래처 · 사유
-        assert 'make("td", "num"' in body  # 업로드 · 원본 행 · 금액은 그대로
+        for field in ("row.description", "row.company_name", "row.reason_label"):
+            assert f'make("td", "rv-text", {field}' in body, field
+        # ⛔ 업로드 · 원본 행 · 금액은 숫자다. 줄바꿈 규칙이 붙으면 안 된다.
+        for field in ("row.batch_id", "row.row_number", "row.amount"):
+            assert f'make("td", "rv-text", {field}' not in body, field
+        assert body.count('make("td", "num"') == 3
 
     def test_the_columns_are_unchanged(self, page: str) -> None:
         """지시 — 기존 컬럼 순서와 데이터 내용은 바꾸지 않는다."""
@@ -438,11 +448,17 @@ class TestHistoryTableFileNameColumn:
             in body
         )
 
-    def test_the_rejection_table_still_wraps_three_columns(self, page: str) -> None:
-        """⛔ STEP 27 의 미적재 표 동작을 건드리지 않았다."""
+    def test_the_rejection_table_still_wraps_its_free_text(self, page: str) -> None:
+        """⛔ STEP 28(파일명)이 미적재 표의 자유 텍스트 열을 건드리지 않았다.
+
+        STEP 31 에서 예산과목이 같은 규칙에 합류했다. 이 테스트가 지키던 사실은
+        "이력 표 작업이 미적재 표의 줄바꿈을 없애지 않았다" 이므로, 개수 대신
+        STEP 27 이 정한 세 열이 그대로인지를 본다.
+        """
         body = _function_body(page, "renderRejectionTable")
 
-        assert body.count('make("td", "rv-text"') == 3
+        for field in ("row.description", "row.company_name", "row.reason_label"):
+            assert f'make("td", "rv-text", {field}' in body, field
 
     def test_both_tables_share_one_rule(self, styles: str) -> None:
         """같은 사실(긴 자유 텍스트)은 규칙 하나로 다룬다 — 복제하지 않는다."""
@@ -643,6 +659,156 @@ class TestHistoryTableOnPhoneWidths:
     def test_no_extra_request_is_made(self, page: str) -> None:
         """§11 — 좁은 화면 대응은 CSS 다. 서버를 다시 부르지 않는다."""
         body = _code_only(_function_body(page, "renderHistory"))
+
+        assert "fetch" not in body
+        assert "matchMedia" not in body
+
+
+# ----------------------------------------------------------------------
+# STEP 31 — 480px 이하의 미적재 표
+# ----------------------------------------------------------------------
+def _rejection_media(styles: str) -> str:
+    """미적재 표를 다루는 ``@media (max-width: 480px)`` 블록.
+
+    같은 조건의 블록이 둘이다 — 앞은 이력 표(STEP 30), 뒤가 미적재 표다.
+    두 표의 규칙을 한 블록에 섞지 않으려고 일부러 나눠 두었다.
+    """
+    first = _media_block(styles, "max-width: 480px")
+    rest = styles[styles.index(first) + len(first) :]
+    return _media_block(rest, "max-width: 480px")
+
+
+class TestRejectionTableOnPhoneWidths:
+    """휴대폰 세로(480px 이하)에서 미적재 표를 좁힌다.
+
+    실측 534 → 486px(480px 화면). 실제 값이 든 예산과목까지 넣으면 751 → 499px
+    이고, **768px 에서 상자를 넘기던 것(751 > 690)이 690 으로 들어옵니다.**
+
+    좁힌 방법은 세 가지뿐입니다 — 예산과목에 기존 자유 텍스트 규칙 적용,
+    헤더 줄바꿈, 칸 여백. 값은 하나도 지우거나 자르지 않았습니다.
+
+    ⚠️ 480px 에서도 내부 스크롤은 남습니다(486 > 402). 7열을 나란히 두는 한
+       더 줄일 자리가 없어(측정치는 보고서 참조) 억지로 없애지 않았습니다.
+    """
+
+    def test_the_table_is_named_so_rules_can_pick_it(self, page: str) -> None:
+        """미적재 표는 상자가 둘(업로드·검토)이라 id 로는 한쪽만 잡힌다."""
+        body = _function_body(page, "renderRejectionTable")
+
+        assert 'make("table", "rv-reject")' in body
+
+    def test_the_budget_column_shares_the_free_text_rule(self, page: str) -> None:
+        """예산과목도 자유 텍스트다 — 규칙을 새로 만들지 않고 같은 것을 쓴다.
+
+        실측: 값이 들어오면 이 열 하나가 272px 을 차지해 768px 화면에서도
+        표가 상자를 넘겼다(751 > 690).
+        """
+        body = _function_body(page, "renderRejectionTable")
+
+        assert 'make("td", "rv-text", row.budget_account || "-")' in body
+
+    def test_the_free_text_columns_all_wrap(self, page: str) -> None:
+        """② 적요·거래처·사유의 STEP 27 규칙은 그대로다(+ 예산과목)."""
+        body = _function_body(page, "renderRejectionTable")
+
+        for field in ("row.description", "row.company_name", "row.reason_label"):
+            assert f'make("td", "rv-text", {field}' in body, field
+        assert body.count('make("td", "rv-text"') == 4
+
+    def test_the_free_text_rule_itself_is_unchanged(self, styles: str) -> None:
+        """③ `min-width: 10ch` 를 낮추지 않는다 — 480px 이하에서도 그대로다."""
+        rule = _rule(styles, ".rv-trace td.rv-text")
+
+        assert "white-space: normal" in rule
+        assert "overflow-wrap: anywhere" in rule
+        assert "min-width: 10ch" in rule
+        assert "max-width: 24ch" in rule
+        assert "min-width" not in _media_block(styles, "max-width: 480px")
+
+    def test_headers_may_wrap_on_phones(self, styles: str) -> None:
+        """⑦ 헤더가 값보다 넓은 열이 있다 — 헤더**만** 줄바꿈한다."""
+        block = _rejection_media(styles)
+
+        assert ".rv-reject th { white-space: normal; }" in block
+
+    def test_padding_is_reduced_on_phones(self, styles: str) -> None:
+        """⑧ 좌우 여백 8 → 4px. 위아래 4px 은 건드리지 않는다."""
+        block = _rejection_media(styles)
+
+        assert ".rv-reject th, .rv-reject td { padding: 4px 4px; }" in block
+
+    def test_numbers_and_amounts_keep_nowrap(self, page: str, styles: str) -> None:
+        """⑥ 금액 `-113,400,000` 이 쪼개지면 읽다가 오해한다.
+
+        실측: 이 열은 줄바꿈을 허용해도 공백이 없어 폭이 1px 도 줄지 않는다.
+        얻는 것 없이 위험만 생기므로 값 셀은 손대지 않는다.
+        """
+        body = _function_body(page, "renderRejectionTable")
+
+        assert 'make("td", "num", row.batch_id === null ? "-" : "#" + row.batch_id)' in body
+        assert 'make("td", "num", String(row.row_number))' in body
+        assert "Number(row.amount).toLocaleString()" in body
+        assert "white-space: nowrap" in _rule(styles, ".rv-trace th, .rv-trace td")
+        # 좁은 화면 블록에서 `white-space` 를 받는 것은 헤더뿐이다.
+        block = _rejection_media(styles)
+        assert block.count("white-space") == 1
+        assert ".rv-reject th { white-space: normal; }" in block
+
+    def test_no_value_cell_is_reflowed_on_phones(self, styles: str) -> None:
+        """⛔ 좁은 화면 규칙이 값 셀의 줄바꿈을 새로 열지 않는다."""
+        block = _rejection_media(styles)
+
+        assert "td { white-space" not in block
+        assert "word-break" not in block
+        assert "overflow-wrap" not in block
+
+    def test_the_seven_columns_keep_their_order(self, page: str) -> None:
+        """① 열 순서와 개수는 그대로다."""
+        body = _function_body(page, "renderRejectionTable")
+
+        assert '["업로드", "원본 행", "적요", "거래처", "금액", "예산과목", "사유"]' in body
+        assert body.count('make("td"') == 7
+
+    def test_nothing_is_hidden_or_cut(self, styles: str) -> None:
+        """④·⑤·⑩ 정보를 숨겨서 좁힌 것이 아니다."""
+        block = _rejection_media(styles)
+
+        for banned in ("display: none", "text-overflow", "overflow: hidden", "visibility: hidden"):
+            assert banned not in block, banned
+
+    def test_no_value_is_shortened_in_script(self, page: str) -> None:
+        """⑪ 값을 JS 에서 자르지 않는다 — 서버가 준 그대로 넣는다."""
+        body = _code_only(_function_body(page, "renderRejectionTable"))
+
+        for banned in ("slice(", "substr", "substring", "…", "textOverflow"):
+            assert banned not in body, banned
+
+    def test_the_rule_never_reaches_the_history_table(self, styles: str) -> None:
+        """⑨·⑫ 이력 표는 이 규칙의 대상이 아니다 — 선택자가 다르다."""
+        block = _rejection_media(styles)
+
+        assert "history-table" not in block
+        assert "rv-reject" not in _media_block(styles, "max-width: 480px")
+
+    def test_the_history_table_rules_still_stand(self, styles: str, page: str) -> None:
+        """⑨ STEP 28~30 의 이력 표 규칙을 하나도 건드리지 않았다."""
+        history = _media_block(styles, "max-width: 480px")
+
+        assert "#history-table td.rv-stamp { white-space: normal; }" in history
+        assert "#history-table .control { padding: 7px 6px; }" in history
+        assert "white-space: normal" in _rule(styles, ".rv-trace td.rv-period")
+        assert 'make("td", "rv-text", item.file_name)' in _function_body(page, "renderHistory")
+
+    def test_the_phone_rules_are_scoped_to_480px(self, styles: str) -> None:
+        """⑫ 768px 결과(690/690)가 바뀌면 안 된다 — 480px 이하에만 둔다."""
+        outside = styles.replace(_media_block(styles, "max-width: 480px"), "", 1)
+        outside = outside.replace(_rejection_media(styles), "", 1)
+
+        assert "rv-reject" not in outside
+
+    def test_no_extra_request_is_made(self, page: str) -> None:
+        """§12 — 좁은 화면 대응은 CSS 다. 서버를 다시 부르지 않는다."""
+        body = _code_only(_function_body(page, "renderRejectionTable"))
 
         assert "fetch" not in body
         assert "matchMedia" not in body

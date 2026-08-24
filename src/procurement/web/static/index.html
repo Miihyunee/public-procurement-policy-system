@@ -160,6 +160,30 @@
     #history-table th, #history-table td { padding: 4px 4px; }
     #history-table .control { padding: 7px 6px; }
   }
+  /*
+    미적재 표(`table.rv-reject`)의 480px 이하 규칙. 이력 표와 **같은 방법**이다.
+
+    실측한 원인은 두 가지였다(480px, 표 534px).
+      · 예산과목 — 값이 비면 68px 이지만 실제 값(`일반운영비-공공요금및제세-
+        시설장비유지비`)이 들어오면 **272px** 로 표를 혼자 밀어낸다. 이건 폭이
+        아니라 규칙 문제라 위에서 `rv-text` 로 고쳤다(모든 폭에 적용).
+      · 헤더가 값보다 넓은 열 — `업로드`(값 `#2`)·`원본 행`(값 `152`)·
+        `예산과목`. 셋을 합쳐 182px 로 표의 34% 였다. 헤더**만** 줄바꿈한다.
+    남은 것은 칸 여백(8 → 4px)이다.
+
+    ⛔ 값 셀은 건드리지 않는다 — 금액 `-113,400,000` 은 `nowrap` 그대로다.
+       (실측: 줄바꿈을 허용해도 공백이 없어 폭이 1px 도 줄지 않는다. 즉 얻는
+       것 없이 쪼개질 위험만 생긴다.)
+    ⛔ `word-break` 를 쓰지 않는다. ⛔ `min-width: 10ch` 를 완화하지 않는다.
+    ⚠️ 480px 초과에는 적용되지 않는다 — 768px 결과(690/690)는 그대로다.
+    ⚠️ 이력 표(`#history-table`)는 이 규칙의 대상이 아니다. 선택자가 다르다.
+    ⚠️ 헤더가 줄바꿈되면 `예산과목` 이 세로로 흐르고 헤더 줄 높이가 28 → 67px
+       이 된다. 값이 아니라 제목이고, 480px 이하에서만 그렇다.
+  */
+  @media (max-width: 480px) {
+    .rv-reject th { white-space: normal; }
+    .rv-reject th, .rv-reject td { padding: 4px 4px; }
+  }
   .rv-trace th { color: var(--muted); font-weight: 600; }
   .rv-trace td.num { text-align: right; }
   .rv-keys { margin-top: 10px; }
@@ -2683,7 +2707,10 @@
       box.appendChild(make("div", "rv-key", "표시할 행이 없습니다."));
       return;
     }
-    var table = make("table");
+    // `rv-reject` 는 좁은 화면 규칙이 **이 표만** 고르기 위한 이름이다. 미적재
+    // 표는 업로드 화면과 검토 화면 두 곳에 같은 함수로 그려지므로, 상자 id 로
+    // 고르면 한쪽만 바뀌어 같은 표가 화면마다 달라진다.
+    var table = make("table", "rv-reject");
     var head = make("tr");
     // 원본 행 번호는 **파일마다 1부터** 다시 시작하므로, 어느 업로드의 몇 행인지
     // 함께 보여야 담당자가 원본을 찾을 수 있다.
@@ -2700,7 +2727,12 @@
       tr.appendChild(make("td", "rv-text", row.company_name || "-"));
       tr.appendChild(make("td", "num",
         row.amount === null ? "-" : Number(row.amount).toLocaleString()));
-      tr.appendChild(make("td", null, row.budget_account || "-"));
+      // 예산과목도 길이가 제각각인 자유 텍스트다(`일반운영비-공공요금및제세-
+      // 시설장비유지비` 처럼 40자를 넘기도 한다). 적요·거래처·사유와 **같은
+      // 규칙**을 쓴다 — 규칙을 새로 만들지 않는다.
+      // ⚠️ 실측: 이 값이 비어 있지 않으면 이 열 하나가 272px 을 차지해 768px
+      //    화면에서도 표가 상자를 넘겼다(751 > 690). 같은 규칙을 주면 690 이다.
+      tr.appendChild(make("td", "rv-text", row.budget_account || "-"));
       tr.appendChild(make("td", "rv-text", row.reason_label));
       table.appendChild(tr);
     });
