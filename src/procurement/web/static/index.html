@@ -134,6 +134,32 @@
     ⛔ 날짜 문자열을 JS 에서 가공해 줄바꿈을 심지 않는다 — 값은 그대로 둔다.
   */
   .rv-trace td.rv-period { white-space: normal; }
+  /*
+    480px 이하(휴대폰 세로)에서만 업로드 이력 표를 더 좁힌다.
+
+    실측한 원인은 "어느 한 열이 넓다" 가 아니라 **nowrap 인 일곱 열의 합**이다
+    (480px 기준 628px 중 491px). 그중 두 가지만 손대면 628 → 402px 이 된다.
+      · 업로드일시 154px — 값이 `2026-08-22 07:56:25` 라 날짜와 시각 사이에
+        **이미 공백이 있다.** 기간 열과 **같은 방법**으로 그 공백에서만 끊는다.
+      · 헤더 문구 — `설명 안 됨`(77px)·`미적재`(55px) 처럼 값(`0`·`30`)보다
+        헤더가 열 폭을 정하는 칸이 있다. 헤더도 제 공백에서만 끊게 둔다.
+    남은 20px 은 칸 여백(8 → 4px)과 상세 버튼 좌우 여백(11 → 6px)이다.
+    ⚠️ 버튼의 위아래 여백(7px)은 그대로 둔다 — 손가락으로 누르는 높이(34px)가
+       줄면 안 된다.
+
+    ⛔ 정보를 지우거나 숨겨서 줄인 것이 아니다. 열 9개·값 전부 그대로이고
+       잘림·말줄임표는 어느 폭에서도 0건이다.
+    ⛔ `overflow-wrap` · `word-break` 를 쓰지 않는다 — 날짜·시각·숫자가
+       한복판에서 쪼개지면 오히려 읽다가 오해한다.
+    ⚠️ 480px 초과(768px 포함)에는 적용되지 않는다. STEP 29 결과는 그대로다.
+    ⚠️ 미적재 표(`#upload-trace-rows`)에는 적용되지 않는다 — 이력 표만 고른다.
+  */
+  @media (max-width: 480px) {
+    #history-table td.rv-stamp { white-space: normal; }
+    #history-table th { white-space: normal; }
+    #history-table th, #history-table td { padding: 4px 4px; }
+    #history-table .control { padding: 7px 6px; }
+  }
   .rv-trace th { color: var(--muted); font-weight: 600; }
   .rv-trace td.num { text-align: right; }
   .rv-keys { margin-top: 10px; }
@@ -1623,7 +1649,10 @@
       // 파일명은 길이가 제각각인 자유 텍스트다. 미적재 표와 **같은 규칙**으로
       // 줄바꿈을 허용한다(잘라내지 않는다). 기간·일시·숫자는 nowrap 그대로다.
       tr.appendChild(make("td", "rv-text", item.file_name));
-      tr.appendChild(make("td", null, (item.uploaded_at || "").replace("T", " ").slice(0, 19)));
+      // 값을 만드는 방법은 그대로다 — 480px 이하에서 날짜와 시각 사이의 **기존
+      // 공백**에서만 줄을 바꾸기 위해 CSS 가 고를 이름만 붙인다.
+      tr.appendChild(make("td", "rv-stamp",
+        (item.uploaded_at || "").replace("T", " ").slice(0, 19)));
       // 원본 행 수를 모르는 옛 배치는 "-" 다. ⛔ 0 으로 적지 않는다.
       tr.appendChild(make("td", "num",
         item.source_rows === null ? "-" : numberFormat(item.source_rows)));

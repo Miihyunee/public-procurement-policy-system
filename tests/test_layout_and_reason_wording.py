@@ -515,3 +515,134 @@ class TestHistoryTablePeriodColumn:
 
         assert "min-width: 10ch" in rule
         assert "max-width: 24ch" in rule
+
+
+# ----------------------------------------------------------------------
+# STEP 30 — 480px 이하의 업로드 이력 표
+# ----------------------------------------------------------------------
+def _media_block(styles: str, condition: str) -> str:
+    """``@media (condition) { ... }`` 한 덩어리(중첩 중괄호 포함)."""
+    start = styles.index("@media (" + condition + ") {")
+    depth = 0
+    for index in range(start, len(styles)):
+        if styles[index] == "{":
+            depth += 1
+        elif styles[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return styles[start : index + 1]
+    raise AssertionError(f"@media ({condition}) 의 끝을 찾지 못했습니다")
+
+
+class TestHistoryTableOnPhoneWidths:
+    """휴대폰 세로(480px 이하)에서만 이력 표를 더 좁힌다.
+
+    실측 628 → 402px(480px 화면, 상자 402px) — 내부 가로 스크롤이 사라집니다.
+    좁힌 방법은 **줄바꿈과 여백**뿐입니다. 열 9개·값 전부 그대로이고 잘린 칸과
+    말줄임표는 어느 폭에서도 0건입니다.
+
+    ⚠️ 360px 에서는 표 401px 로 상자(282px)에 들어가지 않아 내부 스크롤이
+       남습니다. 9개 열을 나란히 두는 한 더 줄일 자리가 없어(측정치는 보고서
+       참조) 이번에는 억지로 없애지 않았습니다.
+    """
+
+    def test_the_change_is_scoped_to_phone_widths(self, styles: str) -> None:
+        """① 768px 은 STEP 29 결과 그대로다 — 480px 이하에서만 바뀐다."""
+        block = _media_block(styles, "max-width: 480px")
+
+        assert "#history-table" in block
+
+    def test_wider_screens_keep_the_shared_table_rules(self, styles: str) -> None:
+        """⑫ 기본 규칙(모든 폭)에는 이력 표 전용 예외가 없다."""
+        outside = styles.replace(_media_block(styles, "max-width: 480px"), "")
+
+        assert "#history-table" not in outside
+
+    def test_the_upload_stamp_may_wrap_on_phones(self, styles: str) -> None:
+        """`2026-08-22 07:56:25` 은 날짜와 시각 사이의 기존 공백에서만 끊긴다."""
+        block = _media_block(styles, "max-width: 480px")
+
+        assert "#history-table td.rv-stamp { white-space: normal; }" in block
+
+    def test_the_stamp_is_never_broken_mid_value(self, styles: str) -> None:
+        """⛔ 날짜·시각이 한복판에서 쪼개지면 읽다가 오해한다."""
+        block = _media_block(styles, "max-width: 480px")
+
+        assert "overflow-wrap" not in block
+        assert "word-break" not in block
+
+    def test_the_stamp_value_is_built_as_before(self, page: str) -> None:
+        """④·⑧ 값을 만드는 방법은 그대로다 — 클래스 이름만 붙었다."""
+        body = _function_body(page, "renderHistory")
+
+        assert 'make("td", "rv-stamp",' in body
+        assert '(item.uploaded_at || "").replace("T", " ").slice(0, 19))' in body
+
+    def test_headers_may_wrap_on_phones(self, styles: str) -> None:
+        """`설명 안 됨`(77px)처럼 값보다 헤더가 열 폭을 정하는 칸이 있다."""
+        block = _media_block(styles, "max-width: 480px")
+
+        assert "#history-table th { white-space: normal; }" in block
+
+    def test_the_detail_button_keeps_its_touch_height(self, styles: str) -> None:
+        """좌우 여백만 줄인다 — 위아래 7px 은 그대로라 높이 34px 이 유지된다."""
+        block = _media_block(styles, "max-width: 480px")
+
+        assert "#history-table .control { padding: 7px 6px; }" in block
+
+    def test_nothing_is_hidden_to_win_space(self, styles: str) -> None:
+        """⑩·⑪ 정보를 숨겨서 좁힌 것이 아니다."""
+        block = _media_block(styles, "max-width: 480px")
+
+        for banned in ("display: none", "text-overflow", "overflow: hidden", "visibility: hidden"):
+            assert banned not in block, banned
+
+    def test_all_nine_columns_are_still_drawn(self, page: str) -> None:
+        """⑤ 열을 지우거나 합치지 않았다."""
+        body = _function_body(page, "renderHistory")
+
+        assert (
+            '["기간", "파일", "업로드일시", "원본", "적재", "미적재", "설명 안 됨", "상태", ""]'
+            in body
+        )
+        assert body.count('make("td"') == 9
+
+    def test_no_value_is_shortened(self, page: str) -> None:
+        """⑥·⑦·⑧·⑨ 파일명·기간·숫자·상태를 화면이 줄이지 않는다."""
+        body = _function_body(page, "renderHistory")
+
+        assert 'make("td", "rv-text", item.file_name)' in body
+        assert 'item.period_start + " ~ " + item.period_end)' in body
+        assert 'make("td", "num", numberFormat(item.stored))' in body
+        assert 'item.is_current ? "현재" : "대체됨"' in body
+        for banned in ("…", "textOverflow", "maxLength"):
+            assert banned not in body, banned
+
+    def test_step_29_period_rule_is_untouched(self, styles: str) -> None:
+        """⑦ STEP 29 규칙을 다시 설계하지 않았다."""
+        rule = _rule(styles, ".rv-trace td.rv-period")
+
+        assert "white-space: normal" in rule
+        assert "overflow-wrap" not in rule
+
+    def test_step_28_file_name_rule_is_untouched(self, styles: str) -> None:
+        """⑥ STEP 28 규칙도 그대로다 — 좁은 화면에서도 완화하지 않는다."""
+        rule = _rule(styles, ".rv-trace td.rv-text")
+
+        assert "min-width: 10ch" in rule
+        assert "max-width: 24ch" in rule
+        assert "min-width: 10ch" not in _media_block(styles, "max-width: 480px")
+
+    def test_the_rejection_table_is_not_touched(self, styles: str) -> None:
+        """⑫ 미적재 표(`#upload-trace-rows`)는 이 블록의 대상이 아니다."""
+        block = _media_block(styles, "max-width: 480px")
+
+        assert "upload-trace-rows" not in block
+        assert "white-space: nowrap" in _rule(styles, ".rv-trace th, .rv-trace td")
+
+    def test_no_extra_request_is_made(self, page: str) -> None:
+        """§11 — 좁은 화면 대응은 CSS 다. 서버를 다시 부르지 않는다."""
+        body = _code_only(_function_body(page, "renderHistory"))
+
+        assert "fetch" not in body
+        assert "matchMedia" not in body
