@@ -404,9 +404,15 @@ class TestHistoryTableFileNameColumn:
         assert body.count('"rv-text"') == 1
 
     def test_dates_and_numbers_keep_their_cells(self, page: str) -> None:
+        """기간·숫자 값은 여전히 각자의 칸에 **가공 없이** 들어간다.
+
+        STEP 29 에서 기간 칸에 ``rv-period`` 클래스가 붙었다. 이 테스트가
+        지키던 사실은 클래스 이름이 아니라 *값이 그대로라는 것*이므로,
+        검사 대상을 셀에 들어가는 표현식으로 좁힌다.
+        """
         body = _function_body(page, "renderHistory")
 
-        assert 'make("td", null, item.period_start + " ~ " + item.period_end)' in body
+        assert 'item.period_start + " ~ " + item.period_end)' in body
         assert 'make("td", "num", numberFormat(item.stored))' in body
 
     def test_the_file_name_is_passed_through_whole(self, page: str) -> None:
@@ -441,3 +447,71 @@ class TestHistoryTableFileNameColumn:
     def test_both_tables_share_one_rule(self, styles: str) -> None:
         """같은 사실(긴 자유 텍스트)은 규칙 하나로 다룬다 — 복제하지 않는다."""
         assert styles.count(".rv-trace td.rv-text {") == 1
+
+
+# ----------------------------------------------------------------------
+# STEP 29 — 업로드 이력 표의 기간 열
+# ----------------------------------------------------------------------
+class TestHistoryTablePeriodColumn:
+    """기간 열만 추가로 줄바꿈해 768px 화면의 내부 스크롤을 없앤다.
+
+    실측 760 → 690px(768px 화면, 상자 690px) — 표가 상자 안에 들어와
+    가로 스크롤이 사라집니다. 끊기는 자리는 ``~`` 앞뒤의 **기존 공백**뿐이라
+    날짜 하나(``2026-04-01``)는 어느 폭에서도 쪼개지지 않습니다.
+    """
+
+    def test_the_period_cell_may_wrap(self, styles: str) -> None:
+        """① 기간 열에만 줄바꿈 허용 규칙이 붙는다."""
+        rule = _rule(styles, ".rv-trace td.rv-period")
+
+        assert "white-space: normal" in rule
+
+    def test_the_period_text_is_not_reshaped(self, page: str) -> None:
+        """② 날짜 문자열을 화면이 가공하지 않는다 — 서버 값 그대로다."""
+        body = _function_body(page, "renderHistory")
+        cell = [line for line in body.splitlines() if "item.period_start" in line][0]
+
+        assert 'item.period_start + " ~ " + item.period_end' in cell
+        for banned in ("slice(", "substr", "substring", "replace(", "split(", "<wbr", "&shy"):
+            assert banned not in cell, banned
+
+    def test_the_period_cell_does_not_break_anywhere(self, styles: str) -> None:
+        """③ ``overflow-wrap`` 을 쓰면 날짜 한복판에서 끊긴다 — 쓰지 않는다."""
+        rule = _rule(styles, ".rv-trace td.rv-period")
+
+        assert "overflow-wrap" not in rule
+
+    def test_the_period_cell_does_not_break_words(self, styles: str) -> None:
+        """④ ``word-break`` 도 같은 이유로 쓰지 않는다."""
+        rule = _rule(styles, ".rv-trace td.rv-period")
+
+        assert "word-break" not in rule
+
+    def test_other_columns_still_do_not_wrap(self, page: str, styles: str) -> None:
+        """⑤ 일시·숫자·상태·버튼 열은 ``nowrap`` 그대로다."""
+        assert "white-space: nowrap" in _rule(styles, ".rv-trace td")
+
+        body = _function_body(page, "renderHistory")
+        assert body.count('"rv-period"') == 1
+
+    def test_the_file_name_column_is_untouched(self, page: str, styles: str) -> None:
+        """⑥ STEP 28 의 파일명 열 규칙은 그대로다."""
+        assert 'make("td", "rv-text", item.file_name)' in _function_body(page, "renderHistory")
+        assert "overflow-wrap: anywhere" in _rule(styles, ".rv-trace td.rv-text")
+
+    def test_the_columns_are_unchanged(self, page: str) -> None:
+        """⑦ 9개 열의 순서와 개수는 그대로다."""
+        body = _function_body(page, "renderHistory")
+
+        assert (
+            '["기간", "파일", "업로드일시", "원본", "적재", "미적재", "설명 안 됨", "상태", ""]'
+            in body
+        )
+        assert body.count('make("td"') == 9
+
+    def test_the_rejection_table_keeps_step_27_widths(self, styles: str) -> None:
+        """⑧ 미적재 표의 STEP 27 폭 규칙을 건드리지 않았다."""
+        rule = _rule(styles, ".rv-trace td.rv-text")
+
+        assert "min-width: 10ch" in rule
+        assert "max-width: 24ch" in rule

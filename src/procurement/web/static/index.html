@@ -126,6 +126,14 @@
   .rv-trace td.rv-text {
     white-space: normal; overflow-wrap: anywhere; min-width: 10ch; max-width: 24ch;
   }
+  /*
+    기간 열(`2026-04-01 ~ 2026-04-30`)만 줄바꿈을 허용한다. 이것까지 열어야
+    768px 화면에서 표가 상자 안에 들어온다(실측 760 → 690px).
+    ⚠️ `overflow-wrap` · `word-break` 를 **쓰지 않는다.** 그래서 끊기는 자리는
+       `~` 앞뒤의 기존 공백뿐이고, 날짜 하나(2026-04-01)는 절대 쪼개지지 않는다.
+    ⛔ 날짜 문자열을 JS 에서 가공해 줄바꿈을 심지 않는다 — 값은 그대로 둔다.
+  */
+  .rv-trace td.rv-period { white-space: normal; }
   .rv-trace th { color: var(--muted); font-weight: 600; }
   .rv-trace td.num { text-align: right; }
   .rv-keys { margin-top: 10px; }
@@ -1610,7 +1618,8 @@
 
     payload.items.forEach(function (item) {
       var tr = make("tr");
-      tr.appendChild(make("td", null, item.period_start + " ~ " + item.period_end));
+      // 값은 그대로 이어 붙인다 — 줄바꿈은 CSS 가 `~` 앞뒤 공백에서만 한다.
+      tr.appendChild(make("td", "rv-period", item.period_start + " ~ " + item.period_end));
       // 파일명은 길이가 제각각인 자유 텍스트다. 미적재 표와 **같은 규칙**으로
       // 줄바꿈을 허용한다(잘라내지 않는다). 기간·일시·숫자는 nowrap 그대로다.
       tr.appendChild(make("td", "rv-text", item.file_name));
