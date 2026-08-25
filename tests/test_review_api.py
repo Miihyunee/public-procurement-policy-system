@@ -147,13 +147,20 @@ class TestResponseSeparatesSourceAnalysisReview:
         "정확히 네 개" 대신 **각 블록이 제자리에 있고 남을 오염시키지
         않는다**를 검사한다. 참고 근거가 ``analysis`` 안에 들어가면 "후보" 로,
         ``review`` 안에 들어가면 "확정값" 으로 오인된다.
+
+        변경 사유(STEP 41): 거래처명 기준 과거 확정 이력 ``company_labels``
+        블록이 추가되었다. 같은 이유로 **개수를 세지 않고**, 이 블록이
+        분석·확정·적요 이력 어디에도 섞이지 않는다는 사실을 검사한다.
+        거래처 이력이 적요 이력(``past_labels``)과 섞이면 어느 축의 사실인지
+        알 수 없게 되고, ``review`` 안에 들어가면 확정값으로 오인된다.
         """
         purchase_id = _purchase(db_path)
         _analyze(db_path, purchase_id, (SERVICE, "0.72"), (CONSTRUCTION, "0.68"))
 
         body = client.get(f"/reviews/{purchase_id}").json()
 
-        assert {"source", "analysis", "review", "past_labels", "description_hints"} == set(body)
+        blocks = {"source", "analysis", "review", "past_labels", "description_hints"}
+        assert blocks <= set(body)
         # 과거 이력은 확정 블록을 오염시키지 않는다
         assert body["review"]["final_purchase_type"] is None
         # ⛔ 참고 근거는 분석·확정 어느 쪽에도 섞이지 않는다
@@ -163,6 +170,13 @@ class TestResponseSeparatesSourceAnalysisReview:
         # ⛔ 참고 근거 자체에 유형·점수가 없다 — 후보로 읽히면 안 된다
         for hint in body["description_hints"]:
             assert set(hint) == {"keyword", "text"}
+        # ⛔ 거래처 이력도 남의 블록에 섞이지 않는다 (STEP 41)
+        assert "company_labels" in body
+        for other in ("analysis", "review", "past_labels"):
+            assert "company_labels" not in body[other]
+        # ⛔ 두 이력 블록은 서로를 품지 않는다 — 축이 섞이면 안 된다
+        assert "past_labels" not in body["company_labels"]
+        assert "company_name" not in body["past_labels"]
 
     def test_source_is_the_original(self, client: TestClient, db_path: Path) -> None:
         purchase_id = _purchase(db_path)

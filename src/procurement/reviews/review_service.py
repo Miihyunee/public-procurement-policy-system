@@ -45,6 +45,7 @@ from procurement.models.review import (
     ReviewHistoryEntry,
     ReviewProgress,
 )
+from procurement.reviews.company_labels import CompanyLabelIndex
 from procurement.reviews.past_labels import (
     EMPTY_SUMMARY,
     MIXED_TYPES,
@@ -110,11 +111,15 @@ class ReviewTarget:
         review: DB-2 검토 상태(분석 결과 + 담당자 확정).
         past_labels: 같은 적요를 **과거에 어떻게 확정했는지**. 참고 정보이며
             ⛔ 자동 확정에 쓰지 않습니다.
+        company_labels: 같은 **거래처**를 과거에 어떻게 확정했는지. 적요
+            이력과 **같은 기준**으로 세며(확정 + 판단 보류 제외), 묶는 키만
+            거래처명입니다. ⛔ 자동 확정에 쓰지 않습니다.
     """
 
     purchase: Purchase
     review: PurchaseReview
     past_labels: PastLabelSummary = EMPTY_SUMMARY
+    company_labels: PastLabelSummary = EMPTY_SUMMARY
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -333,6 +338,9 @@ class ReviewService:
         # 지문이 그대로면 다시 만들지 않는다 (:meth:`_past_label_index`).
         self._index: PastLabelIndex | None = None
         self._index_fingerprint: tuple[int, str | None] | None = None
+        # 거래처 이력 색인. 적요 색인과 **같은 지문**으로 다시 만든다.
+        self._company_index: CompanyLabelIndex | None = None
+        self._company_fingerprint: tuple[int, str | None] | None = None
 
     # ------------------------------------------------------------------
     # 조회
@@ -379,6 +387,8 @@ class ReviewService:
         stored = self._review_repository.find_all()
         reviews = {review.purchase_id: review for review in stored}
         index = self._past_label_index(purchases, stored)
+        # 거래처 이력도 **같은 목록**으로 만든다 — 재조회하지 않는다.
+        company_index = self._company_label_index(purchases, stored)
 
         targets: list[ReviewTarget] = []
         for purchase in purchases:
@@ -396,6 +406,7 @@ class ReviewService:
                     purchase=purchase,
                     review=review,
                     past_labels=index.summary_for(purchase.description),
+                    company_labels=company_index.summary_for(purchase.company_name),
                 )
             )
 
@@ -436,6 +447,8 @@ class ReviewService:
         stored = self._review_repository.find_all()
         reviews = {review.purchase_id: review for review in stored}
         index = self._past_label_index(purchases, stored)
+        # 거래처 이력도 **같은 목록**으로 만든다 — 재조회하지 않는다.
+        company_index = self._company_label_index(purchases, stored)
 
         targets: list[ReviewTarget] = []
         for purchase in purchases:
@@ -448,6 +461,7 @@ class ReviewService:
                 purchase=purchase,
                 review=review,
                 past_labels=index.summary_for(purchase.description),
+                company_labels=company_index.summary_for(purchase.company_name),
             )
             if _keeps(target, query):
                 targets.append(target)
@@ -473,7 +487,10 @@ class ReviewService:
             purchase_id=purchase_id
         )
         return ReviewTarget(
-            purchase=purchase, review=review, past_labels=self._past_labels_for(purchase)
+            purchase=purchase,
+            review=review,
+            past_labels=self._past_labels_for(purchase),
+            company_labels=self._company_labels_for(purchase),
         )
 
     def history(self, purchase_id: int) -> list[ReviewHistoryEntry]:
@@ -576,7 +593,10 @@ class ReviewService:
             review_note=review_note,
         )
         return ReviewTarget(
-            purchase=purchase, review=review, past_labels=self._past_labels_for(purchase)
+            purchase=purchase,
+            review=review,
+            past_labels=self._past_labels_for(purchase),
+            company_labels=self._company_labels_for(purchase),
         )
 
     def reopen(
@@ -608,7 +628,10 @@ class ReviewService:
             )
         review = self._review_repository.reopen(purchase_id, reopened_by=reopened_by, note=note)
         return ReviewTarget(
-            purchase=purchase, review=review, past_labels=self._past_labels_for(purchase)
+            purchase=purchase,
+            review=review,
+            past_labels=self._past_labels_for(purchase),
+            company_labels=self._company_labels_for(purchase),
         )
 
     def analyze(self, purchase_id: int) -> ReviewTarget:
@@ -635,7 +658,10 @@ class ReviewService:
         result = self._classifier.classify(purchase.description)
         review = self._review_repository.save_analysis(purchase_id, result)
         return ReviewTarget(
-            purchase=purchase, review=review, past_labels=self._past_labels_for(purchase)
+            purchase=purchase,
+            review=review,
+            past_labels=self._past_labels_for(purchase),
+            company_labels=self._company_labels_for(purchase),
         )
 
     def analyze_all(self, period: PeriodFilter | None = None) -> int:
@@ -700,6 +726,38 @@ class ReviewService:
         self._index_fingerprint = fingerprint
         return self._index
 
+    def _company_label_index(
+        self,
+        purchases: Sequence[Purchase] | None = None,
+        reviews: Sequence[PurchaseReview] | None = None,
+    ) -> CompanyLabelIndex:
+        """거래처 이력 색인. **적요 색인과 같은 방식**으로 만들고 캐시합니다.
+
+        모집단·확정 기준·갱신 판단(``confirmed_fingerprint``)이 모두
+        :meth:`_past_label_index` 와 같습니다. 두 블록이 다른 기준으로 세면
+        화면의 숫자가 서로 어긋납니다.
+
+        Args:
+            purchases: 이미 읽어 둔 구매 목록. 있으면 재조회하지 않습니다.
+            reviews: 이미 읽어 둔 검토 목록. 〃
+
+        Returns:
+            :class:`~procurement.reviews.company_labels.CompanyLabelIndex`.
+        """
+        fingerprint = self._review_repository.confirmed_fingerprint()
+        if self._company_index is not None and self._company_fingerprint == fingerprint:
+            return self._company_index
+
+        rows = (
+            list(purchases)
+            if purchases is not None
+            else self._purchase_repository.find_for_calculation(None)
+        )
+        states = list(reviews) if reviews is not None else self._review_repository.find_all()
+        self._company_index = CompanyLabelIndex(rows, states)
+        self._company_fingerprint = fingerprint
+        return self._company_index
+
     def _past_labels_for(self, purchase: Purchase) -> PastLabelSummary:
         """한 건에 대한 과거 확정 이력.
 
@@ -707,6 +765,15 @@ class ReviewService:
         용역 3건으로 확정됨" 을 그대로 보여주는 것이 목적이기 때문입니다.
         """
         return self._past_label_index().summary_for(purchase.description)
+
+    def _company_labels_for(self, purchase: Purchase) -> PastLabelSummary:
+        """한 건에 대한 **거래처** 과거 확정 이력.
+
+        ⛔ 자기 자신의 확정도 이력에 포함됩니다 — :meth:`_past_labels_for`
+        와 **같은 규칙**입니다. 한쪽만 제외하면 두 블록의 숫자가 서로
+        어긋나 담당자가 어느 쪽을 믿어야 할지 알 수 없게 됩니다.
+        """
+        return self._company_label_index().summary_for(purchase.company_name)
 
     def _require_purchase(self, purchase_id: int) -> Purchase:
         """구매를 조회하고 없으면 예외를 냅니다."""

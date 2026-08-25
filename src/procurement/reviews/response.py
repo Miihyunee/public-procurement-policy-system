@@ -245,6 +245,50 @@ class PastLabelsResponseModel(BaseModel):
         return str(value)
 
 
+class CompanyLabelsResponseModel(BaseModel):
+    """같은 **거래처**의 과거 확정 이력 — 담당자 판단을 돕는 참고 정보.
+
+    고객이 *"실제 계약했던 업체명을 검색해서 공사 여부를 판단하기도 한다"* 고
+    답했습니다(2026-08-25). 그 작업을 화면에서 볼 수 있게 한 것입니다.
+
+    .. warning::
+        🔴 **판정이 아닙니다.** 과거 기록을 세어 보여줄 뿐이며, "이 업체는
+        공사업체다" 같은 결론을 말하지 않습니다. 확정값을 미리 채우지도
+        않습니다.
+
+        ⛔ 그래서 ``dominant_type`` · ``score`` · ``rank`` ·
+        ``recommended_type`` 필드가 **의도적으로 없습니다.** 적요 이력
+        (:class:`PastLabelsResponseModel`)에 있는 "최다 유형" 도 여기서는
+        빼 두었습니다 — 거래처 축에서는 그것이 "이 업체 = 이 유형" 으로
+        읽히기 쉽기 때문입니다.
+
+    .. warning::
+        ⚠️ **거래처명이 정확히 같은 건만 셉니다.** 정규화 규칙이 없어
+        새로 만들지 않았습니다. 표기가 갈리면 이력이 나뉘고, 이름이 같고
+        사업자번호가 다르면 합쳐집니다 —
+        :mod:`~procurement.reviews.company_labels` 참조.
+
+    Attributes:
+        company_name: 이 이력을 센 기준이 된 거래처명(저장된 값 그대로).
+        labels: 유형별 건수(내림차순). 이력이 없으면 빈 목록.
+        total: 과거 확정 건수 합계.
+        type_count: 과거에 붙은 서로 다른 유형 수.
+        has_conflict: 같은 거래처가 여러 유형으로 확정된 적이 있는가.
+            **먼저 볼 것을 권하는 표시**이며 자동 판정에 쓰지 않습니다.
+        consistency: ``NO_HISTORY`` / ``SINGLE_TYPE`` / ``MIXED_TYPES``.
+            **구조적 구분**이며 점수를 잘라 만든 등급이 아닙니다.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    company_name: str
+    labels: list[PastLabelResponseModel]
+    total: int
+    type_count: int
+    has_conflict: bool
+    consistency: str
+
+
 class DescriptionHintResponseModel(BaseModel):
     """적요에서 발견된 낱말 하나 — **참고 근거**입니다.
 
@@ -280,6 +324,9 @@ class ReviewItemResponseModel(BaseModel):
         analysis: 자동 분석 결과.
         review: 담당자 확정 결과.
         past_labels: 같은 적요의 과거 확정 이력(참고).
+        company_labels: 같은 **거래처**의 과거 확정 이력(참고).
+            ⛔ 적요 이력(``past_labels``)과 **다른 블록**입니다 — 섞이면
+            어느 축의 이력인지 알 수 없게 됩니다.
         description_hints: 적요에서 발견된 낱말들 — **참고 근거**.
             ⛔ 판정이 아니며 비어 있을 수 있습니다. 기존 화면이 이 필드를
             몰라도 동작하도록 **기본값을 둡니다**(하위 호환).
@@ -291,6 +338,7 @@ class ReviewItemResponseModel(BaseModel):
     analysis: AnalysisResponseModel
     review: ReviewStateResponseModel
     past_labels: PastLabelsResponseModel
+    company_labels: CompanyLabelsResponseModel
     description_hints: list[DescriptionHintResponseModel] = []
 
     @classmethod
@@ -316,6 +364,7 @@ class ReviewItemResponseModel(BaseModel):
             analysis=_analysis_of(review),
             review=_review_state_of(review),
             past_labels=_past_labels_of(target.past_labels, review.top_candidate),
+            company_labels=_company_labels_of(target.company_labels, purchase.company_name),
             # ⛔ 원본 적요만 보고 만든다. 확정값·분석 결과를 읽지 않으므로
             #    담당자가 무엇을 골랐든 결과가 달라지지 않는다.
             description_hints=[
@@ -581,6 +630,27 @@ def _past_labels_of(summary: PastLabelSummary, top_candidate: object) -> PastLab
         dominant_type=summary.dominant.purchase_type if summary.dominant else None,
         dominant_label=summary.dominant.label if summary.dominant else None,
         dominant_ratio=summary.dominant_ratio,
+        consistency=summary.consistency,
+    )
+
+
+def _company_labels_of(summary: PastLabelSummary, company_name: str) -> CompanyLabelsResponseModel:
+    """거래처 과거 확정 이력을 응답 모델로 변환합니다.
+
+    ⛔ 적요 이력과 달리 **최다 유형·후보 비교를 담지 않습니다** — 거래처
+    축에서는 그것이 판정으로 읽히기 쉽기 때문입니다.
+    """
+    return CompanyLabelsResponseModel(
+        company_name=company_name,
+        labels=[
+            PastLabelResponseModel(
+                purchase_type=label.purchase_type, label=label.label, count=label.count
+            )
+            for label in summary.labels
+        ],
+        total=summary.total,
+        type_count=summary.type_count,
+        has_conflict=summary.has_conflict,
         consistency=summary.consistency,
     )
 
