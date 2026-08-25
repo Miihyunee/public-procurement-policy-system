@@ -549,6 +549,23 @@
         <button id="unmatched-next" class="control" type="button"
                 aria-label="미매칭 기업 다음 쪽">다음 쪽 →</button>
       </div>
+
+      <!--
+        재매칭 — 데이터를 바꾸는 유일한 조작이다. ⛔ 확인창을 먼저 띄운다.
+        ⛔ 기업 등록 버튼을 두지 않는다 — 등록 기능 자체가 아직 없다.
+      -->
+      <div class="upload-actions" style="margin-top:12px">
+        <button id="unmatched-rematch" class="control" type="button"
+                aria-label="미매칭 구매를 기업정보와 다시 연결">기업정보와 다시 연결</button>
+        <span class="card-sub">기업정보가 등록된 경우에만 연결됩니다</span>
+      </div>
+      <div id="rematch-result" class="notice" hidden></div>
+
+      <!-- 재매칭 확인 — ⛔ 확인 전에는 아무것도 바뀌지 않는다 -->
+      <div id="rematch-modal" class="rv-modal" role="alertdialog" aria-modal="true"
+           aria-label="재매칭 확인" hidden>
+        <div id="rematch-box" class="rv-modal-box"></div>
+      </div>
     </section>
   </div>
 
@@ -1790,7 +1807,101 @@
     loadUnmatched();
   }
 
+  // ------------------------------------------------------------------
+  // 재매칭 (STEP 39)
+  //
+  // ⛔ 데이터를 바꾸는 조작이다. 기존 확정 취소와 **같은 확인창 패턴**을 쓴다 —
+  //    확인 전에는 요청을 보내지 않는다.
+  // ⛔ 기업정보를 만들지 않는다. 등록된 기업이 있는 건만 연결된다.
+  // ⛔ 이미 연결된 구매는 건드리지 않는다(서버가 미매칭만 순회한다).
+  // ------------------------------------------------------------------
+
+  var rematchInFlight = false;
+
+  function askRematch() {
+    rememberFocus();
+    var box = el("rematch-box");
+    clear(box);
+
+    var head = make("div", "rv-modal-head");
+    head.appendChild(make("h3", "card-title", "기업정보와 다시 연결할까요?"));
+    box.appendChild(head);
+
+    box.appendChild(make("p", "card-sub",
+      "사업자등록번호가 같은 기업정보가 등록되어 있는 경우에만 연결됩니다. "
+      + "기업정보가 없는 구매는 그대로 미매칭으로 남습니다."));
+    box.appendChild(make("p", "card-sub",
+      "이미 연결된 구매는 건드리지 않습니다. 여러 번 실행해도 안전합니다."));
+
+    var actions = make("div", "rv-pick");
+    var cancel = make("button", "control", "취소");
+    cancel.type = "button";
+    cancel.addEventListener("click", closeRematch);
+
+    var ok = make("button", "control rv-danger", "다시 연결");
+    ok.type = "button";
+    ok.addEventListener("click", function () { runRematch(ok); });
+
+    actions.appendChild(cancel);
+    actions.appendChild(ok);
+    box.appendChild(actions);
+
+    el("rematch-modal").hidden = false;
+    cancel.focus();   // 기본 포커스는 **안전한 쪽**(취소)에 둔다
+  }
+
+  function closeRematch() {
+    el("rematch-modal").hidden = true;
+    restoreFocus();
+  }
+
+  /** 확인 후에만 요청을 보낸다. 두 번 겹쳐 보내지 않는다. */
+  function runRematch(button) {
+    if (rematchInFlight) { return; }
+    rematchInFlight = true;
+    button.disabled = true;
+    unmatchedError("");
+
+    fetch("/purchases/rematch", { method: "POST" }).then(function (response) {
+      if (!response.ok) { throw httpError(response); }
+      return response.json();
+    }).then(function (result) {
+      closeRematch();
+      // 결과 문구는 **서버가 준 것을 그대로** 쓴다 — 화면이 판단하지 않는다.
+      var node = el("rematch-result");
+      text(node, result.notice);
+      node.hidden = false;
+      // 목록과 적재 현황 숫자가 함께 바뀌었다.
+      reloadUnmatchedFromFirstPage();
+      load();
+    }).catch(function (error) {
+      // ⛔ 실패했으면 성공처럼 보이면 안 된다 — 화면 상태를 그대로 둔다.
+      unmatchedError(failureMessage(error, "기업정보와 다시 연결하지 못했습니다"));
+      button.disabled = false;
+    }).finally(function () {
+      rematchInFlight = false;
+    });
+  }
+
+  function rematchIsOpen() {
+    return !el("rematch-modal").hidden;
+  }
+
   function initUnmatched() {
+    el("unmatched-rematch").addEventListener("click", askRematch);
+    el("rematch-modal").addEventListener("click", function (event) {
+      // 바깥을 눌러 닫는 것은 **취소** 다 — 재매칭이 실행되지 않는다.
+      if (event.target === el("rematch-modal")) { closeRematch(); }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.ctrlKey || event.metaKey || event.altKey) { return; }
+      if (event.key === "Escape" && rematchIsOpen()) {
+        closeRematch();
+        event.preventDefault();
+        return;
+      }
+      if (rematchIsOpen() && event.key === "Tab") { trapTab(event, "rematch-modal"); }
+    });
     ["unmatched-sort", "unmatched-direction"].forEach(function (id) {
       el(id).addEventListener("change", reloadUnmatchedFromFirstPage);
     });

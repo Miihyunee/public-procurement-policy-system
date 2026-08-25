@@ -46,6 +46,7 @@ from procurement.admin import (
     build_admin_token_guard,
 )
 from procurement.api import DashboardApiService, DashboardResponseModel
+from procurement.api.rematch_response import RematchResponseModel
 from procurement.api.status_api import DataStatusApiService
 from procurement.api.status_response import DataStatusResponseModel
 from procurement.api.unmatched_response import UnmatchedPageResponseModel
@@ -101,6 +102,7 @@ from procurement.importers.rejection_query import (
     RejectionQuery,
     RejectionQueryError,
 )
+from procurement.importers.rematch_service import RematchService
 from procurement.importers.trace_response import (
     BatchHistoryListResponseModel,
     BatchHistoryResponseModel,
@@ -228,6 +230,32 @@ def build_unmatched_service(db_path: str | Path | None = None) -> UnmatchedCompa
     """
     path: str | Path = db_path if db_path is not None else settings.db_file
     return UnmatchedCompanyService(PurchaseRepository(path))
+
+
+def build_rematch_service(db_path: str | Path | None = None) -> RematchService:
+    """재매칭 서비스를 조립합니다(composition root).
+
+    ::
+
+        RematchService → PurchaseImporter.rematch() → CompanyMatcher
+
+    ⚠️ **기존 적재 계층을 그대로 재사용합니다.** 재매칭 전용 연결 로직을
+    만들지 않으므로, 업로드 시점의 연결과 나중 재매칭의 결과가 갈라지지
+    않습니다.
+
+    ⛔ 기업 저장소는 :class:`PurchaseImporter` 안에서 **조회에만** 쓰이며,
+    서비스 자신은 주입받지 않으므로 기업을 만들 수 없습니다.
+
+    Args:
+        db_path: 사용할 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        조립된 :class:`RematchService`.
+    """
+    path: str | Path = db_path if db_path is not None else settings.db_file
+    purchase_repo = PurchaseRepository(path)
+    importer = PurchaseImporter(purchase_repo, CompanyRepository(path))
+    return RematchService(importer, purchase_repo)
 
 
 def build_dashboard_api(db_path: str | Path | None = None) -> DashboardApiService:
@@ -503,6 +531,7 @@ def create_app(
     )
     data_status_api = build_data_status_api(db_path, data_mode, date_field)
     unmatched_service = build_unmatched_service(db_path)
+    rematch_service = build_rematch_service(db_path)
     thresholds = parse_thresholds(settings.DASHBOARD_ACHIEVEMENT_DISPLAY_THRESHOLDS)
     token = admin_token if admin_token is not None else settings.ADMIN_API_TOKEN
     require_admin_token = build_admin_token_guard(token)
@@ -610,6 +639,34 @@ def create_app(
             page_size=page_size,
         )
         return UnmatchedPageResponseModel.from_page(unmatched_service.search(query))
+
+    @app.post(
+        "/purchases/rematch",
+        response_model=RematchResponseModel,
+        summary="미매칭 구매를 기업정보와 다시 연결",
+        tags=["purchases"],
+    )
+    def rematch_purchases() -> RematchResponseModel:
+        """기업정보가 없어 연결되지 않았던 구매를 다시 연결합니다.
+
+        구매데이터가 먼저 들어오고 기업정보가 나중에 확보되는 것이 이 시스템의
+        정상 흐름입니다(``PURCHASE_IMPORT_DESIGN.md`` §6.3 "경우 B"). 기업정보를
+        등록한 뒤 이 기능을 실행하면 사업자등록번호가 같은 구매가 연결됩니다.
+
+        ⛔ **기업정보를 만들지 않습니다.** 등록된 기업이 있는 건만 연결되고,
+        없는 건은 그대로 미매칭으로 남습니다.
+
+        ⛔ **연결 규칙을 바꾸지 않습니다.** 사업자등록번호 완전 일치라는 기존
+        규칙을 그대로 씁니다.
+
+        ⛔ **이미 연결된 구매를 건드리지 않습니다.** 미매칭 건만 대상이므로 몇
+        번을 실행해도 기존 연결이 바뀌거나 끊기지 않습니다(**멱등**).
+
+        ⚠️ 응답에 "오류 건수" 가 없습니다. 기존 연결 계층이 실패 사유를 구분해
+        주지 않으므로 **없는 정보를 지어내지 않고**, 연결되지 않고 남은 건수만
+        사실대로 돌려줍니다.
+        """
+        return RematchResponseModel.from_result(rematch_service.rematch())
 
     @app.get(
         "/dashboard/policy-display",
