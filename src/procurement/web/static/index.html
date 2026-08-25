@@ -501,6 +501,57 @@
     </section>
   </div>
 
+  <!--
+    3-B. 미매칭 기업 — "기업 미매칭 N건" 총계를 사업자번호 단위로 펼친 것.
+    ⛔ 조회 전용이다. 여기서 기업을 만들거나 연결하지 않는다.
+  -->
+  <div class="row" style="margin-top:16px">
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">미매칭 기업</h2>
+          <p class="card-sub">
+            기업정보가 없어 연결되지 않은 구매를 사업자등록번호별로 묶은 것입니다
+          </p>
+        </div>
+      </div>
+
+      <div class="upload-actions" style="margin-top:12px">
+        <label class="control control-grow">
+          <span class="control-label">검색</span>
+          <input id="unmatched-search" class="control-input" type="search"
+                 placeholder="사업자등록번호 · 거래처명" aria-label="미매칭 기업 검색" />
+        </label>
+        <label class="control">
+          <span class="control-label">정렬</span>
+          <select id="unmatched-sort" class="control-input" aria-label="미매칭 기업 정렬 기준">
+            <option value="amount">미매칭 금액</option>
+            <option value="count">미매칭 건수</option>
+            <option value="business_no">사업자등록번호</option>
+          </select>
+        </label>
+        <label class="control">
+          <span class="control-label">방향</span>
+          <select id="unmatched-direction" class="control-input" aria-label="정렬 방향">
+            <option value="desc">내림차순</option>
+            <option value="asc">오름차순</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="unmatched-error" class="error" hidden></div>
+      <div id="unmatched-notice" class="notice" hidden></div>
+      <div id="unmatched-rows" class="rv-trace"></div>
+      <div class="upload-actions" style="margin-top:8px">
+        <button id="unmatched-prev" class="control" type="button"
+                aria-label="미매칭 기업 이전 쪽">← 이전 쪽</button>
+        <span id="unmatched-page-info" class="card-sub"></span>
+        <button id="unmatched-next" class="control" type="button"
+                aria-label="미매칭 기업 다음 쪽">다음 쪽 →</button>
+      </div>
+    </section>
+  </div>
+
   <!-- 4. 구매실적 업로드 (데스크톱 앱 전용) -->
   <div class="row" style="margin-top:16px">
     <section class="card" style="flex:1 1 100%">
@@ -1650,6 +1701,109 @@
   function reloadRejectionsFromFirstPage() {
     rejectionPage = 1;
     loadRejections();
+  }
+
+  // ------------------------------------------------------------------
+  // 미매칭 기업 (STEP 38)
+  //
+  // "기업 미매칭 N건" 이라는 총계만으로는 담당자가 **어느 기업정보를 먼저
+  // 확보해야 하는지** 알 수 없다. 같은 사실을 사업자번호 단위로 펼친다.
+  //
+  // ⛔ 조회 전용이다. 기업을 만들거나 연결하는 버튼을 두지 않는다.
+  // ⛔ 어느 사업자번호를 확보하라고 **판정하지 않는다** — 금액·건수·비중을
+  //    보여줄 뿐이고, 순서는 담당자가 정렬 조건으로 고른다.
+  // ------------------------------------------------------------------
+
+  var unmatchedPage = 1;
+
+  function unmatchedError(message) {
+    var node = el("unmatched-error");
+    text(node, message);
+    node.hidden = !message;
+  }
+
+  function unmatchedParams() {
+    return "search=" + encodeURIComponent(el("unmatched-search").value.trim())
+      + "&sort=" + encodeURIComponent(el("unmatched-sort").value)
+      + "&direction=" + encodeURIComponent(el("unmatched-direction").value);
+  }
+
+  function loadUnmatched() {
+    unmatchedError("");
+    fetchJson("/dashboard/unmatched-companies?" + unmatchedParams()
+              + "&page=" + unmatchedPage + "&page_size=50").then(function (page) {
+      renderUnmatchedTable(page);
+      // 모집단 설명은 **서버가 준 문구를 그대로** 쓴다 — 화면이 판단하지 않는다.
+      var notice = el("unmatched-notice");
+      text(notice, page.notice);
+      notice.hidden = !page.notice;
+      var pages = Math.max(1, Math.ceil(page.total / page.page_size));
+      text(el("unmatched-page-info"),
+        page.total
+          ? page.page + " / " + pages + " 쪽 · 사업자번호 "
+            + numberFormat(page.total) + "곳"
+          : "조건에 맞는 미매칭 기업이 없습니다.");
+      el("unmatched-prev").disabled = page.page <= 1;
+      el("unmatched-next").disabled = page.page >= pages;
+    }).catch(function (error) {
+      unmatchedError("미매칭 기업을 불러오지 못했습니다: " + error.message);
+    });
+  }
+
+  function renderUnmatchedTable(page) {
+    var box = el("unmatched-rows");
+    clear(box);
+
+    if (!page.unmatched_purchase_count) {
+      box.appendChild(make("div", "rv-key",
+        "기업 미매칭 구매가 없습니다 — 모든 구매가 기업정보와 연결되어 있습니다."));
+      return;
+    }
+    box.appendChild(make("div", "rv-key",
+      "미매칭 구매 " + numberFormat(page.unmatched_purchase_count) + "건 · "
+      + numberFormat(page.unmatched_total_amount) + "원 · 사업자번호 "
+      + numberFormat(page.unmatched_business_no_count) + "곳"));
+    if (!page.items.length) { return; }
+
+    var table = make("table", "rv-reject");
+    var head = make("tr");
+    ["사업자등록번호", "거래처명", "미매칭 건수", "미매칭 금액", "금액 비중"]
+      .forEach(function (label) { head.appendChild(make("th", null, label)); });
+    table.appendChild(head);
+
+    page.items.forEach(function (item) {
+      var tr = make("tr");
+      tr.appendChild(make("td", "num", item.business_no));
+      // 같은 사업자번호에 표기가 여러 가지일 수 있다. ⛔ 하나만 골라 보여주지
+      // 않는다 — 담당자가 어느 표기로 검색할지 모르기 때문이다.
+      tr.appendChild(make("td", "rv-text", item.company_names.join(" · ")));
+      tr.appendChild(make("td", "num", numberFormat(item.purchase_count)));
+      tr.appendChild(make("td", "num", numberFormat(item.total_amount)));
+      tr.appendChild(make("td", "num", item.amount_share + "%"));
+      table.appendChild(tr);
+    });
+    box.appendChild(table);
+  }
+
+  function reloadUnmatchedFromFirstPage() {
+    unmatchedPage = 1;
+    loadUnmatched();
+  }
+
+  function initUnmatched() {
+    ["unmatched-sort", "unmatched-direction"].forEach(function (id) {
+      el(id).addEventListener("change", reloadUnmatchedFromFirstPage);
+    });
+    // 타이핑 한 글자마다 요청하지 않는다.
+    el("unmatched-search").addEventListener("input", debounce(reloadUnmatchedFromFirstPage, 300));
+    el("unmatched-prev").addEventListener("click", function () {
+      if (unmatchedPage > 1) { unmatchedPage -= 1; loadUnmatched(); }
+    });
+    el("unmatched-next").addEventListener("click", function () {
+      unmatchedPage += 1;
+      loadUnmatched();
+    });
+    loadUnmatched();
   }
 
   // ------------------------------------------------------------------
@@ -3233,6 +3387,7 @@
   buildYearOptions();
   initUpload();
   initReview();
+  initUnmatched();
   load();
 })();
 </script>

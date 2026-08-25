@@ -48,12 +48,30 @@ from procurement.admin import (
 from procurement.api import DashboardApiService, DashboardResponseModel
 from procurement.api.status_api import DataStatusApiService
 from procurement.api.status_response import DataStatusResponseModel
+from procurement.api.unmatched_response import UnmatchedPageResponseModel
 from procurement.calculators import ProcurementAchievementCalculator
 from procurement.calculators.procurement_achievement import CalculatorValidationError
 from procurement.core.config import settings
 from procurement.core.period import PeriodFilter
 from procurement.dashboard import DashboardDataService
 from procurement.dashboard.status_service import DataStatusService
+from procurement.dashboard.unmatched_service import (
+    DEFAULT_PAGE_SIZE as UNMATCHED_PAGE_SIZE,
+)
+from procurement.dashboard.unmatched_service import (
+    DESCENDING as UNMATCHED_DESCENDING,
+)
+from procurement.dashboard.unmatched_service import (
+    MAX_PAGE_SIZE as UNMATCHED_MAX_PAGE_SIZE,
+)
+from procurement.dashboard.unmatched_service import (
+    SORT_AMOUNT as UNMATCHED_SORT_AMOUNT,
+)
+from procurement.dashboard.unmatched_service import (
+    UnmatchedCompanyService,
+    UnmatchedQuery,
+    UnmatchedQueryError,
+)
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.import_batch_repository import (
@@ -169,6 +187,47 @@ def _rejection_query(
         )
     except RejectionQueryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _unmatched_query(
+    *,
+    search: str,
+    sort: str,
+    direction: str,
+    page: int,
+    page_size: int,
+) -> UnmatchedQuery:
+    """미매칭 기업 조회 조건을 만듭니다.
+
+    Raises:
+        HTTPException: 허용되지 않는 조건값이면 422.
+    """
+    try:
+        return UnmatchedQuery(
+            search=search,
+            sort=sort,
+            direction=direction,
+            page=page,
+            page_size=page_size,
+        )
+    except UnmatchedQueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def build_unmatched_service(db_path: str | Path | None = None) -> UnmatchedCompanyService:
+    """미매칭 기업 조회 서비스를 조립합니다(composition root).
+
+    ⛔ **조회 저장소 하나만** 넣습니다. 기업·인증 저장소를 주입하지 않으므로
+    이 서비스는 구조적으로 아무것도 만들거나 바꿀 수 없습니다.
+
+    Args:
+        db_path: 사용할 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        조립된 :class:`UnmatchedCompanyService`.
+    """
+    path: str | Path = db_path if db_path is not None else settings.db_file
+    return UnmatchedCompanyService(PurchaseRepository(path))
 
 
 def build_dashboard_api(db_path: str | Path | None = None) -> DashboardApiService:
@@ -443,6 +502,7 @@ def create_app(
         period_date_field if period_date_field is not None else settings.PURCHASE_PERIOD_DATE_FIELD
     )
     data_status_api = build_data_status_api(db_path, data_mode, date_field)
+    unmatched_service = build_unmatched_service(db_path)
     thresholds = parse_thresholds(settings.DASHBOARD_ACHIEVEMENT_DISPLAY_THRESHOLDS)
     token = admin_token if admin_token is not None else settings.ADMIN_API_TOKEN
     require_admin_token = build_admin_token_guard(token)
@@ -509,6 +569,47 @@ def create_app(
         ``period_filter_applied`` 는 항상 ``false`` 입니다.
         """
         return data_status_api.get_data_status(year)
+
+    @app.get(
+        "/dashboard/unmatched-companies",
+        response_model=UnmatchedPageResponseModel,
+        summary="미매칭 기업 조회(사업자번호별 집계·검색·정렬·페이지)",
+        tags=["dashboard"],
+    )
+    def search_unmatched_companies(
+        search: str = Query("", description="사업자등록번호 · 거래처명"),
+        sort: str = Query(UNMATCHED_SORT_AMOUNT, description="amount | count | business_no"),
+        # 금액이 큰 사업자번호부터 보여야 "무엇을 먼저 확보할지" 를 알 수 있다.
+        direction: str = Query(UNMATCHED_DESCENDING, description="asc | desc"),
+        page: int = Query(1, ge=1, description="1부터 시작하는 페이지 번호"),
+        page_size: int = Query(
+            UNMATCHED_PAGE_SIZE, ge=1, le=UNMATCHED_MAX_PAGE_SIZE, description="한 페이지 건수"
+        ),
+    ) -> UnmatchedPageResponseModel:
+        """기업정보가 없어 연결되지 않은 구매를 사업자번호별로 묶어 반환합니다.
+
+        대시보드는 "기업 미매칭 N건" 총계만 보여 줍니다. 그 숫자만으로는 **어느
+        기업정보를 먼저 확보해야 하는지** 알 수 없어, 같은 사실을 사업자번호
+        단위로 접어 금액 비중과 함께 돌려줍니다.
+
+        ⛔ **조회 기능일 뿐입니다.** 기업·인증·구매 어느 것도 만들거나 바꾸지
+        않으며, 어느 사업자번호를 확보해야 하는지 **판정하지도 않습니다.**
+
+        ⚠️ 모집단은 대시보드의 ``unmatched_purchase_count`` 와 **같은 기준**
+        (``company_id IS NULL`` 전체)이라 대체된 배치의 행도 포함합니다. 그
+        사실은 응답의 ``includes_superseded`` · ``notice`` 로 알립니다.
+
+        Raises:
+            HTTPException: 조건 값이 허용 범위를 벗어나면 422.
+        """
+        query = _unmatched_query(
+            search=search,
+            sort=sort,
+            direction=direction,
+            page=page,
+            page_size=page_size,
+        )
+        return UnmatchedPageResponseModel.from_page(unmatched_service.search(query))
 
     @app.get(
         "/dashboard/policy-display",
