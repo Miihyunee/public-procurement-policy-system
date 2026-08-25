@@ -140,15 +140,29 @@ class TestResponseSeparatesSourceAnalysisReview:
         않는다는 원래 취지는 그대로이며, **네 번째 블록도 독립**이다 —
         과거 이력이 ``review`` 안에 섞여 들어가면 "확정값" 으로 오인될 수
         있으므로 일부러 분리했다.
+
+        변경 사유(STEP 40): 고객이 알려준 낱말의 **참고 근거**를 보여주라는
+        지시에 따라 ``description_hints`` 블록이 추가되었다. 이 테스트가
+        지키던 사실은 **블록 개수가 아니라 서로 섞이지 않는다는 것**이므로,
+        "정확히 네 개" 대신 **각 블록이 제자리에 있고 남을 오염시키지
+        않는다**를 검사한다. 참고 근거가 ``analysis`` 안에 들어가면 "후보" 로,
+        ``review`` 안에 들어가면 "확정값" 으로 오인된다.
         """
         purchase_id = _purchase(db_path)
         _analyze(db_path, purchase_id, (SERVICE, "0.72"), (CONSTRUCTION, "0.68"))
 
         body = client.get(f"/reviews/{purchase_id}").json()
 
-        assert set(body) == {"source", "analysis", "review", "past_labels"}
+        assert {"source", "analysis", "review", "past_labels", "description_hints"} == set(body)
         # 과거 이력은 확정 블록을 오염시키지 않는다
         assert body["review"]["final_purchase_type"] is None
+        # ⛔ 참고 근거는 분석·확정 어느 쪽에도 섞이지 않는다
+        assert "description_hints" not in body["analysis"]
+        assert "description_hints" not in body["review"]
+        assert "hints" not in body["analysis"]
+        # ⛔ 참고 근거 자체에 유형·점수가 없다 — 후보로 읽히면 안 된다
+        for hint in body["description_hints"]:
+            assert set(hint) == {"keyword", "text"}
 
     def test_source_is_the_original(self, client: TestClient, db_path: Path) -> None:
         purchase_id = _purchase(db_path)

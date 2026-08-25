@@ -31,6 +31,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, StrictStr, field_serializer
 
+from procurement.core.description_hints import DescriptionHint, find_hints
 from procurement.core.purchase_type import PURCHASE_TYPE_LABELS
 from procurement.models.review import (
     PurchaseReview,
@@ -244,6 +245,33 @@ class PastLabelsResponseModel(BaseModel):
         return str(value)
 
 
+class DescriptionHintResponseModel(BaseModel):
+    """적요에서 발견된 낱말 하나 — **참고 근거**입니다.
+
+    .. warning::
+        🔴 **판정이 아닙니다.** 고객이 말한 낱말이 적요에 들어 있다는
+        **관찰 사실**일 뿐이며, 어떤 구매유형인지 말하지 않습니다.
+
+        ⛔ 그래서 ``purchase_type`` · ``score`` · ``rank`` 필드가
+        **의도적으로 없습니다.** 후보(:class:`CandidateResponseModel`)와
+        섞이지 않도록 별도 모델로 둡니다.
+
+    Attributes:
+        keyword: 발견된 낱말.
+        text: 화면에 그대로 쓸 수 있는 문장.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    keyword: str
+    text: str
+
+    @classmethod
+    def from_hint(cls, hint: DescriptionHint) -> DescriptionHintResponseModel:
+        """관찰 사실 하나를 응답 모델로 바꿉니다."""
+        return cls(keyword=hint.keyword, text=hint.text)
+
+
 class ReviewItemResponseModel(BaseModel):
     """검토 대상 1건 — **원본 · 분석 · 확정을 분리**해 담습니다.
 
@@ -252,6 +280,9 @@ class ReviewItemResponseModel(BaseModel):
         analysis: 자동 분석 결과.
         review: 담당자 확정 결과.
         past_labels: 같은 적요의 과거 확정 이력(참고).
+        description_hints: 적요에서 발견된 낱말들 — **참고 근거**.
+            ⛔ 판정이 아니며 비어 있을 수 있습니다. 기존 화면이 이 필드를
+            몰라도 동작하도록 **기본값을 둡니다**(하위 호환).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -260,6 +291,7 @@ class ReviewItemResponseModel(BaseModel):
     analysis: AnalysisResponseModel
     review: ReviewStateResponseModel
     past_labels: PastLabelsResponseModel
+    description_hints: list[DescriptionHintResponseModel] = []
 
     @classmethod
     def from_target(cls, target: ReviewTarget) -> ReviewItemResponseModel:
@@ -284,6 +316,12 @@ class ReviewItemResponseModel(BaseModel):
             analysis=_analysis_of(review),
             review=_review_state_of(review),
             past_labels=_past_labels_of(target.past_labels, review.top_candidate),
+            # ⛔ 원본 적요만 보고 만든다. 확정값·분석 결과를 읽지 않으므로
+            #    담당자가 무엇을 골랐든 결과가 달라지지 않는다.
+            description_hints=[
+                DescriptionHintResponseModel.from_hint(hint)
+                for hint in find_hints(purchase.description)
+            ],
         )
 
 
