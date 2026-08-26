@@ -133,6 +133,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    SMPP_TEST_BUSINESS_NO: str | None = Field(
+        default=None,
+        description=(
+            "실호출 시험용 사업자등록번호. SMPP_API_KEY 와 **둘 다** 설정되어 "
+            "있을 때만 실제 API 호출 시험이 수행되고, 하나라도 없으면 건너뜁니다"
+            "(실패가 아닙니다). ⛔ 고객 원본 데이터에서 가져오지 않습니다 — "
+            "개발자가 따로 확보한 시험용 값만 넣으며, 실제 값을 코드·테스트·"
+            "문서·저장소에 기록하지 않습니다."
+        ),
+    )
+
     EXTERNAL_API_TIMEOUT_SECONDS: float = Field(
         default=10.0,
         description=(

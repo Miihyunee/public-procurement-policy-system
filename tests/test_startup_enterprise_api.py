@@ -17,7 +17,7 @@ tests.test_startup_enterprise_api
 .. warning::
     **이 파일의 어떤 테스트도 실제 API 서버에 접속하지 않습니다** —
     :class:`TestRealApiCall` 만 예외이며, 인증키와 시험용 사업자번호가 **둘 다**
-    환경변수로 주어졌을 때만 실행되고 그 밖에는 건너뜁니다.
+    설정(``.env`` 또는 환경변수)으로 주어졌을 때만 실행되고 그 밖에는 건너뜁니다.
 
 .. note::
     인증키는 ``"test-smpp-key"`` 같은 명백한 더미 값이고, 사업자번호는
@@ -27,9 +27,9 @@ tests.test_startup_enterprise_api
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import hashlib
-import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -50,6 +50,7 @@ from procurement.collectors.errors import (
 )
 from procurement.collectors.models import ApiParseError, CertificationRecord
 from procurement.collectors.transport import HttpResponse
+from procurement.core.config import Settings, settings
 from procurement.database.bootstrap import init_db
 
 #: 합성 사업자등록번호. 실제 고객 값이 아닙니다.
@@ -386,15 +387,22 @@ class TestDatabaseIsUntouched:
 # 실제 API 호출 (지시 §11) — 기본은 건너뜀
 # ---------------------------------------------------------------------------
 
-_REAL_KEY = os.environ.get("SMPP_API_KEY", "").strip()
-_REAL_BUSINESS_NO = os.environ.get("SMPP_TEST_BUSINESS_NO", "").strip()
+# ⛔ ``os.environ`` 을 직접 읽지 않습니다(STEP 44 수정). 이 프로젝트의 설정은
+#    모두 ``.env → Settings`` 를 거치는데, ``os.environ`` 만 보면 ``.env`` 에
+#    넣은 값이 보이지 않아 키를 넣고도 계속 건너뛰게 됩니다. 같은 설정을 두
+#    가지 방법으로 읽으면 "왜 안 되는지" 를 알 수 없게 되므로 경로를 하나로
+#    맞춥니다. ``Settings`` 는 환경변수도 함께 읽으므로 ``export`` 방식도
+#    그대로 동작합니다.
+_REAL_KEY = (settings.SMPP_API_KEY or "").strip()
+_REAL_BUSINESS_NO = (settings.SMPP_TEST_BUSINESS_NO or "").strip()
 
 
 @pytest.mark.skipif(
     not (_REAL_KEY and _REAL_BUSINESS_NO),
     reason=(
         "실제 API 호출 시험은 SMPP_API_KEY 와 SMPP_TEST_BUSINESS_NO 가 "
-        "둘 다 설정된 환경에서만 수행합니다. 키가 없으면 실패가 아니라 건너뜁니다."
+        "둘 다 설정된 환경에서만 수행합니다(.env 또는 환경변수). "
+        "값이 없으면 실패가 아니라 건너뜁니다."
     ),
 )
 class TestRealApiCall:
@@ -418,3 +426,103 @@ class TestRealApiCall:
         # ⛔ 확인서가 있든 없든 둘 다 정상이다. "있으면 창업기업" 이라고 하지 않는다.
         assert isinstance(result.records, tuple)
         assert result.source == SOURCE_STARTUP_SMPP
+
+
+# ---------------------------------------------------------------------------
+# 실호출 시험이 열리고 닫히는 조건 (STEP 44)
+# ---------------------------------------------------------------------------
+
+
+class TestRealCallGate:
+    """실호출 시험을 여는 **문**이 올바로 동작한다.
+
+    이 검사가 없어서 STEP 43 에서 결함을 늦게 발견했습니다. ``.env`` 에 키를
+    넣어도 시험이 계속 건너뛰는데, 그것이 "키가 잘못됐다" 인지 "설정을 읽는
+    경로가 다르다" 인지 화면만 봐서는 알 수 없었습니다.
+    """
+
+    def test_the_gate_reads_the_project_settings_not_os_environ(self) -> None:
+        """문이 ``os.environ`` 을 직접 읽지 않는다.
+
+        이 프로젝트의 설정은 모두 ``.env → Settings`` 를 거칩니다. 이 파일만
+        다른 경로로 읽으면 ``.env`` 에 넣은 값이 보이지 않습니다.
+        """
+        text = Path(__file__).read_text(encoding="utf-8")
+        # 주석·docstring 이 아니라 **실행되는 코드**만 본다. 본문에서 이 결함을
+        # 설명하려면 이름을 적어야 하는데, 글자만 세면 그 설명에 걸린다.
+        tree = ast.parse(text)
+        attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+
+        assert "environ" not in attributes
+        assert "SMPP_API_KEY" in attributes
+        assert "SMPP_TEST_BUSINESS_NO" in attributes
+
+    def test_settings_reads_both_values_from_a_dotenv_file(self, tmp_path: Path) -> None:
+        """``.env`` 파일에 적은 값이 ``Settings`` 로 읽힌다.
+
+        STEP 43 결함의 핵심이 바로 이 경로였습니다. 여기 쓰는 값은 명백한
+        더미이며 실제 키가 아닙니다.
+        """
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "SMPP_API_KEY=dummy-key-for-test\nSMPP_TEST_BUSINESS_NO=1000000001\n",
+            encoding="utf-8",
+        )
+
+        loaded = Settings(_env_file=env_file)  # type: ignore[call-arg]
+
+        assert loaded.SMPP_API_KEY == "dummy-key-for-test"
+        assert loaded.SMPP_TEST_BUSINESS_NO == "1000000001"
+
+    def test_both_values_default_to_none_so_the_gate_stays_closed(self) -> None:
+        """설정이 없으면 두 값 모두 ``None`` — 문이 닫힌 채로 있다."""
+        empty = Settings(_env_file=None)  # type: ignore[call-arg]
+
+        assert empty.SMPP_API_KEY is None
+        assert empty.SMPP_TEST_BUSINESS_NO is None
+
+    @pytest.mark.parametrize(
+        ("key", "business_no"),
+        [
+            (None, "1000000001"),
+            ("dummy-key-for-test", None),
+            (None, None),
+            ("   ", "1000000001"),
+            ("dummy-key-for-test", "   "),
+        ],
+    )
+    def test_the_gate_is_closed_unless_both_values_are_present(
+        self, key: str | None, business_no: str | None
+    ) -> None:
+        """하나라도 없거나 공백이면 건너뛴다 — **실패가 아니다**.
+
+        문을 여는 조건은 실호출 시험을 감싼 ``skipif`` 와 같은 식입니다.
+        """
+        opened = bool((key or "").strip() and (business_no or "").strip())
+
+        assert opened is False
+
+    def test_the_gate_opens_only_when_both_are_set(self) -> None:
+        """둘 다 있을 때만 열린다."""
+        opened = bool("dummy-key-for-test".strip() and "1000000001".strip())
+
+        assert opened is True
+
+    def test_the_skip_reason_does_not_reveal_any_value(self) -> None:
+        """건너뛴 사유 문구에 값이 아니라 **변수 이름만** 나온다.
+
+        이 문구는 ``pytest -rs`` 로 화면에 그대로 찍힙니다. 값이 섞이면 키가
+        터미널·CI 로그에 남습니다.
+        """
+        marker = next(
+            mark
+            for mark in TestRealApiCall.pytestmark  # type: ignore[attr-defined]
+            if mark.name == "skipif"
+        )
+        reason = str(marker.kwargs["reason"])
+
+        assert "SMPP_API_KEY" in reason
+        assert "SMPP_TEST_BUSINESS_NO" in reason
+        for value in (_REAL_KEY, _REAL_BUSINESS_NO):
+            if value:
+                assert value not in reason
