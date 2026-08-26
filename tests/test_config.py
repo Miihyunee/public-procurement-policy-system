@@ -169,15 +169,21 @@ class TestExternalApiSettings:
             Settings()
 
     def test_env_example_has_key_names_but_no_values(self) -> None:
-        """.env.example 에는 변수명만 있고 실제 값이 없어야 한다."""
+        """.env.example 에는 변수명만 있고 실제 값이 없어야 한다.
+
+        변경 사유(STEP 43): 실호출 시험용 사업자등록번호
+        ``SMPP_TEST_BUSINESS_NO`` 를 검사 대상에 **더했다.** 이 값도 실제
+        사업자번호이므로 키와 같은 취급을 받아야 하며, ``.env.example`` 에
+        값이 적히면 저장소에 남는다. 검사 범위를 넓힌 것이며 기존에 지키던
+        사실은 그대로다.
+        """
         env_example = settings.project_root / ".env.example"
         content = env_example.read_text(encoding="utf-8")
-        for key in ("SMPP_API_KEY", "STARTUP_API_KEY"):
+        for key in ("SMPP_API_KEY", "STARTUP_API_KEY", "SMPP_TEST_BUSINESS_NO"):
             assert key in content, f".env.example 에 {key} 항목이 없습니다."
             for line in content.splitlines():
                 stripped = line.strip().lstrip("#").strip()
                 if stripped.startswith(f"{key}="):
                     assert stripped == f"{key}=", (
-                        f".env.example 의 {key} 에 값이 적혀 있습니다. "
-                        "실제 키는 .env 에만 둡니다."
+                        f".env.example 의 {key} 에 값이 적혀 있습니다. 실제 키는 .env 에만 둡니다."
                     )
