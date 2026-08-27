@@ -46,6 +46,7 @@ from procurement.collectors.errors import (
 from procurement.collectors.kised import parse_corporate_information_json
 from procurement.collectors.models import ApiResponseError, CertificationRecord
 from procurement.collectors.smpp import (
+    DISABLED_NO_DATA_CODES,
     NO_DATA_CODE,
     WOMAN_NO_DATA_CODES,
     parse_cert_list,
@@ -79,6 +80,20 @@ SOURCE_POLICY_CODES: Mapping[str, str] = {
     SOURCE_DISABLED: "DISABLED",
     SOURCE_STARTUP_SMPP: "STARTUP",
     SOURCE_STARTUP_KISED: "STARTUP",
+}
+
+#: 출처별 "데이터 없음" 결과코드 (``smppCertInfo`` 계열).
+#:
+#: 여성기업·장애인기업은 **같은 파서**
+#: (:func:`~procurement.collectors.smpp.parse_cert_list`)를 쓰지만, 어느 코드를
+#: "데이터 없음" 으로 볼지는 **출처마다 실호출로 따로 확인**했습니다. 파서가
+#: 아니라 여기서 가르는 이유입니다 — 파서 안에서 넓히면 확인하지 않은 API 까지
+#: 함께 넓어집니다.
+#:
+#: 여기에 없는 출처는 명세에 기재된 ``03`` 하나만 씁니다.
+SMPP_CERT_NO_DATA_CODES: Mapping[str, frozenset[str]] = {
+    SOURCE_WOMAN: WOMAN_NO_DATA_CODES,
+    SOURCE_DISABLED: DISABLED_NO_DATA_CODES,
 }
 
 #: ``stdrDate`` 를 **필수**로 요구하는 출처 (명세서 기재).
@@ -221,10 +236,12 @@ class CertificationApiClient:
         """여성기업·장애인기업 확인 조회 (응답 구조 동일).
 
         .. note::
-            응답 구조는 같지만 **"데이터 없음" 으로 볼 코드는 출처마다 다릅니다.**
-            여성기업은 실호출로 ``90`` 을 확인해 넓혔고(2026-08-27), 장애인기업은
-            확인한 적이 없어 명세의 ``03`` 하나만 씁니다. 같은 파서를 쓰더라도
-            **무엇이 확인되었는지가 다르므로** 여기서 갈라 줍니다.
+            응답 구조는 같지만 **"데이터 없음" 으로 볼 코드는 출처마다 따로
+            확인했습니다.** 여성기업(2026-08-27)에 이어 장애인기업도 실호출에서
+            ``90`` 이 확인되어(2026-08-27, STEP 49) 각각 넓혔습니다. 값이 같아진
+            지금도 :data:`SMPP_CERT_NO_DATA_CODES` 에서 **출처별로** 가릅니다 —
+            공용 파서의 기본값을 넓히면 확인하지 않은 API 까지 함께 넓어지기
+            때문입니다.
         """
         if stdr_date is None:  # pragma: no cover - fetch() 에서 이미 막힘
             raise StdrDateRequiredError("stdrDate 가 필요합니다.")
@@ -233,7 +250,7 @@ class CertificationApiClient:
             "bsnmNo": business_no,
             "stdrDate": _format_stdr_date(stdr_date),
         }
-        no_data_codes = WOMAN_NO_DATA_CODES if source == SOURCE_WOMAN else frozenset({NO_DATA_CODE})
+        no_data_codes = SMPP_CERT_NO_DATA_CODES.get(source, frozenset({NO_DATA_CODE}))
         body, attempts = self._request(url, params)
         records = self._parse(
             lambda: parse_cert_list(body, business_no, no_data_codes=no_data_codes)

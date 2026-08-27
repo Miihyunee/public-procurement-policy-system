@@ -20,9 +20,9 @@ PM 결정(2026-08-27)에 따라 ``90`` 을 ``03`` 과 같은 **"정상 응답이
 1. ``90`` 은 오류가 아니라 **빈 결과**다
 2. ⛔ ``00``(데이터 있음)으로 바뀐 것이 **아니다** — 확인서를 만들지 않는다
 3. ⛔ 이 파일의 변경은 창업기업 조회에만 적용된다 — 공용 파서의 **기본값**을
-   넓히지 않았다. (여성기업은 그 뒤 STEP 48 에서 **별도 실호출 확인**을 근거로
-   호출부에서 따로 넓혔다: ``tests/test_woman_result_code_90.py``.
-   장애인기업은 여전히 확인 전이다.)
+   넓히지 않았다. (여성기업은 STEP 48, 장애인기업은 STEP 50 에서 **각자의
+   실호출 확인**을 근거로 호출부에서 따로 넓혔다. 세 출처가 각각 자기 상수를
+   쓰며, 공용 기본값은 지금도 ``03`` 하나뿐이다.)
 4. 인증 오류·한도 초과 등 다른 코드의 처리는 그대로다
 
 .. note::
@@ -37,7 +37,6 @@ from datetime import date
 import pytest
 
 from procurement.collectors.client import (
-    SOURCE_DISABLED,
     SOURCE_STARTUP_SMPP,
     CertificationApiClient,
 )
@@ -275,13 +274,19 @@ class TestWomanAndDisabledAreUntouched:
 
         assert caught.value.code == "90"
 
-    @pytest.mark.parametrize("source", [SOURCE_DISABLED])
-    def test_client_path_still_raises_on_90(self, source: str) -> None:
-        """장애인기업은 **아직 실호출로 확인한 적이 없다** — 여전히 오류다."""
-        client, _ = _client(CODE_90)
+    def test_the_startup_set_is_not_reused_by_the_other_sources(self) -> None:
+        """창업기업 상수가 다른 출처로 흘러가지 않았다.
 
-        with pytest.raises(ApiResponseError):
-            client.fetch(source, BUSINESS_NO, stdr_date=STDR_DATE)
+        변경 사유(STEP 50): 원래 여기서 "여성·장애인 호출도 ``90`` 에서
+        오류" 를 검사했다. 두 API 모두 **각자의 실호출**로 ``90`` 이 확인되어
+        (STEP 48 · STEP 50) 각각 넓혀졌으므로 그 검사는 더 이상 사실이 아니다.
+        이 클래스가 지키려던 것은 **창업기업 쪽 변경이 남에게 새지 않는다**
+        이므로, 그것을 직접 검사한다 — 다른 출처는 **자기 상수**를 쓴다.
+        """
+        from procurement.collectors.client import SMPP_CERT_NO_DATA_CODES
+
+        for codes in SMPP_CERT_NO_DATA_CODES.values():
+            assert codes is not STARTUP_NO_DATA_CODES
 
     def test_the_widened_set_is_only_used_by_the_startup_parser(self) -> None:
         """넓힌 집합이 창업기업 파서에서만 쓰인다."""

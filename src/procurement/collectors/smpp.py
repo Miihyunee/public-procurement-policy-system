@@ -80,6 +80,21 @@ STARTUP_NO_DATA_CODES: frozenset[str] = frozenset({NO_DATA_CODE, "90"})
 #:     필요하다" 는 신호입니다.
 WOMAN_NO_DATA_CODES: frozenset[str] = frozenset({NO_DATA_CODE, "90"})
 
+#: 장애인기업 확인 조회에서 **실호출로 확인된** "매칭데이터 없음" 코드.
+#:
+#: .. warning::
+#:     ⚠️ **공식 활용가이드에 없는 코드입니다.** 2026-08-27 PM 로컬 실호출에서
+#:     ``getDspsnList`` 가 ``90`` "매칭데이터가 존재하지 않습니다" 를
+#:     돌려주었습니다. PM 결정(2026-08-27)에 따라 ``03`` 과 같은 "정상 응답이지만
+#:     조회 결과 없음" 으로 처리합니다.
+#:
+#: .. note::
+#:     :data:`STARTUP_NO_DATA_CODES` · :data:`WOMAN_NO_DATA_CODES` 와 값이 같지만
+#:     **일부러 합치지 않았습니다.** 하나로 합치면 "어느 API 에서 실제로
+#:     확인되었는가" 가 코드에서 사라집니다. 세 상수가 각각 하나의 실호출
+#:     근거를 가리킵니다.
+DISABLED_NO_DATA_CODES: frozenset[str] = frozenset({NO_DATA_CODE, "90"})
+
 #: 확인서 구분 코드 (명세서 기재값)
 CERT_CODE_DIRECT_PRODUCTION = "01"
 CERT_CODE_WOMAN = "03"

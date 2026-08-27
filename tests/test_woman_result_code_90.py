@@ -241,19 +241,24 @@ class TestErrorCodesAreUnchanged:
 
 
 class TestDisabledIsUntouched:
-    """⛔ 장애인기업에는 ``90`` 을 적용하지 않았다.
+    """여성기업 변경이 장애인기업으로 **새지 않았다**.
 
-    여성기업과 응답 구조가 같고 **파서도 같지만**, 장애인기업은 실호출로 확인한
-    적이 없다. 구조가 같다는 이유로 넓히면 그것은 확인이 아니라 추정이다.
+    변경 사유(STEP 50): 원래 이 클래스는 "장애인기업은 ``90`` 에서 여전히 오류"
+    를 지켰다. 그것은 **당시 장애인기업을 확인한 적이 없었기 때문**이며,
+    "영원히 오류여야 한다" 는 뜻이 아니었다. 2026-08-27 PM 로컬 실호출에서
+    장애인기업도 같은 코드가 확인되어 **자기 근거로** 넓혀졌다(STEP 50).
+
+    이 클래스가 지키려던 것은 **여성기업 변경이 남을 바꾸지 않았다** 이므로,
+    그것을 직접 검사한다 — 장애인기업은 여성기업 상수가 아니라 **자기 상수**를
+    쓴다. 그리고 공용 파서의 기본값은 그대로 좁다.
     """
 
-    def test_disabled_still_raises_on_90(self) -> None:
-        client, _ = _client(CODE_90)
+    def test_disabled_uses_its_own_constant_not_the_woman_one(self) -> None:
+        from procurement.collectors.client import SMPP_CERT_NO_DATA_CODES
+        from procurement.collectors.smpp import DISABLED_NO_DATA_CODES
 
-        with pytest.raises(ApiResponseError) as caught:
-            client.fetch(SOURCE_DISABLED, BUSINESS_NO, stdr_date=STDR_DATE)
-
-        assert caught.value.code == "90"
+        assert SMPP_CERT_NO_DATA_CODES[SOURCE_DISABLED] is DISABLED_NO_DATA_CODES
+        assert DISABLED_NO_DATA_CODES is not WOMAN_NO_DATA_CODES
 
     def test_the_shared_parser_default_stays_narrow(self) -> None:
         """공용 파서의 **기본값**은 명세에 있는 ``03`` 하나뿐이다.

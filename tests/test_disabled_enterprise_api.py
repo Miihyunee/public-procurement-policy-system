@@ -6,11 +6,11 @@ tests.test_disabled_enterprise_api
 이 파일의 목적은 **실제 응답을 확인하는 것 하나**입니다. 호출 계층과 파서는 이미
 있으므로 새로 만들지 않았고, 소스 코드도 바꾸지 않았습니다.
 
-.. warning::
-    ⛔ **여성기업·창업기업의 결과를 여기로 복사하지 않았습니다.**
-    두 API 에서 결과코드 ``90`` 이 "매칭데이터 없음" 으로 확인되었지만,
-    장애인기업에서 같은 코드가 오는지는 **확인된 바가 없습니다.** 현재 코드는
-    명세에 있는 ``03`` 하나만 "데이터 없음" 으로 봅니다.
+.. note::
+    이 파일의 실호출 시험이 2026-08-27 PM 로컬에서 ``resultCode=90`` 을 드러냈고,
+    PM 결정으로 장애인기업도 ``90`` 을 "데이터 없음" 으로 처리하게 되었습니다
+    (STEP 50). 그 동작은 ``tests/test_disabled_result_code_90.py`` 가 검사합니다.
+    공용 파서의 **기본값**은 지금도 명세에 있는 ``03`` 하나뿐입니다.
 
 .. warning::
     **이 파일의 어떤 테스트도 실제 API 서버에 접속하지 않습니다** —
@@ -76,7 +76,7 @@ NO_DATA = """<?xml version="1.0" encoding="UTF-8"?>
 </response>
 """
 
-#: 다른 두 API 에서 확인된 코드. **장애인기업에서는 미확인**이다.
+#: 실호출에서 실제로 돌아온 형태(코드와 메시지만 옮김).
 CODE_90 = """<?xml version="1.0" encoding="UTF-8"?>
 <response>
   <header><resultCode>90</resultCode><resultMsg>매칭데이터가 존재하지 않습니다.</resultMsg></header>
@@ -187,26 +187,33 @@ class TestResponseFields:
 
 
 class TestCode90IsStillUnconfirmedHere:
-    """⛔ 장애인기업에서 ``90`` 은 **아직 확인되지 않았다**.
+    """공용 파서의 **기본값**은 여전히 좁다.
 
-    여성기업·창업기업에서 확인되었다는 이유로 넓히지 않는다. 실호출에서 ``90``
-    이 오면 오류로 드러나며, 그것이 곧 "확인이 필요하다" 는 신호다.
+    변경 사유(STEP 50): 이 클래스는 원래 "장애인기업에서도 ``90`` 은 오류" 를
+    지켰다. 그것은 **당시 장애인기업 응답을 확인한 적이 없었기 때문**이며,
+    "영원히 오류여야 한다" 는 뜻이 아니었다. 바로 이 파일의 실호출 시험이
+    PM 로컬에서 ``resultCode=90`` 을 드러냈고, PM 결정으로 넓혔다. 장애인기업
+    ``90`` 의 동작은 이제 ``tests/test_disabled_result_code_90.py`` 가 검사한다.
+
+    여기서는 그때 함께 지키던 다른 사실 — **공용 파서의 기본값을 넓히지 않았다**
+    — 만 남긴다. 기본값이 넓어지면 확인되지 않은 API 까지 조용히 바뀐다.
     """
 
-    def test_parser_raises_with_the_code_visible(self) -> None:
+    def test_the_shared_parser_default_still_raises(self) -> None:
+        """인자를 주지 않으면 ``03`` 하나만 "데이터 없음" 이다."""
         with pytest.raises(ApiResponseError) as caught:
             parse_cert_list(CODE_90, BUSINESS_NO)
 
         assert caught.value.code == "90"
 
-    def test_client_path_raises(self) -> None:
+    def test_the_widening_is_explicit_at_the_call_site(self) -> None:
+        """장애인기업이 넓어진 것은 **호출부가 명시적으로 넘겼기** 때문이다."""
         transport = StubTransport(CODE_90)
         client = CertificationApiClient(smpp_api_key="test-smpp-key", transport=transport)
 
-        with pytest.raises(ApiResponseError) as caught:
-            client.fetch(SOURCE_DISABLED, BUSINESS_NO, stdr_date=TEST_STDR_DATE)
+        result = client.fetch(SOURCE_DISABLED, BUSINESS_NO, stdr_date=TEST_STDR_DATE)
 
-        assert caught.value.code == "90"
+        assert result.records == ()
 
     def test_only_the_documented_code_counts_as_no_data(self) -> None:
         assert NO_DATA_CODE == "03"
