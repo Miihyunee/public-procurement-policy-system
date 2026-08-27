@@ -64,6 +64,22 @@ NO_DATA_CODE = "03"
 #:     넓히면 진짜 오류를 조용히 삼키게 됩니다.
 STARTUP_NO_DATA_CODES: frozenset[str] = frozenset({NO_DATA_CODE, "90"})
 
+#: 여성기업 확인 조회에서 **실호출로 확인된** "매칭데이터 없음" 코드.
+#:
+#: .. warning::
+#:     ⚠️ **공식 활용가이드에 없는 코드입니다.** 2026-08-27 실호출에서
+#:     ``getFnrssList`` 가 창업기업과 **똑같은** ``90`` "매칭데이터가 존재하지
+#:     않습니다" 를 돌려주었습니다. PM 결정(2026-08-27)에 따라 ``03`` 과 같은
+#:     "정상 응답이지만 조회 결과 없음" 으로 처리합니다.
+#:
+#: .. warning::
+#:     ⛔ **장애인기업(``getDspsnList``)에는 적용하지 않습니다.** 여성기업과
+#:     응답 구조가 같고 파서도 같지만, 장애인기업은 **실호출로 확인한 적이
+#:     없습니다.** 구조가 같다는 이유로 넓히면 그것은 확인이 아니라 추정입니다.
+#:     장애인기업에서 ``90`` 이 오면 오류로 드러나며, 그것이 곧 "확인이
+#:     필요하다" 는 신호입니다.
+WOMAN_NO_DATA_CODES: frozenset[str] = frozenset({NO_DATA_CODE, "90"})
+
 #: 확인서 구분 코드 (명세서 기재값)
 CERT_CODE_DIRECT_PRODUCTION = "01"
 CERT_CODE_WOMAN = "03"
@@ -131,7 +147,12 @@ def _items(root: ET.Element) -> list[ET.Element]:
     return list(root.iter("item"))
 
 
-def parse_cert_list(xml_text: str, business_no: str) -> list[CertificationRecord]:
+def parse_cert_list(
+    xml_text: str,
+    business_no: str,
+    *,
+    no_data_codes: frozenset[str] = frozenset({NO_DATA_CODE}),
+) -> list[CertificationRecord]:
     """``smppCertInfo`` 계열 응답을 파싱합니다 (여성기업·장애인기업 공통).
 
     두 상세기능(``getFnrssList`` · ``getDspsnList``)의 응답 구조가 동일하므로
@@ -140,9 +161,18 @@ def parse_cert_list(xml_text: str, business_no: str) -> list[CertificationRecord
 
     응답에는 사업자번호가 없으므로, **요청에 사용한 값**을 정규화해 담습니다.
 
+    .. warning::
+        ⛔ **파서가 어느 정책인지 스스로 판단하지 않습니다.** 두 API 가 이
+        함수를 공유하므로, "데이터 없음" 으로 볼 코드를 여기서 넓히면 **둘 다**
+        넓어집니다. 넓힐지 말지는 **호출하는 쪽이 정합니다** — 그래야 어느
+        API 에서 무엇이 확인되었는지가 호출 지점에 남습니다.
+
     Args:
         xml_text: 응답 XML 문자열.
         business_no: 요청에 사용한 사업자등록번호.
+        no_data_codes: "데이터 없음" 으로 볼 결과코드. **기본값은 명세에 기재된
+            ``03`` 하나뿐**입니다. 여성기업 조회는
+            :data:`WOMAN_NO_DATA_CODES` 를 넘깁니다(실호출 확인).
 
     Returns:
         :class:`CertificationRecord` 목록. 유효한 확인서가 없으면 빈 목록.
@@ -152,7 +182,8 @@ def parse_cert_list(xml_text: str, business_no: str) -> list[CertificationRecord
         ApiParseError: 응답 구조가 명세와 다른 경우.
     """
     root = _parse_xml(xml_text)
-    if not _check_result(root):
+    # ⛔ 데이터 없음이면 **여기서 끝난다.** 아래 항목 순회로 내려가지 않는다.
+    if not _check_result(root, no_data_codes):
         return []
 
     normalized, original, warnings = resolve_business_no(business_no)

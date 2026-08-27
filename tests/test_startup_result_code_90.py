@@ -19,7 +19,10 @@ PM 결정(2026-08-27)에 따라 ``90`` 을 ``03`` 과 같은 **"정상 응답이
 
 1. ``90`` 은 오류가 아니라 **빈 결과**다
 2. ⛔ ``00``(데이터 있음)으로 바뀐 것이 **아니다** — 확인서를 만들지 않는다
-3. ⛔ 창업기업 조회에만 적용된다 — 여성·장애인은 그대로다
+3. ⛔ 이 파일의 변경은 창업기업 조회에만 적용된다 — 공용 파서의 **기본값**을
+   넓히지 않았다. (여성기업은 그 뒤 STEP 48 에서 **별도 실호출 확인**을 근거로
+   호출부에서 따로 넓혔다: ``tests/test_woman_result_code_90.py``.
+   장애인기업은 여전히 확인 전이다.)
 4. 인증 오류·한도 초과 등 다른 코드의 처리는 그대로다
 
 .. note::
@@ -36,7 +39,6 @@ import pytest
 from procurement.collectors.client import (
     SOURCE_DISABLED,
     SOURCE_STARTUP_SMPP,
-    SOURCE_WOMAN,
     CertificationApiClient,
 )
 from procurement.collectors.errors import ApiAuthError, ApiQuotaError
@@ -248,20 +250,34 @@ class TestErrorCodesAreUnchanged:
 
 
 class TestWomanAndDisabledAreUntouched:
-    """⛔ 이번 변경은 창업기업 조회에만 적용된다."""
+    """⛔ **창업기업 파서가 다른 API 를 건드리지 않는다.**
 
-    def test_woman_parser_still_raises_on_90(self) -> None:
-        """여성기업 응답의 ``90`` 이 무슨 뜻인지는 **확인된 바가 없다**.
+    변경 사유(STEP 48): 원래 이 클래스는 "여성기업·장애인기업 **둘 다** ``90``
+    에서 오류" 를 지켰다. 그 뒤 2026-08-27 실호출에서 여성기업도 같은 코드·같은
+    메시지를 돌려주는 것이 확인되었고, PM 결정으로 여성기업만 넓혔다
+    (``tests/test_woman_result_code_90.py``).
 
-        확인하지 않은 API 까지 넓히면 진짜 오류를 조용히 삼킨다.
+    이 클래스가 원래 지키려던 것은 "여성기업이 영원히 오류여야 한다" 가 아니라
+    **"창업기업 쪽 변경이 다른 API 로 새지 않는다"** 이다. 그 사실은 그대로
+    지킨다 — 검사 대상을 아직 확인되지 않은 **장애인기업**으로 좁히고, 공용
+    파서의 기본값이 여전히 좁다는 검사를 더한다.
+    """
+
+    def test_the_shared_parser_default_is_still_narrow(self) -> None:
+        """공용 파서의 **기본값**은 명세에 있는 ``03`` 하나뿐이다.
+
+        창업기업 때 기본값을 넓혔다면 여성·장애인이 함께 넓어졌을 것이다.
+        여성기업은 나중에 **호출부에서 명시적으로** 넓혔고(STEP 48), 기본값은
+        지금도 그대로다.
         """
         with pytest.raises(ApiResponseError) as caught:
             parse_cert_list(CODE_90, BUSINESS_NO)
 
         assert caught.value.code == "90"
 
-    @pytest.mark.parametrize("source", [SOURCE_WOMAN, SOURCE_DISABLED])
+    @pytest.mark.parametrize("source", [SOURCE_DISABLED])
     def test_client_path_still_raises_on_90(self, source: str) -> None:
+        """장애인기업은 **아직 실호출로 확인한 적이 없다** — 여전히 오류다."""
         client, _ = _client(CODE_90)
 
         with pytest.raises(ApiResponseError):

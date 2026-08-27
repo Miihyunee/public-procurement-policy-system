@@ -172,20 +172,35 @@ class TestResponseFields:
 
 
 class TestCode90IsNotWidenedHere:
-    """⛔ 창업기업의 ``90`` 처리를 여성기업으로 넓히지 않았다."""
+    """공용 파서의 **기본값**은 여전히 좁다.
 
-    def test_parser_still_raises(self) -> None:
+    변경 사유(STEP 48): 이 클래스는 원래 "여성기업에서도 ``90`` 은 오류" 를
+    지켰다. 그것은 **당시 여성기업 응답을 확인한 적이 없었기 때문**이며,
+    "영원히 오류여야 한다" 는 뜻이 아니었다. 2026-08-27 실호출에서 여성기업이
+    창업기업과 같은 코드·같은 메시지를 돌려주는 것이 확인되어 PM 결정으로
+    넓혔다. 여성기업 ``90`` 의 동작은 이제
+    ``tests/test_woman_result_code_90.py`` 가 검사한다.
+
+    여기서는 그때 함께 지키던 다른 사실 — **공용 파서의 기본값을 넓히지 않았다**
+    — 만 남긴다. 기본값이 넓어지면 아직 확인되지 않은 장애인기업까지 조용히
+    바뀌기 때문이다.
+    """
+
+    def test_the_shared_parser_default_still_raises(self) -> None:
+        """인자를 주지 않으면 ``03`` 하나만 "데이터 없음" 이다."""
         with pytest.raises(ApiResponseError) as caught:
             parse_cert_list(CODE_90, BUSINESS_NO)
 
         assert caught.value.code == "90"
 
-    def test_client_path_still_raises(self) -> None:
+    def test_the_widening_is_explicit_at_the_call_site(self) -> None:
+        """여성기업이 넓어진 것은 **호출부가 명시적으로 넘겼기** 때문이다."""
         transport = StubTransport(CODE_90)
         client = CertificationApiClient(smpp_api_key="test-smpp-key", transport=transport)
 
-        with pytest.raises(ApiResponseError):
-            client.fetch(SOURCE_WOMAN, BUSINESS_NO, stdr_date=TEST_STDR_DATE)
+        result = client.fetch(SOURCE_WOMAN, BUSINESS_NO, stdr_date=TEST_STDR_DATE)
+
+        assert result.records == ()
 
 
 # ---------------------------------------------------------------------------

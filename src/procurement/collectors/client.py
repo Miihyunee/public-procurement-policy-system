@@ -45,7 +45,12 @@ from procurement.collectors.errors import (
 )
 from procurement.collectors.kised import parse_corporate_information_json
 from procurement.collectors.models import ApiResponseError, CertificationRecord
-from procurement.collectors.smpp import parse_cert_list, parse_startup_cert
+from procurement.collectors.smpp import (
+    NO_DATA_CODE,
+    WOMAN_NO_DATA_CODES,
+    parse_cert_list,
+    parse_startup_cert,
+)
 from procurement.collectors.transport import (
     DEFAULT_TIMEOUT_SECONDS,
     Transport,
@@ -198,9 +203,7 @@ class CertificationApiClient:
         if source == SOURCE_WOMAN:
             return self._fetch_smpp_cert_list(SOURCE_WOMAN, URL_WOMAN, business_no, stdr_date)
         if source == SOURCE_DISABLED:
-            return self._fetch_smpp_cert_list(
-                SOURCE_DISABLED, URL_DISABLED, business_no, stdr_date
-            )
+            return self._fetch_smpp_cert_list(SOURCE_DISABLED, URL_DISABLED, business_no, stdr_date)
         if source == SOURCE_STARTUP_SMPP:
             return self._fetch_startup_smpp(business_no)
         return self._fetch_startup_kised(business_no)
@@ -215,7 +218,14 @@ class CertificationApiClient:
         business_no: str,
         stdr_date: date | None,
     ) -> FetchResult:
-        """여성기업·장애인기업 확인 조회 (응답 구조 동일)."""
+        """여성기업·장애인기업 확인 조회 (응답 구조 동일).
+
+        .. note::
+            응답 구조는 같지만 **"데이터 없음" 으로 볼 코드는 출처마다 다릅니다.**
+            여성기업은 실호출로 ``90`` 을 확인해 넓혔고(2026-08-27), 장애인기업은
+            확인한 적이 없어 명세의 ``03`` 하나만 씁니다. 같은 파서를 쓰더라도
+            **무엇이 확인되었는지가 다르므로** 여기서 갈라 줍니다.
+        """
         if stdr_date is None:  # pragma: no cover - fetch() 에서 이미 막힘
             raise StdrDateRequiredError("stdrDate 가 필요합니다.")
         params = {
@@ -223,8 +233,11 @@ class CertificationApiClient:
             "bsnmNo": business_no,
             "stdrDate": _format_stdr_date(stdr_date),
         }
+        no_data_codes = WOMAN_NO_DATA_CODES if source == SOURCE_WOMAN else frozenset({NO_DATA_CODE})
         body, attempts = self._request(url, params)
-        records = self._parse(lambda: parse_cert_list(body, business_no))
+        records = self._parse(
+            lambda: parse_cert_list(body, business_no, no_data_codes=no_data_codes)
+        )
         return self._result(source, business_no, records, attempts)
 
     def _fetch_startup_smpp(self, business_no: str) -> FetchResult:
