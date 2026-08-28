@@ -25,7 +25,11 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, field_serializer
 
-from procurement.dashboard.models import DashboardSummary, PolicySummary
+from procurement.dashboard.models import (
+    DashboardSummary,
+    MissingResolutionDate,
+    PolicySummary,
+)
 
 
 class PolicySummaryResponseModel(BaseModel):
@@ -105,6 +109,39 @@ class PolicySummaryResponseModel(BaseModel):
         )
 
 
+class MissingResolutionDateResponseModel(BaseModel):
+    """결의일자 미기재 안내 응답 모델.
+
+    .. warning::
+        ⛔ **달성률과 무관한 값입니다.** 분모·분자 어디에도 들어가지 않으며,
+        ``total_purchase_amount`` 에도 포함되지 않습니다. 화면이 "이만큼이 기간
+        산정에서 빠졌습니다" 라고 알려 주기 위한 **표시 전용** 값입니다.
+
+    Attributes:
+        applies: 이 안내가 지금 조회에 해당하는지. 기간 판정 기준일이
+            결의일자일 때만 ``true``. ``false`` 이면 화면은 아무것도 표시하지
+            않습니다.
+        count: 결의일자가 없는 구매 건수.
+        amount: 그 구매들의 금액 합계(직렬화 시 문자열).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    applies: bool
+    count: int
+    amount: Decimal
+
+    @field_serializer("amount", when_used="always")
+    def _serialize_amount(self, value: Decimal) -> str:
+        """``Decimal`` 을 문자열로 직렬화합니다."""
+        return str(value)
+
+    @classmethod
+    def from_missing(cls, missing: MissingResolutionDate) -> MissingResolutionDateResponseModel:
+        """DTO 로부터 응답 모델을 생성합니다."""
+        return cls(applies=missing.applies, count=missing.count, amount=missing.amount)
+
+
 class DashboardResponseModel(BaseModel):
     """대시보드 전체 API 응답 모델.
 
@@ -113,12 +150,15 @@ class DashboardResponseModel(BaseModel):
     Attributes:
         total_purchase_amount: 기관 전체 구매액(직렬화 시 문자열).
         policies: 정책별 요약 응답 목록. 대상 정책이 없으면 빈 목록.
+        missing_resolution_date: 결의일자가 없어 기간 산정에서 빠진 건수·금액.
+            ⛔ **위 두 값과 무관합니다** — 계산에 들어가지 않습니다.
     """
 
     model_config = ConfigDict(frozen=True)
 
     total_purchase_amount: Decimal
     policies: list[PolicySummaryResponseModel]
+    missing_resolution_date: MissingResolutionDateResponseModel
 
     @field_serializer("total_purchase_amount", when_used="always")
     def _serialize_decimal(self, value: Decimal) -> str:
@@ -134,4 +174,7 @@ class DashboardResponseModel(BaseModel):
                 PolicySummaryResponseModel.from_policy_summary(item)
                 for item in summary.policy_summaries
             ],
+            missing_resolution_date=MissingResolutionDateResponseModel.from_missing(
+                summary.missing_resolution_date
+            ),
         )

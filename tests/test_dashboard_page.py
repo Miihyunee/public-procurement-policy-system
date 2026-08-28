@@ -222,10 +222,17 @@ class TestExistingEndpointsUnchanged:
         assert client.get("/dashboard/summary").status_code == 400
 
     def test_summary_shape_unchanged(self, db_path: Path) -> None:
-        """연도를 주면 응답 구조는 기존과 동일하다."""
+        """연도를 주면 응답 구조는 기존과 동일하다.
+
+        .. note::
+            변경 사유(STEP 59): 결의일자 공란 알림 필드가 추가되었습니다.
+            비교를 느슨하게 하지 않고 **새 필드를 기대 집합에 함께 적습니다.**
+            지급일 기준 조회이므로 이 필드는 "해당 없음" 으로 나갑니다.
+        """
         client = TestClient(create_app(db_path, period_date_field="payment_date"))
         body = client.get("/dashboard/summary?year=2026").json()
-        assert set(body) == {"total_purchase_amount", "policies"}
+        assert set(body) == {"total_purchase_amount", "policies", "missing_resolution_date"}
+        assert body["missing_resolution_date"]["applies"] is False
 
     def test_summary_without_year_explains_why(self, client: TestClient) -> None:
         """연도 미지정 400 응답은 **사유를 본문에 담는다**(D-27).

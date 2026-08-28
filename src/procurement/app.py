@@ -265,6 +265,10 @@ def build_dashboard_api(db_path: str | Path | None = None) -> DashboardApiServic
     순으로 의존성을 생성·주입합니다. 등록 목표율 기반 요약을 사용하기 위해
     ``policy_repository`` 를 함께 주입합니다.
 
+    ``purchase_repository`` 는 **결의일자가 비어 있어 결의일자 기준 집계에
+    포함되지 못한 행이 몇 건인지 알려주기 위해서만** 주입합니다. 달성률
+    계산에는 관여하지 않습니다 — 계산은 그대로 ``calculator`` 가 합니다.
+
     Args:
         db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값(``settings.db_file``)을
             사용합니다.
@@ -277,7 +281,9 @@ def build_dashboard_api(db_path: str | Path | None = None) -> DashboardApiServic
     certification_repo = CertificationRepository(path)
     policy_repo = PolicyRepository(path)
     calculator = ProcurementAchievementCalculator(purchase_repo, certification_repo, policy_repo)
-    data_service = DashboardDataService(calculator, policy_repository=policy_repo)
+    data_service = DashboardDataService(
+        calculator, policy_repository=policy_repo, purchase_repository=purchase_repo
+    )
     return DashboardApiService(data_service)
 
 

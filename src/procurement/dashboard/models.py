@@ -118,13 +118,46 @@ class PolicySummary:
 
 
 @dataclass(frozen=True, kw_only=True)
+class MissingResolutionDate:
+    """**결의일자가 없어 기간 산정에서 빠진** 구매의 건수와 금액.
+
+    .. warning::
+        ⛔ **계산에 쓰이지 않습니다.** 분모·분자 어느 쪽에도 들어가지 않고,
+        달성률을 바꾸지도 않습니다. 화면에 "이만큼이 기간 산정에서 빠졌습니다"
+        라고 알려 주기 위한 **표시 전용** 값입니다(``DECISIONS.md`` §0.8.4).
+
+    .. note::
+        결의일자 기준으로 연도를 나눌 때만 의미가 있습니다. 지급일·계약일 기준
+        조회에서는 이 행들이 빠지지 않으므로 :attr:`applies` 가 ``False`` 이며,
+        화면도 표시하지 않습니다.
+
+    Attributes:
+        applies: 이 안내가 지금 조회에 해당하는지. 기간 판정 기준일이 결의일자일
+            때만 ``True``.
+        count: 결의일자가 없는 구매 건수.
+        amount: 그 구매들의 금액 합계.
+    """
+
+    applies: bool
+    count: int
+    amount: Decimal
+
+
+#: 해당 없음(결의일자 기준 조회가 아닐 때).
+NOT_APPLICABLE = MissingResolutionDate(applies=False, count=0, amount=Decimal("0"))
+
+
+@dataclass(frozen=True, kw_only=True)
 class DashboardSummary:
     """대시보드 전체 요약(DTO).
 
     Attributes:
         total_purchase_amount: 기관 전체 구매액.
         policy_summaries: 정책별 요약 목록. 요청한 정책이 없으면 빈 목록.
+        missing_resolution_date: 결의일자가 없어 기간 산정에서 빠진 건수·금액.
+            ⛔ **위 두 값과 무관합니다** — 계산에 들어가지 않습니다.
     """
 
     total_purchase_amount: Decimal
     policy_summaries: list[PolicySummary]
+    missing_resolution_date: MissingResolutionDate = NOT_APPLICABLE

@@ -477,6 +477,9 @@
       <p class="card-sub">목표율이 등록되고 계산이 가능한 정책만 표시합니다</p>
       <div id="summary-error" class="error" hidden></div>
       <div id="chart-achievement"></div>
+      <!-- 결의일자가 비어 있어 결의일자 기준 집계에 들어가지 못한 행을 알린다.
+           ⛔ 판정하지 않는다 — "제외"·"무효"·"오류" 가 아니라 **사실만** 적는다. -->
+      <p class="foot-note" id="missing-resolution-note" hidden></p>
     </section>
 
     <section class="card">
@@ -1381,11 +1384,37 @@
     return LEVEL_COLOR[level.index] || cssVar("--accent");
   }
 
+  /**
+   * 결의일자가 비어 있어 결의일자 기준 집계에 들어가지 못한 행을 알린다.
+   *
+   * ⛔ 이 문구는 **달성률과 무관**하다. 여기 적힌 건수·금액은 분모에도
+   *    분자에도 들어가 있지 않으며, 화면에서 어떤 계산에도 쓰이지 않는다.
+   * ⛔ "제외"·"무효"·"오류 데이터" 같은 판정 표현을 쓰지 않는다.
+   *    비어 있다는 사실만 적고, 어떻게 할지는 사람이 정한다.
+   *
+   * 0 건이면 아무것도 표시하지 않는다 — 없는 문제를 만들지 않기 위해서다.
+   */
+  function renderMissingResolutionDate(summaryResult) {
+    var box = el("missing-resolution-note");
+    var info = summaryResult.ok ? summaryResult.body.missing_resolution_date : null;
+    if (!info || !info.applies || info.count === 0) {
+      box.hidden = true;
+      text(box, "");
+      return;
+    }
+    box.hidden = false;
+    text(box,
+      "결의일자가 비어 있는 구매 " + numberFormat(info.count) + "건("
+      + numberFormat(info.amount) + " 원)은 결의일자 기준 집계에 포함되지 "
+      + "않았습니다. 위 달성률에는 반영되어 있지 않습니다.");
+  }
+
   function draw(status, summaryResult, displayMap) {
     renderKpi(status);
     renderStatusTable(status);
     renderVolume(status);
     renderGauge(status);
+    renderMissingResolutionDate(summaryResult);
 
     if (summaryResult.ok) {
       el("summary-error").hidden = true;

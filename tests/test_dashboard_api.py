@@ -136,8 +136,13 @@ class TestDashboardResponseModel:
             policy_summaries=[_policy_summary()],
         )
         payload = DashboardResponseModel.from_summary(summary).model_dump()
+        # 변경 사유(STEP 59): 결의일자 공란 알림 필드가 추가되었습니다. 이
+        # 시험이 지키던 것은 "응답 구조가 정확히 이것뿐" 이라는 사실이므로,
+        # 비교를 느슨하게 하지 않고 **새 필드를 기대값에 함께 적습니다.**
+        # 기본값은 "해당 없음" 이며, 계산 결과와 무관합니다.
         assert payload == {
             "total_purchase_amount": "10000000",
+            "missing_resolution_date": {"applies": False, "count": 0, "amount": "0"},
             "policies": [
                 {
                     "policy_id": 1,

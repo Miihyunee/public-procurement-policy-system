@@ -23,13 +23,16 @@ from decimal import Decimal
 
 from procurement.calculators.achievement_result import AchievementResult
 from procurement.calculators.procurement_achievement import ProcurementAchievementCalculator
-from procurement.core.period import PeriodFilter
+from procurement.core.period import RESOLUTION_DATE, PeriodFilter
 from procurement.dashboard.models import (
+    NOT_APPLICABLE,
     DashboardStatus,
     DashboardSummary,
+    MissingResolutionDate,
     PolicySummary,
 )
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models.policy import Policy
 
 #: 부족률 표기 자리수 (소수점 둘째 자리)
@@ -46,6 +49,7 @@ class DashboardDataService:
         self,
         calculator: ProcurementAchievementCalculator,
         policy_repository: PolicyRepository | None = None,
+        purchase_repository: PurchaseRepository | None = None,
     ) -> None:
         """서비스를 초기화합니다.
 
@@ -55,9 +59,14 @@ class DashboardDataService:
                 :class:`PolicyRepository`. :meth:`build_summary_from_registered_targets`
                 를 사용할 때만 필요하며, 외부 입력 방식(:meth:`build_summary`)만
                 사용할 경우 생략할 수 있습니다.
+            purchase_repository: **결의일자 미기재 건수**를 세는 데만 쓰는
+                :class:`PurchaseRepository`. ⛔ 계산에는 쓰이지 않습니다 —
+                달성률은 지금도 ``calculator`` 만 산출합니다. 생략하면 안내
+                값이 "해당 없음" 으로 나갑니다.
         """
         self._calculator = calculator
         self._policy_repository = policy_repository
+        self._purchase_repository = purchase_repository
 
     def build_summary(
         self, target_rates: dict[int, Decimal], period: PeriodFilter | None = None
@@ -86,7 +95,11 @@ class DashboardDataService:
         summaries = [
             self._to_policy_summary(result, target_rates[result.policy_id]) for result in results
         ]
-        return DashboardSummary(total_purchase_amount=total_amount, policy_summaries=summaries)
+        return DashboardSummary(
+            total_purchase_amount=total_amount,
+            policy_summaries=summaries,
+            missing_resolution_date=self._missing_resolution_date(period),
+        )
 
     def build_summary_from_registered_targets(
         self, period: PeriodFilter | None = None
@@ -157,11 +170,40 @@ class DashboardDataService:
                     self._to_policy_summary(result, target_rates[policy.policy_id])
                 )
 
-        return DashboardSummary(total_purchase_amount=total_amount, policy_summaries=summaries)
+        return DashboardSummary(
+            total_purchase_amount=total_amount,
+            policy_summaries=summaries,
+            missing_resolution_date=self._missing_resolution_date(period),
+        )
 
     # ------------------------------------------------------------------
     # 내부 헬퍼
     # ------------------------------------------------------------------
+    def _missing_resolution_date(self, period: PeriodFilter | None) -> MissingResolutionDate:
+        """결의일자가 없어 기간 산정에서 빠진 건수·금액을 셉니다.
+
+        .. warning::
+            ⛔ **계산에 쓰이지 않습니다.** 위에서 이미 산출한 전체 구매액·정책별
+            달성률에 전혀 영향을 주지 않으며, 이 값을 더하거나 빼지 않습니다.
+
+        .. note::
+            **결의일자 기준 조회에서만 의미가 있습니다.** 지급일·계약일 기준으로
+            연도를 나눌 때는 결의일자가 없어도 행이 빠지지 않으므로, 안내를
+            띄우면 오히려 사실과 다릅니다. 그때는 "해당 없음" 을 반환합니다.
+
+        .. note::
+            **기간 조건을 넘기지 않습니다.** 이 행들은 결의일자가 없어서 빠진
+            것이라, 같은 날짜로 기간을 걸면 정의상 하나도 남지 않습니다.
+            :meth:`~procurement.database.purchase_repository.PurchaseRepository.count_missing_resolution_date`
+            가 계산 대상과 **같은 배치 조건**으로 셉니다.
+        """
+        if self._purchase_repository is None:
+            return NOT_APPLICABLE
+        if period is None or period.date_field != RESOLUTION_DATE:
+            return NOT_APPLICABLE
+        count, amount = self._purchase_repository.count_missing_resolution_date()
+        return MissingResolutionDate(applies=True, count=count, amount=amount)
+
     def _to_policy_summary(self, result: AchievementResult, target_rate: Decimal) -> PolicySummary:
         """계산 결과 한 건에 목표율·부족률·상태를 더해 요약 DTO 로 변환합니다."""
         shortage_rate = self._shortage_rate(result.achievement_rate)

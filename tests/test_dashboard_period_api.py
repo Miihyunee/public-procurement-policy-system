@@ -112,9 +112,16 @@ class TestWithoutYear:
     def test_response_shape_unchanged_when_year_given(
         self, client_with_payment_date: TestClient
     ) -> None:
-        """연도를 주면 응답 구조는 기존과 동일하다."""
+        """연도를 주면 응답 구조는 기존과 동일하다.
+
+        .. note::
+            변경 사유(STEP 59): 결의일자 공란 알림 필드가 추가되었습니다.
+            비교를 느슨하게 하지 않고 **새 필드를 기대 집합에 함께 적습니다.**
+            지급일 기준 조회이므로 이 필드는 "해당 없음" 으로 나갑니다.
+        """
         body = client_with_payment_date.get("/dashboard/summary?year=2026").json()
-        assert set(body) == {"total_purchase_amount", "policies"}
+        assert set(body) == {"total_purchase_amount", "policies", "missing_resolution_date"}
+        assert body["missing_resolution_date"]["applies"] is False
 
 
 class TestYearWithoutDateField:

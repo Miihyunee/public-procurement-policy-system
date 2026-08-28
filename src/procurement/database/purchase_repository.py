@@ -288,6 +288,45 @@ class PurchaseRepository(BaseRepository):
         )
         return [self._row_to_purchase(row) for row in rows]
 
+    def count_missing_resolution_date(self) -> tuple[int, Decimal]:
+        """**결의일자가 없는** 계산 대상 구매의 건수와 금액 합계를 셉니다.
+
+        결의일자 기준으로 연도를 나누면 ``resolution_date`` 가 ``NULL`` 인 행은
+        조회에서 빠집니다. 분모·분자 양쪽에서 함께 빠지므로 달성률은 왜곡되지
+        않지만, **전체 구매액이 조용히 줄어드는데 화면에 아무 표시가 없습니다**
+        (``docs/DECISIONS.md`` §0.8.4). 그 숫자를 화면에 알려 주기 위한 조회입니다.
+
+        .. warning::
+            ⛔ **계산에 쓰이지 않습니다.** 분모·분자 어느 쪽에도 들어가지 않으며,
+            :class:`~procurement.calculators.procurement_achievement.ProcurementAchievementCalculator`
+            는 이 값을 보지 않습니다. **표시 전용**입니다.
+
+        .. note::
+            **기간 조건을 받지 않습니다.** 이 행들은 ``resolution_date`` 가 없어서
+            빠진 것이므로, 같은 날짜로 기간을 걸면 정의상 하나도 남지 않습니다.
+            대신 :meth:`find_for_calculation` 과 **같은 배치 조건**(대체된 배치
+            제외)을 적용해, 계산 대상과 같은 모집단에서 셉니다.
+
+        Returns:
+            ``(건수, 금액 합계)``. 없으면 ``(0, Decimal("0"))``.
+        """
+        conditions = ["resolution_date IS NULL"]
+        params: list[object] = []
+
+        if self._has_import_batch_table():
+            conditions.append(
+                "(batch_id IS NULL OR batch_id IN "
+                "(SELECT batch_id FROM import_batch WHERE status = ?))"
+            )
+            params.append(STATUS_ACTIVE)
+
+        where = " AND ".join(conditions)
+        rows = self.execute(f"SELECT amount FROM purchase WHERE {where}", tuple(params))
+        total = Decimal("0")
+        for row in rows:
+            total += _from_db_amount(row["amount"])
+        return len(rows), total
+
     def find_by_batch(self, batch_id: int) -> list[Purchase]:
         """특정 배치로 적재된 구매실적을 조회합니다.
 
