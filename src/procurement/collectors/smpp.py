@@ -14,6 +14,7 @@ procurement.collectors.smpp
 ``smppCertInfo``           ``/getFnrssList`` 여성기업확인          ``WOMAN``
 ``smppCertInfo``           ``/getDspsnList`` 장애인기업확인        ``DISABLED``
 ``smppKiCertInfo``         ``/getKiCertInfo`` 창업기업확인서       ``STARTUP``
+``smppCertInfo``           ``/getDPrductList`` 직접생산확인증명    ⛔ **물품 단위**
 =========================  =====================================  ==================
 
 .. warning::
@@ -35,6 +36,7 @@ from procurement.collectors.models import (
     ApiParseError,
     ApiResponseError,
     CertificationRecord,
+    DirectProductionRecord,
     resolve_business_no,
 )
 
@@ -94,6 +96,15 @@ WOMAN_NO_DATA_CODES: frozenset[str] = frozenset({NO_DATA_CODE, "90"})
 #:     확인되었는가" 가 코드에서 사라집니다. 세 상수가 각각 하나의 실호출
 #:     근거를 가리킵니다.
 DISABLED_NO_DATA_CODES: frozenset[str] = frozenset({NO_DATA_CODE, "90"})
+
+#: 직접생산확인 조회의 "데이터 없음" 코드.
+#:
+#: .. warning::
+#:     ⛔ **``90`` 을 넣지 않았습니다.** 다른 세 API 에서 확인되었다는 이유로
+#:     넓히지 않습니다 — 직접생산 조회는 **실호출로 확인한 적이 없습니다.**
+#:     실호출에서 ``90`` 이 오면 오류로 드러나며, 그것이 곧 "확인이 필요하다" 는
+#:     신호입니다. 확인된 뒤 별도 단계에서 넓힙니다.
+DIRECT_PRODUCTION_NO_DATA_CODES: frozenset[str] = frozenset({NO_DATA_CODE})
 
 #: 확인서 구분 코드 (명세서 기재값)
 CERT_CODE_DIRECT_PRODUCTION = "01"
@@ -217,6 +228,71 @@ def parse_cert_list(
                 # 이 API 는 기업명·대표자명을 제공하지 않는다(명세 확인).
                 company_name=None,
                 representative_name=None,
+            )
+        )
+    return records
+
+
+def parse_direct_production_list(
+    xml_text: str,
+    business_no: str,
+    *,
+    no_data_codes: frozenset[str] = DIRECT_PRODUCTION_NO_DATA_CODES,
+) -> list[DirectProductionRecord]:
+    """``smppCertInfo/getDPrductList`` (직접생산확인증명) 응답을 파싱합니다.
+
+    필드명과 필수 여부는 활용가이드 "c) 응답 메시지 명세" 와 XML 샘플을 그대로
+    따랐습니다. 추측해서 채운 경로는 없습니다.
+
+    .. warning::
+        ⛔ **여성·장애인 확인서와 같은 파서를 쓰지 않습니다.** 이 응답은
+        **세부품명번호(물품)별로 한 건씩** 오며, 반환 타입도
+        :class:`~procurement.collectors.models.DirectProductionRecord` 로
+        다릅니다. 업체 단위 인증으로 뭉개지 않기 위한 구분입니다.
+
+    .. note::
+        응답에는 사업자번호가 없어(명세 확인) **요청에 사용한 값**을 정규화해
+        담습니다 — 여성·장애인 조회와 같은 방식입니다.
+
+    .. note::
+        ``essntlPartclrMatter``(필수특이사항)는 명세상 **선택 항목**이라 없으면
+        ``None`` 입니다. ⛔ 내용을 해석하지 않습니다.
+
+    Args:
+        xml_text: 응답 XML 문자열.
+        business_no: 요청에 사용한 사업자등록번호.
+        no_data_codes: "데이터 없음" 으로 볼 결과코드. 기본값은
+            :data:`DIRECT_PRODUCTION_NO_DATA_CODES` (``03`` 하나).
+
+    Returns:
+        :class:`~procurement.collectors.models.DirectProductionRecord` 목록.
+        해당 확인서가 없으면 빈 목록.
+
+    Raises:
+        ApiResponseError: API 가 오류 코드를 반환한 경우.
+        ApiParseError: 응답 구조가 명세와 다른 경우.
+    """
+    root = _parse_xml(xml_text)
+    # ⛔ 데이터 없음이면 **여기서 끝난다.** 아래 항목 순회로 내려가지 않는다.
+    if not _check_result(root, no_data_codes):
+        return []
+
+    normalized, original, warnings = resolve_business_no(business_no)
+
+    records: list[DirectProductionRecord] = []
+    for item in _items(root):
+        records.append(
+            DirectProductionRecord(
+                business_no=normalized,
+                business_no_original=original,
+                business_no_warnings=warnings,
+                cert_code=_require(item, "certSeCode"),
+                valid_from=parse_day(_require(item, "validPdBeginDe")),
+                valid_to=parse_day(_require(item, "validPdEndDe")),
+                certified_date=parse_day(_require(item, "certfcDe")),
+                product_item_no=_require(item, "detailPrdnmNo"),
+                # 명세상 선택 항목 — 없으면 None 이며, 내용을 해석하지 않는다.
+                required_special_note=_text(item, "essntlPartclrMatter"),
             )
         )
     return records

@@ -44,12 +44,17 @@ from procurement.collectors.errors import (
     classify_result_code,
 )
 from procurement.collectors.kised import parse_corporate_information_json
-from procurement.collectors.models import ApiResponseError, CertificationRecord
+from procurement.collectors.models import (
+    ApiResponseError,
+    CertificationRecord,
+    DirectProductionRecord,
+)
 from procurement.collectors.smpp import (
     DISABLED_NO_DATA_CODES,
     NO_DATA_CODE,
     WOMAN_NO_DATA_CODES,
     parse_cert_list,
+    parse_direct_production_list,
     parse_startup_cert,
 )
 from procurement.collectors.transport import (
@@ -62,6 +67,7 @@ from procurement.collectors.transport import (
 URL_WOMAN = "http://apis.data.go.kr/B550598/smppCertInfo/getFnrssList"
 URL_DISABLED = "http://apis.data.go.kr/B550598/smppCertInfo/getDspsnList"
 URL_STARTUP_SMPP = "http://apis.data.go.kr/B550598/smppKiCertInfo/getKiCertInfo"
+URL_DIRECT_PRODUCTION = "http://apis.data.go.kr/B550598/smppCertInfo/getDPrductList"
 URL_STARTUP_KISED = "https://apis.data.go.kr/B552735/kisedCertService/getCorporateInformation"
 
 #: 조회 출처 식별자.
@@ -73,6 +79,13 @@ SOURCE_WOMAN = "WOMAN_SMPP"
 SOURCE_DISABLED = "DISABLED_SMPP"
 SOURCE_STARTUP_SMPP = "STARTUP_SMPP"
 SOURCE_STARTUP_KISED = "STARTUP_KISED"
+
+#: 직접생산확인 조회 출처.
+#:
+#: ⛔ :data:`SOURCE_POLICY_CODES` 에 **넣지 않았습니다.** 직접생산확인은 물품
+#: 단위이며, 현재 달성률을 계산하는 정책 어느 것에도 대응시킨 적이 없습니다.
+#: 정책 코드를 붙이는 순간 "이 업체는 그 정책에 해당한다" 는 뜻이 되어 버립니다.
+SOURCE_DIRECT_PRODUCTION = "DIRECT_PRODUCTION_SMPP"
 
 #: 조회 출처 → 정책 코드
 SOURCE_POLICY_CODES: Mapping[str, str] = {
@@ -106,6 +119,24 @@ SOURCES_REQUIRING_STDR_DATE: frozenset[str] = frozenset({SOURCE_WOMAN, SOURCE_DI
 #: 일시적 장애(timeout · 네트워크 · 5xx)로 한정합니다.
 DEFAULT_MAX_ATTEMPTS = 2
 
+#: 페이지 파라미터 기본값.
+#:
+#: 네 상세기능 모두 ``numOfRows`` · ``pageNo`` 를 **필수(항목구분 1)** 로
+#: 기재하고 있습니다(활용가이드 "b) 요청 메시지 명세"). 지금까지 코드가 이를
+#: 보내지 않았고, 실호출은 통했지만 **명세와는 달랐습니다.**
+#:
+#: .. warning::
+#:     ⚠️ ``DEFAULT_NUM_OF_ROWS`` 는 **공식 최대값이 아닙니다.** 활용가이드에
+#:     권장값·최대값 기재가 없어(샘플은 ``10``), 한 번에 충분히 받되 근거 없는
+#:     큰 수를 쓰지 않는 선에서 정한 **호출 기본값**입니다. 업무규칙이 아닙니다.
+#:
+#: .. note::
+#:     ⛔ **페이지를 자동으로 넘기지 않습니다.** 확인서가 이 값보다 많은 기업이
+#:     있을 수 있으며, 반복 조회가 필요한지는 응답의 ``totalCount`` 를 실제로
+#:     본 뒤 정합니다.
+DEFAULT_PAGE_NO = 1
+DEFAULT_NUM_OF_ROWS = 100
+
 
 class ApiKeyNotConfiguredError(RuntimeError):
     """인증키가 설정되지 않았습니다.
@@ -132,6 +163,45 @@ class FetchResult:
     business_no: str
     records: tuple[CertificationRecord, ...]
     attempts: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class DirectProductionResult:
+    """직접생산확인 조회 결과 한 건.
+
+    .. warning::
+        ⛔ **:class:`FetchResult` 와 일부러 다른 타입입니다.** ``policy_code``
+        필드가 **없습니다** — 직접생산확인을 현재 정책 어느 것에도 대응시킨 적이
+        없기 때문입니다. 같은 타입을 쓰면 정책 코드를 채워야 하고, 그것이 곧
+        확인받지 않은 업무규칙이 됩니다.
+
+    Attributes:
+        source: 조회 출처 식별자(:data:`SOURCE_DIRECT_PRODUCTION`).
+        business_no: 조회에 사용한 사업자등록번호(요청값 그대로).
+        records: 파서가 해석한 **물품별** 확인 목록. 없으면 빈 목록입니다.
+        attempts: 실제로 시도한 횟수.
+    """
+
+    source: str
+    business_no: str
+    records: tuple[DirectProductionRecord, ...]
+    attempts: int
+
+
+def _page_params(page_no: int, num_of_rows: int) -> dict[str, str]:
+    """페이지 파라미터를 검증해 요청 형태로 만듭니다.
+
+    명백히 잘못된 값은 **호출 전에** 막습니다. 그대로 보내면 API 는 결과코드
+    ``07``(입력범위값 초과)로 답할 뿐이고, 일일 호출 한도만 소모합니다.
+
+    Raises:
+        ValueError: 1 미만인 경우.
+    """
+    if page_no < 1:
+        raise ValueError(f"pageNo 는 1 이상이어야 합니다: {page_no}")
+    if num_of_rows < 1:
+        raise ValueError(f"numOfRows 는 1 이상이어야 합니다: {num_of_rows}")
+    return {"pageNo": str(page_no), "numOfRows": str(num_of_rows)}
 
 
 def _format_stdr_date(value: date) -> str:
@@ -184,8 +254,14 @@ class CertificationApiClient:
         business_no: str,
         *,
         stdr_date: date | None,
+        page_no: int = DEFAULT_PAGE_NO,
+        num_of_rows: int = DEFAULT_NUM_OF_ROWS,
     ) -> FetchResult:
-        """출처를 지정해 확인서를 조회합니다.
+        """출처를 지정해 **업체 단위 확인서**를 조회합니다.
+
+        .. note::
+            직접생산확인은 물품 단위라 여기서 조회하지 않습니다 —
+            :meth:`fetch_direct_production` 을 쓰세요.
 
         Args:
             source: :data:`SOURCE_WOMAN` 등 조회 출처 식별자.
@@ -194,6 +270,10 @@ class CertificationApiClient:
                 필수이며, ``None`` 이면 :class:`StdrDateRequiredError` 가
                 발생합니다. 그 밖의 출처에서는 명세상 파라미터가 없으므로
                 ``None`` 을 넘깁니다.
+            page_no: 페이지 번호(명세상 **필수**). 1 이상.
+            num_of_rows: 한 페이지 결과 수(명세상 **필수**). 1 이상.
+                ⛔ 이 값을 넘는 건이 있어도 **다음 페이지를 자동으로 가져오지
+                않습니다.**
 
         Returns:
             :class:`FetchResult`.
@@ -205,6 +285,7 @@ class CertificationApiClient:
             ApiTimeoutError · ApiNetworkError · ApiServerError · ApiRequestError:
                 전송 계층 오류.
             ApiParseError: 응답 형식이 명세와 다른 경우.
+            ValueError: 알 수 없는 출처이거나 페이지 파라미터가 1 미만인 경우.
         """
         if source not in SOURCE_POLICY_CODES:
             raise ValueError(f"알 수 없는 조회 출처입니다: {source!r}")
@@ -215,12 +296,16 @@ class CertificationApiClient:
                 "코드가 임의로 정하지 않습니다. 호출자가 명시적으로 전달하세요."
             )
 
+        page = _page_params(page_no, num_of_rows)
+
         if source == SOURCE_WOMAN:
-            return self._fetch_smpp_cert_list(SOURCE_WOMAN, URL_WOMAN, business_no, stdr_date)
+            return self._fetch_smpp_cert_list(SOURCE_WOMAN, URL_WOMAN, business_no, stdr_date, page)
         if source == SOURCE_DISABLED:
-            return self._fetch_smpp_cert_list(SOURCE_DISABLED, URL_DISABLED, business_no, stdr_date)
+            return self._fetch_smpp_cert_list(
+                SOURCE_DISABLED, URL_DISABLED, business_no, stdr_date, page
+            )
         if source == SOURCE_STARTUP_SMPP:
-            return self._fetch_startup_smpp(business_no)
+            return self._fetch_startup_smpp(business_no, page)
         return self._fetch_startup_kised(business_no)
 
     # ------------------------------------------------------------------
@@ -232,6 +317,7 @@ class CertificationApiClient:
         url: str,
         business_no: str,
         stdr_date: date | None,
+        page: Mapping[str, str],
     ) -> FetchResult:
         """여성기업·장애인기업 확인 조회 (응답 구조 동일).
 
@@ -249,6 +335,7 @@ class CertificationApiClient:
             "serviceKey": self._require_key(self._smpp_api_key, "SMPP_API_KEY"),
             "bsnmNo": business_no,
             "stdrDate": _format_stdr_date(stdr_date),
+            **page,
         }
         no_data_codes = SMPP_CERT_NO_DATA_CODES.get(source, frozenset({NO_DATA_CODE}))
         body, attempts = self._request(url, params)
@@ -257,15 +344,71 @@ class CertificationApiClient:
         )
         return self._result(source, business_no, records, attempts)
 
-    def _fetch_startup_smpp(self, business_no: str) -> FetchResult:
-        """창업기업 확인서 조회 (SMPP)."""
+    def _fetch_startup_smpp(self, business_no: str, page: Mapping[str, str]) -> FetchResult:
+        """창업기업 확인서 조회 (SMPP).
+
+        명세상 ``stdrDate`` 는 없고 ``numOfRows`` · ``pageNo`` 는 필수입니다.
+        """
         params = {
             "serviceKey": self._require_key(self._smpp_api_key, "SMPP_API_KEY"),
             "bsnmNo": business_no,
+            **page,
         }
         body, attempts = self._request(URL_STARTUP_SMPP, params)
         records = self._parse(lambda: parse_startup_cert(body))
         return self._result(SOURCE_STARTUP_SMPP, business_no, records, attempts)
+
+    def fetch_direct_production(
+        self,
+        business_no: str,
+        *,
+        stdr_date: date,
+        page_no: int = DEFAULT_PAGE_NO,
+        num_of_rows: int = DEFAULT_NUM_OF_ROWS,
+    ) -> DirectProductionResult:
+        """직접생산확인증명을 조회합니다 (``smppCertInfo/getDPrductList``).
+
+        .. warning::
+            ⛔ **업체 단위 인증이 아닙니다.** 응답은 **세부품명번호(물품)별로 한
+            건씩** 오며, 한 업체가 품목마다 여러 건을 가질 수 있습니다. 그래서
+            :meth:`fetch` 와 분리했고 반환 타입도 다릅니다.
+
+        .. warning::
+            ⛔ 이 결과로 "이 업체는 직접생산기업" 이라고 판정하지 않습니다.
+            유효기간을 어느 날짜와 비교할지, 세부품명번호를 구매실적과 어떻게
+            연결할지는 **모두 미확정**입니다.
+
+        Args:
+            business_no: 조회할 사업자등록번호.
+            stdr_date: 기준일자. 명세상 **필수**이며 기본값을 두지 않습니다 —
+                어느 날짜를 기준으로 볼지는 업무 결정 사항입니다.
+            page_no: 페이지 번호(명세상 필수). 1 이상.
+            num_of_rows: 한 페이지 결과 수(명세상 필수). 1 이상.
+
+        Returns:
+            :class:`DirectProductionResult`.
+
+        Raises:
+            ApiKeyNotConfiguredError: SMPP 인증키가 설정되지 않은 경우.
+            ApiAuthError · ApiQuotaError · ApiResponseError: API 오류 응답.
+            ApiParseError: 응답 형식이 명세와 다른 경우.
+            ValueError: 페이지 파라미터가 1 미만인 경우.
+        """
+        page = _page_params(page_no, num_of_rows)
+        params = {
+            "serviceKey": self._require_key(self._smpp_api_key, "SMPP_API_KEY"),
+            "bsnmNo": business_no,
+            "stdrDate": _format_stdr_date(stdr_date),
+            **page,
+        }
+        body, attempts = self._request(URL_DIRECT_PRODUCTION, params)
+        records = self._parse_direct_production(body, business_no)
+        return DirectProductionResult(
+            source=SOURCE_DIRECT_PRODUCTION,
+            business_no=business_no,
+            records=tuple(records),
+            attempts=attempts,
+        )
 
     def _fetch_startup_kised(self, business_no: str) -> FetchResult:
         """창업기업 확인서 조회 (창업진흥원).
@@ -339,6 +482,20 @@ class CertificationApiClient:
 
         assert last_error is not None  # noqa: S101 - 루프 구조상 항상 설정됨
         raise last_error
+
+    @staticmethod
+    def _parse_direct_production(body: str, business_no: str) -> list[DirectProductionRecord]:
+        """직접생산 응답을 해석하고, 문서화된 결과코드를 범주별 오류로 바꿉니다.
+
+        ⛔ ``no_data_codes`` 를 넘기지 않습니다 — 파서 기본값
+        (:data:`~procurement.collectors.smpp.DIRECT_PRODUCTION_NO_DATA_CODES`,
+        명세의 ``03`` 하나)을 그대로 씁니다. 이 API 에서 ``90`` 이 오는지는
+        **확인된 바가 없습니다.**
+        """
+        try:
+            return parse_direct_production_list(body, business_no)
+        except ApiResponseError as exc:
+            raise classify_result_code(exc) from exc
 
     @staticmethod
     def _parse(parse: Callable[[], list[CertificationRecord]]) -> list[CertificationRecord]:

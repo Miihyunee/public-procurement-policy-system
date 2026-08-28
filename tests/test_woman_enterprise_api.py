@@ -123,10 +123,17 @@ class TestRequest:
         assert params["stdrDate"] == "20260801"
 
     def test_only_the_documented_parameters_are_sent(self) -> None:
+        """명세에 있는 파라미터만, 그리고 **전부** 보낸다.
+
+        변경 사유(STEP 51): 공식 활용가이드를 확보해 보니 ``numOfRows`` ·
+        ``pageNo`` 가 **필수(항목구분 1)** 였고, 코드가 그 둘을 보내지 않고
+        있었다. 이 검사가 지키던 사실은 "지어낸 파라미터를 보내지 않는다" 이며
+        그대로다 — 기대 집합을 **명세대로** 넓혔다.
+        """
         _, transport = _fetch()
 
         _, params = transport.calls[0]
-        assert set(params) == {"serviceKey", "bsnmNo", "stdrDate"}
+        assert set(params) == {"serviceKey", "bsnmNo", "stdrDate", "pageNo", "numOfRows"}
 
     def test_the_caller_must_supply_the_reference_date(self) -> None:
         """⛔ 코드가 날짜를 임의로 고르지 않는다."""

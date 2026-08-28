@@ -74,6 +74,54 @@ class CertificationRecord:
     address: str | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class DirectProductionRecord:
+    """직접생산확인증명 한 건(파싱 결과).
+
+    .. warning::
+        ⛔ **:class:`CertificationRecord` 와 일부러 다른 타입입니다.**
+
+        여성·장애인·창업 확인서는 **업체 단위**입니다 — "이 업체가 여성기업인가".
+        직접생산확인은 **물품 단위**입니다 — "이 업체가 *이 세부품명번호*를 직접
+        생산하는가". 한 업체가 품목마다 여러 건을 갖습니다.
+
+        둘을 같은 타입에 담으면 세부품명번호가 사라지거나, 여러 건이 "업체 인증
+        한 건" 으로 뭉개집니다. 타입을 나눠서 그 실수를 **불가능하게** 했습니다.
+
+    .. warning::
+        ⛔ **판정하지 않습니다.** 유효/무효를 담는 필드가 없고, "이 업체는
+        직접생산기업" 같은 값도 만들지 않습니다. 유효기간을 어느 날짜와 비교할지는
+        확정되지 않았습니다.
+
+    Attributes:
+        business_no: 사업자등록번호. **응답에 없으므로** 요청에 사용한 값을
+            :func:`resolve_business_no` 로 정규화해 넣습니다.
+        business_no_original: 정규화 전 원본 값(추적용).
+        business_no_warnings: 정규화 경고(체크섬 불일치 등).
+        cert_code: 확인서구분코드. 명세상 직접생산확인증명서는 ``01``.
+        valid_from: 확인서 유효기간 시작일(``validPdBeginDe``).
+        valid_to: 확인서 유효기간 만료일(``validPdEndDe``).
+        certified_date: 확인서 인증일(``certfcDe``). 명세에 *"연장발급 등의
+            사유로 유효기간보다 이전일 수 있음"* 이라고 적혀 있습니다 — 그 의미를
+            해석하지 않고 값만 보존합니다.
+        product_item_no: 세부품명번호(``detailPrdnmNo``). 조달청 물품목록번호
+            기준 10자리. ⛔ **버리지 않습니다** — 이 값이 없으면 무엇에 대한
+            확인인지 알 수 없습니다.
+        required_special_note: 필수특이사항(``essntlPartclrMatter``). 명세상
+            선택 항목이며, 없으면 ``None``. ⛔ 내용을 해석하지 않습니다.
+    """
+
+    business_no: str
+    business_no_original: str = ""
+    business_no_warnings: tuple[str, ...] = ()
+    cert_code: str
+    valid_from: date
+    valid_to: date
+    certified_date: date
+    product_item_no: str
+    required_special_note: str | None = None
+
+
 def resolve_business_no(value: object) -> tuple[str, str, tuple[str, ...]]:
     """사업자등록번호를 **기존 규칙과 동일하게** 정규화합니다.
 

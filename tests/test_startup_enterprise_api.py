@@ -185,11 +185,18 @@ class TestRequest:
 
         특히 ``stdrDate``(기준일자)는 이 API 의 명세에 **없다.** 코드가 오늘
         날짜 등을 임의로 붙이면 그것이 곧 확인받지 않은 판정 기준이 된다.
+
+        변경 사유(STEP 51): 공식 활용가이드를 확보해 보니 ``numOfRows`` ·
+        ``pageNo`` 가 **필수(항목구분 1)** 였고 코드가 그 둘을 보내지 않고
+        있었다. 이 검사가 지키던 사실("지어낸 파라미터를 보내지 않는다",
+        "``stdrDate`` 를 붙이지 않는다")은 그대로이며, 기대 집합만 **명세대로**
+        넓혔다.
         """
         _, transport = _fetch(_ok(STARTUP_OK))
 
         _, params, _ = transport.calls[0]
-        assert set(params) == {"serviceKey", "bsnmNo"}
+        assert set(params) == {"serviceKey", "bsnmNo", "pageNo", "numOfRows"}
+        assert "stdrDate" not in params
 
 
 # ---------------------------------------------------------------------------
