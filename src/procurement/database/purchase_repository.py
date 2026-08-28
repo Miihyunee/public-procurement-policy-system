@@ -310,6 +310,57 @@ class PurchaseRepository(BaseRepository):
         Returns:
             ``(건수, 금액 합계)``. 없으면 ``(0, Decimal("0"))``.
         """
+        where, params = self._missing_resolution_date_where()
+        rows = self.execute(f"SELECT amount FROM purchase WHERE {where}", params)
+        total = Decimal("0")
+        for row in rows:
+            total += _from_db_amount(row["amount"])
+        return len(rows), total
+
+    def find_missing_resolution_date(self) -> list[Purchase]:
+        """**결의일자가 없는** 계산 대상 구매를 행 단위로 조회합니다.
+
+        :meth:`count_missing_resolution_date` 가 세는 것과 **완전히 같은 모집단**
+        입니다. 화면이 "N건" 만 보여 주면 담당자는 *어떤* 행인지 알 수 없어
+        무엇을 확인해야 할지 판단할 수 없으므로, 같은 조건으로 행을 돌려줍니다.
+
+        .. warning::
+            ⛔ **조회만 합니다.** 결의일자를 채우지 않고, 지급일·계약일로
+            대체하지도 않으며, 어떤 행도 수정하지 않습니다.
+
+        .. warning::
+            ⛔ **판정하지 않습니다.** 이 행들은 "오류"·"무효"·"실적 불인정" 이
+            아니라 **결의일자가 입력되지 않은 구매**일 뿐입니다.
+
+        .. note::
+            :meth:`count_missing_resolution_date` 와 마찬가지로 **기간 조건을
+            받지 않습니다.** 사유는 그 메서드의 설명과 같습니다.
+
+        정렬은 :meth:`find_for_calculation` · :meth:`find_by_batch` 와 같은
+        ``purchase_id`` 오름차순입니다 — 적재된 순서대로 보이므로 원본과
+        맞대어 보기 쉽습니다.
+
+        Returns:
+            :class:`Purchase` 목록. 없으면 빈 목록.
+        """
+        where, params = self._missing_resolution_date_where()
+        rows = self.execute(
+            f"SELECT * FROM purchase WHERE {where} ORDER BY purchase_id",
+            params,
+        )
+        return [self._row_to_purchase(row) for row in rows]
+
+    def _missing_resolution_date_where(self) -> tuple[str, tuple[object, ...]]:
+        """결의일자 미기재 조회의 **WHERE 절과 파라미터**를 만듭니다.
+
+        건수 집계와 행 조회가 **같은 모집단**을 보도록 조건을 한 곳에서만
+        만듭니다. 두 곳에 같은 SQL 을 적어 두면 한쪽만 고쳐졌을 때 "N건" 과
+        목록의 길이가 어긋나는데, 화면에서는 그 어긋남이 보이지 않습니다.
+
+        배치 조건은 :meth:`find_for_calculation` 과 동일합니다(새 판정 규칙을
+        만들지 않습니다). ``import_batch`` 테이블이 없는 구 스키마에서는 배치
+        조건을 건너뜁니다.
+        """
         conditions = ["resolution_date IS NULL"]
         params: list[object] = []
 
@@ -320,12 +371,7 @@ class PurchaseRepository(BaseRepository):
             )
             params.append(STATUS_ACTIVE)
 
-        where = " AND ".join(conditions)
-        rows = self.execute(f"SELECT amount FROM purchase WHERE {where}", tuple(params))
-        total = Decimal("0")
-        for row in rows:
-            total += _from_db_amount(row["amount"])
-        return len(rows), total
+        return " AND ".join(conditions), tuple(params)
 
     def find_by_batch(self, batch_id: int) -> list[Purchase]:
         """특정 배치로 적재된 구매실적을 조회합니다.

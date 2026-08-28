@@ -21,6 +21,7 @@ procurement.api.response
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, field_serializer
@@ -30,6 +31,8 @@ from procurement.dashboard.models import (
     MissingResolutionDate,
     PolicySummary,
 )
+from procurement.models.purchase import Purchase
+from procurement.reviews.response import PurchaseSourceResponseModel
 
 
 class PolicySummaryResponseModel(BaseModel):
@@ -140,6 +143,59 @@ class MissingResolutionDateResponseModel(BaseModel):
     def from_missing(cls, missing: MissingResolutionDate) -> MissingResolutionDateResponseModel:
         """DTO 로부터 응답 모델을 생성합니다."""
         return cls(applies=missing.applies, count=missing.count, amount=missing.amount)
+
+
+class MissingResolutionDateListResponseModel(BaseModel):
+    """결의일자 미기재 구매 **목록** 응답 모델.
+
+    대시보드는 "결의일자가 비어 있는 구매 N건(M 원)" 이라고만 알려 줍니다. 그
+    숫자만으로는 **어떤 행인지** 알 수 없어 담당자가 무엇을 확인해야 할지
+    판단할 수 없으므로, 같은 모집단의 행을 그대로 돌려줍니다.
+
+    .. warning::
+        ⛔ **조회 전용입니다.** 결의일자를 채우거나 다른 날짜로 대체하지 않고,
+        어떤 행도 수정하지 않습니다.
+
+    .. warning::
+        ⛔ **판정하지 않습니다.** 이 행들은 "오류"·"무효"·"실적 불인정" 이
+        아니라 **결의일자가 입력되지 않은 구매**일 뿐이며, 어떻게 처리할지는
+        아직 정해지지 않았습니다.
+
+    항목은 검토 화면과 **같은 원본 모델**(:class:`PurchaseSourceResponseModel`)
+    을 씁니다. 같은 행을 두 화면이 다르게 보여 주지 않도록, 그리고 사업자번호
+    등의 노출 범위를 새로 만들지 않기 위해서입니다.
+
+    Attributes:
+        items: 결의일자가 없는 구매 행(``purchase_id`` 오름차순).
+        count: 행 수. ``len(items)`` 와 항상 같습니다.
+        amount: 그 행들의 금액 합계(직렬화 시 문자열).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[PurchaseSourceResponseModel]
+    count: int
+    amount: Decimal
+
+    @field_serializer("amount", when_used="always")
+    def _serialize_amount(self, value: Decimal) -> str:
+        """``Decimal`` 을 문자열로 직렬화합니다."""
+        return str(value)
+
+    @classmethod
+    def from_purchases(
+        cls, purchases: Sequence[Purchase]
+    ) -> MissingResolutionDateListResponseModel:
+        """구매 행 목록으로부터 응답 모델을 생성합니다.
+
+        건수·합계는 **목록에서 직접** 셉니다. 따로 세어 넣으면 목록과 숫자가
+        어긋날 수 있는데, 화면에서는 그 어긋남이 보이지 않습니다.
+        """
+        items = [PurchaseSourceResponseModel.from_purchase(row) for row in purchases]
+        total = Decimal("0")
+        for row in purchases:
+            total += row.amount
+        return cls(items=items, count=len(items), amount=total)
 
 
 class DashboardResponseModel(BaseModel):

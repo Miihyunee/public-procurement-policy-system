@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, StrictStr, field_serializer
 
 from procurement.core.description_hints import DescriptionHint, find_hints
 from procurement.core.purchase_type import PURCHASE_TYPE_LABELS
+from procurement.models.purchase import Purchase
 from procurement.models.review import (
     PurchaseReview,
     ReviewHistoryEntry,
@@ -105,6 +106,30 @@ class PurchaseSourceResponseModel(BaseModel):
     @field_serializer("amount")
     def _amount(self, value: Decimal) -> str:
         return str(value)
+
+    @classmethod
+    def from_purchase(cls, purchase: Purchase) -> PurchaseSourceResponseModel:
+        """저장된 구매 행을 그대로 옮겨 담습니다.
+
+        ⛔ **읽기 전용입니다.** 값을 채우거나 고치지 않습니다. 비어 있는 날짜는
+        비어 있는 채로(``None``) 나갑니다 — 다른 날짜로 대체하지 않습니다.
+
+        Args:
+            purchase: 저장된 구매 행. ``purchase_id`` 가 있어야 합니다.
+        """
+        assert purchase.purchase_id is not None  # 저장된 행만 화면에 나간다
+        return cls(
+            purchase_id=purchase.purchase_id,
+            description=purchase.description,
+            company_name=purchase.company_name,
+            business_no=purchase.business_no,
+            amount=purchase.amount,
+            resolution_date=(
+                purchase.resolution_date.isoformat() if purchase.resolution_date else None
+            ),
+            issue_date=purchase.issue_date.isoformat() if purchase.issue_date else None,
+            budget_account=purchase.budget_account,
+        )
 
 
 class CandidateResponseModel(BaseModel):
@@ -346,21 +371,8 @@ class ReviewItemResponseModel(BaseModel):
         """서비스 결과를 응답 모델로 변환합니다."""
         purchase = target.purchase
         review = target.review
-        assert purchase.purchase_id is not None  # 저장된 행만 검토 대상이 된다
-
         return cls(
-            source=PurchaseSourceResponseModel(
-                purchase_id=purchase.purchase_id,
-                description=purchase.description,
-                company_name=purchase.company_name,
-                business_no=purchase.business_no,
-                amount=purchase.amount,
-                resolution_date=(
-                    purchase.resolution_date.isoformat() if purchase.resolution_date else None
-                ),
-                issue_date=purchase.issue_date.isoformat() if purchase.issue_date else None,
-                budget_account=purchase.budget_account,
-            ),
+            source=PurchaseSourceResponseModel.from_purchase(purchase),
             analysis=_analysis_of(review),
             review=_review_state_of(review),
             past_labels=_past_labels_of(target.past_labels, review.top_candidate),

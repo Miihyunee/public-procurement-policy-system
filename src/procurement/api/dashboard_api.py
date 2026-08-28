@@ -25,7 +25,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from procurement.api.response import DashboardResponseModel
+from procurement.api.response import (
+    DashboardResponseModel,
+    MissingResolutionDateListResponseModel,
+)
 from procurement.core.period import PeriodFilter
 from procurement.dashboard.data_service import DashboardDataService
 
@@ -63,6 +66,34 @@ class DashboardApiService:
         """
         summary = self._dashboard_service.build_summary_from_registered_targets(period)
         return DashboardResponseModel.from_summary(summary)
+
+    def get_missing_resolution_date(
+        self, period: PeriodFilter | None = None
+    ) -> MissingResolutionDateListResponseModel:
+        """결의일자가 없어 기간 산정에서 빠진 구매를 **행 단위로** 반환합니다.
+
+        :meth:`get_dashboard` 응답의 ``missing_resolution_date`` 가 알려 주는
+        건수·금액과 **같은 모집단**을 행으로 펼친 것입니다. 담당자가 어떤
+        행인지 직접 확인할 수 있게 하는 것이 목적입니다.
+
+        .. warning::
+            ⛔ **조회 전용입니다.** 결의일자를 채우거나 다른 날짜로 대체하지
+            않고, 어떤 행도 수정하지 않으며, 달성률에 영향을 주지 않습니다.
+
+        .. warning::
+            ⛔ **판정하지 않습니다.** 이 행들을 "오류"·"무효" 로 분류하지
+            않으며, 어떻게 처리할지는 아직 정해지지 않았습니다.
+
+        Args:
+            period: 지금 화면이 보고 있는 기간 조건. **범위 조건으로 쓰지
+                않습니다** — 결의일자 기준 조회인지 판단하는 데만 씁니다.
+                결의일자 기준이 아니면 빈 목록을 반환합니다.
+
+        Returns:
+            :class:`MissingResolutionDateListResponseModel`.
+        """
+        rows = self._dashboard_service.list_missing_resolution_date(period)
+        return MissingResolutionDateListResponseModel.from_purchases(rows)
 
     def get_dashboard_with_targets(
         self, target_rates: dict[int, Decimal]

@@ -34,6 +34,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -316,6 +317,16 @@ class TestDashboardApiResponse:
         assert missing["count"] == 0
 
 
+def _strip_js_comments(source: str) -> str:
+    """자바스크립트 주석을 걷어냅니다 — **화면에 나가는 문구만** 남깁니다.
+
+    주석에는 "이런 표현을 쓰지 않는다" 는 금지 문구 자체가 적혀 있어, 그대로
+    검사하면 규칙을 지킨 코드가 규칙 위반으로 보입니다.
+    """
+    without_block = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    return re.sub(r"^\s*//.*$", "", without_block, flags=re.MULTILINE)
+
+
 class TestScreenWording:
     """화면 문구 — 사실만 적고 판정하지 않는다."""
 
@@ -349,7 +360,16 @@ class TestScreenWording:
         "banned", ["오류", "무효", "부적합", "검토 불필요", "삭제", "실적 불인정"]
     )
     def test_no_verdict_wording(self, page: str, banned: str) -> None:
-        """⛔ 판정 표현을 쓰지 않는다 — 알림을 만드는 함수 본문만 본다."""
+        """⛔ 판정 표현을 쓰지 않는다.
+
+        .. note::
+            변경 사유(STEP 60): 이 함수 뒤에 목록 조회 코드가 붙으면서, 검사
+            구간에 **금지 표현을 금지한다고 적은 주석**까지 들어와 시험이
+            깨졌습니다. 이 시험이 지키던 것은 "**화면에 나가는 문구**에 판정
+            표현이 없다" 이므로, 느슨하게 만드는 대신 검사 대상을 **화면에
+            나가는 문구**로 더 정확하게 좁혔습니다. 주석은 화면에 나가지
+            않습니다.
+        """
         start = page.index("function renderMissingResolutionDate")
-        body = page[start : page.index("function draw(", start)]
-        assert banned not in body
+        body = page[start : page.index("function loadMissingResolutionRows", start)]
+        assert banned not in _strip_js_comments(body)

@@ -45,7 +45,11 @@ from procurement.admin import (
     TargetRateUpdateRequest,
     build_admin_token_guard,
 )
-from procurement.api import DashboardApiService, DashboardResponseModel
+from procurement.api import (
+    DashboardApiService,
+    DashboardResponseModel,
+    MissingResolutionDateListResponseModel,
+)
 from procurement.api.rematch_response import RematchResponseModel
 from procurement.api.status_api import DataStatusApiService
 from procurement.api.status_response import DataStatusResponseModel
@@ -579,6 +583,51 @@ def create_app(
           나눌지는 **D-24(미확정)** 이며, 임의의 기준일로 숫자를 만들지 않습니다.
         """
         return dashboard_api.get_dashboard(_require_period(year, date_field))
+
+    @app.get(
+        "/dashboard/missing-resolution-date",
+        response_model=MissingResolutionDateListResponseModel,
+        summary="결의일자 미기재 구매 조회",
+        tags=["dashboard"],
+    )
+    def get_missing_resolution_date(
+        year: int | None = Query(
+            default=None,
+            ge=1900,
+            le=2999,
+            description=(
+                "지금 화면이 보고 있는 회계연도. **범위 조건으로 쓰이지 "
+                "않습니다** — 결의일자 기준 조회인지 판단하는 데만 씁니다. "
+                "``/dashboard/summary`` 와 같은 규칙으로 필수입니다(D-27)."
+            ),
+        ),
+    ) -> MissingResolutionDateListResponseModel:
+        """결의일자가 입력되지 않은 구매를 **행 단위로** 반환합니다.
+
+        ``/dashboard/summary`` 의 ``missing_resolution_date`` 는 "N건(M 원)"
+        이라는 숫자만 알려 줍니다. 그것만으로는 **어떤 행인지** 알 수 없어
+        담당자가 무엇을 확인해야 할지 판단할 수 없으므로, 같은 모집단을 행으로
+        펼쳐 돌려줍니다.
+
+        ⛔ **조회 기능일 뿐입니다.** 결의일자를 채우지 않고, 지급일·계약일로
+        대체하지 않으며, 어떤 행도 수정하지 않습니다.
+
+        ⛔ **판정하지 않습니다.** 이 행들은 "오류"·"무효"·"실적 불인정" 이
+        아니라 **결의일자가 입력되지 않은 구매**일 뿐이며, 어떻게 처리할지는
+        아직 정해지지 않았습니다.
+
+        ⚠️ **결의일자 범위 조건을 걸지 않습니다.** 이 행들은 결의일자가 없어서
+        빠진 것이므로 같은 날짜로 기간을 걸면 정의상 하나도 남지 않습니다.
+        대신 계산 대상과 **같은 배치 조건**만 적용합니다. 기간 판정 기준일이
+        결의일자가 **아닌** 조회에서는 안내 자체가 해당되지 않으므로 **빈
+        목록**을 반환합니다(``/dashboard/summary`` 의 ``applies=false`` 와 같은
+        판단입니다).
+
+        Raises:
+            HTTPException: ``year`` 미지정 시 400(D-27), 기간 판정 기준일
+                미설정 시 503(D-24) — ``/dashboard/summary`` 와 동일합니다.
+        """
+        return dashboard_api.get_missing_resolution_date(_require_period(year, date_field))
 
     @app.get(
         "/dashboard/data-status",

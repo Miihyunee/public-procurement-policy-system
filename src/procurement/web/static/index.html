@@ -478,8 +478,13 @@
       <div id="summary-error" class="error" hidden></div>
       <div id="chart-achievement"></div>
       <!-- 결의일자가 비어 있어 결의일자 기준 집계에 들어가지 못한 행을 알린다.
-           ⛔ 판정하지 않는다 — "제외"·"무효"·"오류" 가 아니라 **사실만** 적는다. -->
+           ⛔ 판정하지 않는다 — "제외"·"무효"·"오류" 가 아니라 **사실만** 적는다.
+           STEP 60 — 안내 아래에서 해당 행 목록을 펼쳐 볼 수 있다. -->
       <p class="foot-note" id="missing-resolution-note" hidden></p>
+      <details class="rv-fold" id="missing-resolution-fold" hidden>
+        <summary id="missing-resolution-summary"></summary>
+        <div id="missing-resolution-rows" class="rv-trace"></div>
+      </details>
     </section>
 
     <section class="card">
@@ -1396,9 +1401,11 @@
    */
   function renderMissingResolutionDate(summaryResult) {
     var box = el("missing-resolution-note");
+    var fold = el("missing-resolution-fold");
     var info = summaryResult.ok ? summaryResult.body.missing_resolution_date : null;
     if (!info || !info.applies || info.count === 0) {
       box.hidden = true;
+      fold.hidden = true;
       text(box, "");
       return;
     }
@@ -1407,6 +1414,85 @@
       "결의일자가 비어 있는 구매 " + numberFormat(info.count) + "건("
       + numberFormat(info.amount) + " 원)은 결의일자 기준 집계에 포함되지 "
       + "않았습니다. 위 달성률에는 반영되어 있지 않습니다.");
+
+    // 접힌 채로도 몇 건인지 제목에 적는다(기존 foldable 과 같은 원칙).
+    fold.hidden = false;
+    text(el("missing-resolution-summary"),
+      "결의일자 미기재 구매 " + numberFormat(info.count) + "건 보기");
+
+    // 연도가 바뀌면 접고 비운다 — 다른 연도의 목록이 남아 있으면 오해를 부른다.
+    if (missingRowsLoadedFor !== null && missingRowsLoadedFor !== el("year-select").value) {
+      missingRowsLoadedFor = null;
+      fold.open = false;
+      clear(el("missing-resolution-rows"));
+    } else if (fold.open) {
+      loadMissingResolutionRows();
+    }
+  }
+
+  /**
+   * 결의일자 미기재 구매 **행 목록** (STEP 60).
+   *
+   * ⛔ 조회 전용이다. 결의일자를 채우거나 다른 날짜로 대체하지 않고, 어떤 행도
+   *    바꾸지 않는다. 확정·수정 버튼을 두지 않는다.
+   * ⛔ 판정하지 않는다 — "오류"·"무효"·"실적 불인정" 이라 부르지 않는다.
+   *
+   * 펼칠 때 한 번만 불러온다. 안내 문구가 뜨지 않는 조회에서는 요청 자체를
+   * 보내지 않는다.
+   */
+  var missingRowsLoadedFor = null;
+
+  function loadMissingResolutionRows() {
+    var year = el("year-select").value;
+    if (missingRowsLoadedFor === year) { return; }
+
+    var box = el("missing-resolution-rows");
+    clear(box);
+    box.appendChild(make("div", "empty", "불러오는 중…"));
+
+    fetchJson("/dashboard/missing-resolution-date?year=" + encodeURIComponent(year))
+      .then(function (page) {
+        missingRowsLoadedFor = year;
+        renderMissingResolutionRows(page);
+      })
+      .catch(function (err) {
+        clear(box);
+        box.appendChild(make("div", "empty", "목록을 불러오지 못했습니다: " + err.message));
+      });
+  }
+
+  function renderMissingResolutionRows(page) {
+    var box = el("missing-resolution-rows");
+    clear(box);
+
+    if (!page.items.length) {
+      box.appendChild(make("div", "empty", "결의일자가 입력되지 않은 구매가 없습니다."));
+      return;
+    }
+
+    box.appendChild(make("p", "foot-note",
+      "결의일자가 입력되지 않은 구매 " + numberFormat(page.count) + "건 · "
+      + numberFormat(page.amount) + " 원"));
+
+    var table = make("table", null);
+    var head = make("tr");
+    ["구매 ID", "적요", "거래처명", "사업자등록번호", "금액", "결의일자", "예산과목"]
+      .forEach(function (label) { head.appendChild(make("th", null, label)); });
+    table.appendChild(head);
+
+    page.items.forEach(function (item) {
+      var tr = make("tr");
+      tr.appendChild(make("td", "num", numberFormat(item.purchase_id)));
+      tr.appendChild(make("td", "rv-text", item.description || "-"));
+      tr.appendChild(make("td", "rv-text", item.company_name));
+      tr.appendChild(make("td", "num", item.business_no));
+      tr.appendChild(make("td", "num", numberFormat(item.amount)));
+      // ⛔ 비어 있는 결의일자를 다른 날짜로 채우지 않는다. 비어 있는 채로 보인다.
+      tr.appendChild(make("td", "num", item.resolution_date || "(미기재)"));
+      tr.appendChild(make("td", "rv-text", item.budget_account || "-"));
+      table.appendChild(tr);
+    });
+    box.appendChild(table);
   }
 
   function draw(status, summaryResult, displayMap) {
@@ -3594,8 +3680,19 @@
     });
   }
 
+  /**
+   * 목록은 **펼칠 때** 불러온다. 안내가 뜨지 않는 조회에서는 요청 자체를
+   * 보내지 않으므로, 화면을 열기만 해도 구매 원본이 오가는 일이 없다.
+   */
+  function initMissingResolutionFold() {
+    el("missing-resolution-fold").addEventListener("toggle", function () {
+      if (el("missing-resolution-fold").open) { loadMissingResolutionRows(); }
+    });
+  }
+
   initTheme();
   buildYearOptions();
+  initMissingResolutionFold();
   initUpload();
   initReview();
   initUnmatched();

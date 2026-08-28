@@ -34,6 +34,7 @@ from procurement.dashboard.models import (
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models.policy import Policy
+from procurement.models.purchase import Purchase
 
 #: 부족률 표기 자리수 (소수점 둘째 자리)
 _RATE_EXPONENT = Decimal("0.01")
@@ -203,6 +204,32 @@ class DashboardDataService:
             return NOT_APPLICABLE
         count, amount = self._purchase_repository.count_missing_resolution_date()
         return MissingResolutionDate(applies=True, count=count, amount=amount)
+
+    def list_missing_resolution_date(self, period: PeriodFilter | None = None) -> list[Purchase]:
+        """결의일자가 없어 기간 산정에서 빠진 구매를 **행 단위로** 돌려줍니다.
+
+        :meth:`_missing_resolution_date` 가 세는 것과 **같은 조건·같은 모집단**
+        입니다. 화면이 "N건" 만 보여 주면 담당자는 어떤 행인지 알 수 없어
+        무엇을 확인해야 할지 판단할 수 없으므로, 같은 사실을 행으로 펼칩니다.
+
+        .. warning::
+            ⛔ **조회 전용입니다.** 달성률 계산 경로를 거치지 않으며, 어떤 행도
+            수정하지 않습니다. 결의일자를 채우거나 다른 날짜로 대체하지 않습니다.
+
+        Args:
+            period: 지금 화면이 보고 있는 기간 조건. **범위 조건으로 쓰지
+                않습니다** — 결의일자 기준 조회인지 판단하는 데만 씁니다.
+                결의일자 기준이 아니거나 ``None`` 이면 **빈 목록**입니다
+                (안내 자체가 해당되지 않는 조회이기 때문입니다).
+
+        Returns:
+            :class:`Purchase` 목록(``purchase_id`` 오름차순). 없으면 빈 목록.
+        """
+        if self._purchase_repository is None:
+            return []
+        if period is None or period.date_field != RESOLUTION_DATE:
+            return []
+        return self._purchase_repository.find_missing_resolution_date()
 
     def _to_policy_summary(self, result: AchievementResult, target_rate: Decimal) -> PolicySummary:
         """계산 결과 한 건에 목표율·부족률·상태를 더해 요약 DTO 로 변환합니다."""
