@@ -483,6 +483,12 @@
       <p class="foot-note" id="missing-resolution-note" hidden></p>
       <details class="rv-fold" id="missing-resolution-fold" hidden>
         <summary id="missing-resolution-summary"></summary>
+        <!-- STEP 61 — 내려받기 링크. 기존 미적재/검토 CSV 와 **같은 방식**이라
+             누른다고 화면 조회가 달라지거나 데이터가 바뀌지 않는다.
+             ⛔ 데이터를 바꾸는 조작이 아니므로 확인창을 두지 않는다. -->
+        <a id="missing-resolution-csv" class="control"
+           download="missing-resolution-date.csv"
+           aria-label="결의일자 미기재 구매 CSV 내려받기">CSV 내려받기</a>
         <div id="missing-resolution-rows" class="rv-trace"></div>
       </details>
     </section>
@@ -1419,6 +1425,13 @@
     fold.hidden = false;
     text(el("missing-resolution-summary"),
       "결의일자 미기재 구매 " + numberFormat(info.count) + "건 보기");
+
+    // 내려받기 대상은 목록과 **같은 조건**이다 — 같은 연도를 그대로 넘긴다.
+    // 안내가 뜨지 않는 조회(0건·결의일자 기준 아님)에서는 위에서 이미
+    // 되돌아갔으므로, 이 링크도 화면에 나오지 않는다.
+    el("missing-resolution-csv").href =
+      "/dashboard/missing-resolution-date.csv?year="
+      + encodeURIComponent(el("year-select").value);
 
     // 연도가 바뀌면 접고 비운다 — 다른 연도의 목록이 남아 있으면 오해를 부른다.
     if (missingRowsLoadedFor !== null && missingRowsLoadedFor !== el("year-select").value) {

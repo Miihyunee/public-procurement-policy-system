@@ -31,6 +31,7 @@ from procurement.api.response import (
 )
 from procurement.core.period import PeriodFilter
 from procurement.dashboard.data_service import DashboardDataService
+from procurement.models.purchase import Purchase
 
 
 class DashboardApiService:
@@ -94,6 +95,29 @@ class DashboardApiService:
         """
         rows = self._dashboard_service.list_missing_resolution_date(period)
         return MissingResolutionDateListResponseModel.from_purchases(rows)
+
+    def list_missing_resolution_date_rows(
+        self, period: PeriodFilter | None = None
+    ) -> list[Purchase]:
+        """CSV 내보내기용으로 **같은 대상**을 행 그대로 돌려줍니다.
+
+        :meth:`get_missing_resolution_date` 와 **완전히 같은 호출**을 씁니다 —
+        화면에서 보던 것과 다른 파일이 내려오면 안 되기 때문입니다. 응답 모델로
+        감싸지 않는 이유는, CSV 를 한 줄씩 흘려보내려면 도메인 행이 필요하기
+        때문입니다(기존 검토·미적재 CSV 와 같은 방식).
+
+        .. warning::
+            ⛔ **조회 전용입니다.** 계산기를 부르지 않고, 어떤 행도 만들거나
+            바꾸지 않습니다.
+
+        Args:
+            period: 지금 화면이 보고 있는 기간 조건. 범위 조건으로 쓰지 않으며,
+                결의일자 기준 조회인지 판단하는 데만 씁니다.
+
+        Returns:
+            :class:`Purchase` 목록(``purchase_id`` 오름차순). 없으면 빈 목록.
+        """
+        return self._dashboard_service.list_missing_resolution_date(period)
 
     def get_dashboard_with_targets(
         self, target_rates: dict[int, Decimal]

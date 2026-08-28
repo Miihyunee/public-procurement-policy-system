@@ -59,6 +59,9 @@ from procurement.calculators.procurement_achievement import CalculatorValidation
 from procurement.core.config import settings
 from procurement.core.period import PeriodFilter
 from procurement.dashboard import DashboardDataService
+from procurement.dashboard.missing_resolution_export import (
+    export_lines as missing_resolution_export_lines,
+)
 from procurement.dashboard.status_service import DataStatusService
 from procurement.dashboard.unmatched_service import (
     DEFAULT_PAGE_SIZE as UNMATCHED_PAGE_SIZE,
@@ -628,6 +631,56 @@ def create_app(
                 미설정 시 503(D-24) — ``/dashboard/summary`` 와 동일합니다.
         """
         return dashboard_api.get_missing_resolution_date(_require_period(year, date_field))
+
+    @app.get(
+        "/dashboard/missing-resolution-date.csv",
+        summary="결의일자 미기재 구매 CSV 내려받기",
+        tags=["dashboard"],
+        response_class=StreamingResponse,
+    )
+    def export_missing_resolution_date(
+        year: int | None = Query(
+            default=None,
+            ge=1900,
+            le=2999,
+            description=(
+                "지금 화면이 보고 있는 회계연도. 목록 조회와 **완전히 같은 "
+                "규칙**입니다 — 범위 조건이 아니라 결의일자 기준 조회인지 "
+                "판단하는 데만 씁니다."
+            ),
+        ),
+    ) -> StreamingResponse:
+        """**화면 목록과 같은 대상**을 CSV 로 내려보냅니다.
+
+        담당자가 내려받아 업무 확인·고객 확인에 쓰기 위한 파일입니다. 대상은
+        ``GET /dashboard/missing-resolution-date`` 와 **같은 호출**로 얻으므로,
+        화면에서 보던 것과 다른 것이 내려오는 일이 없습니다.
+
+        ⛔ **빈 결의일자를 채우지 않습니다.** 값이 없으면 CSV 에서도 **빈 칸**
+        입니다. 신고기준일·지급일·계약일 어느 것으로도 대체하지 않습니다 —
+        비어 있다는 사실이 이 파일의 존재 이유이기 때문입니다.
+
+        ⛔ **조회 기능일 뿐입니다.** 어떤 행도 만들거나 바꾸거나 지우지 않고,
+        계산기를 부르지 않으며, 달성률에 영향을 주지 않습니다.
+
+        ⛔ **판정하지 않습니다.** 이 행들은 "오류"·"무효"·"실적 불인정" 이
+        아니라 **결의일자가 입력되지 않은 구매**일 뿐이며, 어떻게 처리할지는
+        아직 정해지지 않았습니다.
+
+        ⚠️ **원본 행 번호 · 공급가액 · 세액은 없습니다.** ``purchase`` 에 없는
+        값이므로 지어내지 않습니다(``DECISIONS.md`` §0.7.5).
+
+        Raises:
+            HTTPException: ``year`` 미지정 시 400(D-27), 기간 판정 기준일
+                미설정 시 503(D-24) — 목록 조회와 동일합니다. ⛔ 빈 CSV 를
+                성공으로 돌려주지 않습니다.
+        """
+        rows = dashboard_api.list_missing_resolution_date_rows(_require_period(year, date_field))
+        return StreamingResponse(
+            missing_resolution_export_lines(rows),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="missing-resolution-date.csv"'},
+        )
 
     @app.get(
         "/dashboard/data-status",
