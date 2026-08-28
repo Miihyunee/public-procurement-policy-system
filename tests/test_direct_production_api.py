@@ -25,6 +25,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping
 from datetime import date
+from xml.etree import ElementTree
 
 import pytest
 
@@ -37,7 +38,7 @@ from procurement.collectors.client import (
     CertificationApiClient,
     DirectProductionResult,
 )
-from procurement.collectors.errors import ApiAuthError, ApiQuotaError
+from procurement.collectors.errors import ApiAuthError, ApiQuotaError, ApiTransportError
 from procurement.collectors.models import (
     ApiParseError,
     ApiResponseError,
@@ -49,7 +50,8 @@ from procurement.collectors.smpp import (
     NO_DATA_CODE,
     parse_direct_production_list,
 )
-from procurement.collectors.transport import HttpResponse
+from procurement.collectors.transport import HttpResponse, UrllibTransport
+from procurement.core.config import settings
 
 #: 합성 사업자등록번호. 실제 고객 값이 아닙니다.
 BUSINESS_NO = "1000000001"
@@ -414,3 +416,148 @@ class TestMissingFields:
     def test_broken_xml_raises(self) -> None:
         with pytest.raises(ApiParseError):
             parse_direct_production_list("<response><unclosed>", BUSINESS_NO)
+
+
+# ---------------------------------------------------------------------------
+# 실제 API 호출 — 기본은 건너뜀
+# ---------------------------------------------------------------------------
+
+_REAL_KEY = (settings.SMPP_API_KEY or "").strip()
+_REAL_BUSINESS_NO = (settings.SMPP_TEST_BUSINESS_NO or "").strip()
+
+#: 실호출에서 확인하려는 항목 필드 (활용가이드 "c) 응답 메시지 명세").
+SPEC_ITEM_FIELDS = (
+    "certSeCode",
+    "validPdBeginDe",
+    "validPdEndDe",
+    "certfcDe",
+    "detailPrdnmNo",
+    "essntlPartclrMatter",
+)
+
+#: 페이지 관련 응답 필드.
+SPEC_PAGE_FIELDS = ("totalCount", "numOfRows", "pageNo")
+
+
+def _describe(xml_text: str) -> str:
+    """응답의 **구조만** 요약합니다 — 값은 담지 않습니다.
+
+    .. warning::
+        ⛔ 인증키·사업자번호는 물론, 확인서의 실제 값(유효기간·품명번호 등)도
+        담지 않습니다. 필드가 **있는지**, 항목이 **몇 개인지**만 봅니다. 이
+        문자열은 실패 메시지로 화면에 그대로 찍힙니다.
+    """
+    root = ElementTree.fromstring(xml_text)
+
+    code = next((n.text for n in root.iter("resultCode") if n.text), "(없음)")
+    message = next((n.text for n in root.iter("resultMsg") if n.text), "(없음)")
+
+    lines = [f"resultCode={code} / resultMsg={message}"]
+
+    for tag in SPEC_PAGE_FIELDS:
+        node = next((n for n in root.iter(tag)), None)
+        # 페이지 정보는 값 자체가 구조 정보다 — 식별정보가 아니므로 그대로 본다.
+        lines.append(f"{tag}={node.text if node is not None else '(없음)'}")
+
+    items = list(root.iter("item"))
+    lines.append(f"item 수={len(items)}")
+    if items:
+        present = [tag for tag in SPEC_ITEM_FIELDS if items[0].find(tag) is not None]
+        missing = [tag for tag in SPEC_ITEM_FIELDS if items[0].find(tag) is None]
+        lines.append(f"첫 항목에 있는 명세 필드={present}")
+        lines.append(f"첫 항목에 없는 명세 필드={missing}")
+        unexpected = sorted({child.tag for child in items[0]} - set(SPEC_ITEM_FIELDS))
+        lines.append(f"명세에 없는 필드={unexpected}")
+    return " | ".join(lines)
+
+
+@pytest.mark.skipif(
+    not (_REAL_KEY and _REAL_BUSINESS_NO),
+    reason=(
+        "실제 API 호출 시험은 SMPP_API_KEY 와 SMPP_TEST_BUSINESS_NO 가 "
+        "둘 다 설정된 환경에서만 수행합니다(.env 또는 환경변수). "
+        "값이 없으면 실패가 아니라 건너뜁니다."
+    ),
+)
+class TestRealApiCall:
+    """실제 엔드포인트 연결 및 응답 구조 확인.
+
+    .. warning::
+        인증키·사업자번호를 로그·실패 메시지에 출력하지 않습니다. 실패
+        메시지에는 **결과코드·페이지 정보·필드 이름·항목 수**만 담깁니다 —
+        그것이 이 시험에서 알아내려는 값이기 때문입니다.
+
+    .. note::
+        네트워크에 닿지 못하면 **실패가 아니라 skip** 입니다. "연결이 안 된다"
+        와 "응답이 명세와 다르다" 는 전혀 다른 사실이므로 섞지 않습니다.
+    """
+
+    def _raw_body(self) -> str:
+        """실제 응답 본문을 받아옵니다.
+
+        구조(``totalCount`` 등)를 보려면 파서를 거치기 전의 원문이 필요합니다.
+        요청 파라미터는 호출 계층과 **같은 이름·같은 형식**으로 만듭니다.
+        """
+        params = {
+            "serviceKey": _REAL_KEY,
+            "bsnmNo": _REAL_BUSINESS_NO,
+            "stdrDate": TEST_STDR_DATE.strftime("%Y%m%d"),
+            "pageNo": str(DEFAULT_PAGE_NO),
+            "numOfRows": str(DEFAULT_NUM_OF_ROWS),
+        }
+        try:
+            response = UrllibTransport().get(URL_DIRECT_PRODUCTION, params, timeout=15.0)
+        except ApiTransportError as exc:
+            pytest.skip(f"네트워크로 API 에 닿지 못했습니다: {type(exc).__name__}")
+        if response.status != 200:
+            pytest.fail(f"HTTP status={response.status} (본문은 출력하지 않습니다)")
+        return response.body
+
+    def test_the_response_structure_matches_the_spec(self) -> None:
+        """실제 응답의 **구조**를 확인합니다.
+
+        문서화되지 않은 결과코드이거나 명세와 다른 구조이면, 무엇이 달랐는지를
+        드러내며 실패합니다. 조용히 넘기면 확인한 것이 없습니다.
+        """
+        body = self._raw_body()
+        summary = _describe(body)
+
+        root = ElementTree.fromstring(body)
+        code = next((n.text for n in root.iter("resultCode") if n.text), None)
+
+        if code == "00":
+            items = list(root.iter("item"))
+            required = [tag for tag in SPEC_ITEM_FIELDS if tag != "essntlPartclrMatter"]
+            for index, item in enumerate(items):
+                missing = [tag for tag in required if item.find(tag) is None]
+                assert not missing, f"{index}번째 항목에 필수 필드 없음: {missing} | {summary}"
+            assert items, f"resultCode 는 00 인데 항목이 없습니다 | {summary}"
+        elif code == NO_DATA_CODE:
+            pytest.skip(f"확인서 없음(03) — 정상 응답 구조는 확인하지 못했습니다 | {summary}")
+        else:
+            pytest.fail(
+                "직접생산 API 가 현재 코드가 모르는 결과코드로 답했습니다. "
+                f"{summary} — 이 값을 그대로 보고하세요. 코드를 임의로 바꾸지 않습니다."
+            )
+
+    def test_the_parser_reads_the_real_response(self) -> None:
+        """실제 응답이 현재 파서를 통과합니다.
+
+        ⛔ 확인서가 있든 없든 둘 다 정상입니다. "있으면 직접생산기업" 이라고
+        하지 않으며, 유효기간을 어떤 날짜와도 비교하지 않습니다.
+        """
+        body = self._raw_body()
+        summary = _describe(body)
+
+        try:
+            records = parse_direct_production_list(body, _REAL_BUSINESS_NO)
+        except ApiResponseError as exc:
+            pytest.fail(
+                f"현재 코드가 모르는 결과코드입니다: resultCode={exc.code} "
+                f"/ resultMsg={exc.message} | {summary}"
+            )
+
+        for record in records:
+            # 물품 단위임을 실제 데이터로 확인한다 — 값은 출력하지 않는다.
+            assert record.product_item_no
+            assert record.valid_from <= record.valid_to
