@@ -1,4 +1,10 @@
-"""STEP 41 — 거래처명 기준 과거 확정 이력.
+"""STEP 41 · 64 — 같은 업체의 과거 확정 이력.
+
+.. note::
+    **묶는 키가 STEP 64 에서 거래처명 → 사업자등록번호로 바뀌었습니다**
+    (2026-08-30 고객 확정 · `DECISIONS.md` §0.9.5 원칙 4). 집계 규칙·모집단·
+    "판정하지 않는다" 는 원칙은 그대로입니다.
+
 
 고객이 *"실제 계약했던 업체명을 검색해서 공사 여부를 판단하기도 한다"* 고
 답했습니다(2026-08-25). 담당자가 지금 머릿속이나 다른 파일에서 하는 그 일을
@@ -13,7 +19,8 @@
 
 .. note::
     집계 기준은 :mod:`~procurement.reviews.past_labels` 와 **똑같고** 묶는 키만
-    거래처명입니다. 두 블록이 다른 기준으로 세면 화면의 숫자가 서로 어긋납니다.
+    사업자등록번호입니다. 두 블록이 다른 기준으로 세면 화면의 숫자가 서로
+    어긋납니다.
 """
 
 from __future__ import annotations
@@ -37,6 +44,11 @@ from procurement.reviews.past_labels import MIXED_TYPES, NO_HISTORY, SINGLE_TYPE
 #: 합성 데이터 — 실제 거래처명·사업자번호를 쓰지 않습니다.
 _ALPHA = "합성기업 가"
 _BETA = "합성기업 나"
+
+#: 합성 사업자등록번호 두 개. 묶음 키가 사업자번호이므로(STEP 64) 어느 번호로
+#: 넣었는지가 곧 "같은 업체인가" 가 됩니다.
+_ONE = "1000000001"
+_TWO = "2000000002"
 
 _DAY = date(2026, 3, 2)
 
@@ -230,40 +242,95 @@ class TestCurrentRowPolicy:
         assert body["past_labels"]["total"] == 1
 
 
-class TestCompanyNameIsNotNormalised:
-    """지시 §3 · §4 · §11-⑩ — 임의 정규화를 하지 않는다."""
+class TestBusinessNoIsTheGroupingKey:
+    """묶음 키는 **사업자등록번호**다.
 
-    def test_different_spellings_are_different_companies(self, db: Path) -> None:
-        """⛔ `(주)` · `주식회사` 를 떼거나 같은 업체로 추정하지 않는다."""
+    .. note::
+        **변경 사유(STEP 64).** 이 클래스는 원래
+        ``TestCompanyNameIsNotNormalised`` 였고, "거래처명을 임의로 정규화하지
+        않는다" 를 지키고 있었습니다. 그 자리는 *"어느 쪽으로 묶을지는 **고객
+        확인 사항**"* 이라고 적어 두고 기다리던 자리였고, **2026-08-30 고객이
+        답했습니다**(`DECISIONS.md` §0.9.5 원칙 4).
+
+        > 사업자등록번호가 동일하면 동일 업체로 판단한다.
+
+        검사를 느슨하게 만든 것이 아니라 **바뀐 규칙에 맞게 사실을 다시
+        적었습니다.** 정규화를 하지 않는다는 원래의 약속은 오히려 더
+        강해졌습니다 — 이제 거래처명은 묶음에 **아예 쓰이지 않기** 때문입니다.
+    """
+
+    def test_different_spellings_are_one_company(self, db: Path) -> None:
+        """⛔ 표기가 달라도 사업자번호가 같으면 **한 업체**다.
+
+        원래 이 시험은 `(주)` · `주식회사` 를 떼지 않는다는 것을 지켰습니다.
+        지금은 **떼고 말고 할 일이 없습니다** — 이름을 보지 않습니다.
+        """
         _confirm(db, _add(db, "합성기업 가(주)"), CONSTRUCTION)
         current = _add(db, "(주)합성기업 가")
 
-        assert _labels(db, current)["total"] == 0
+        assert _labels(db, current)["total"] == 1
 
-    def test_spacing_differences_are_different_companies(self, db: Path) -> None:
-        """적요와 달리 거래처명은 **공백을 지우지 않는다** — 정규화 규칙이 없다."""
+    def test_four_spellings_of_one_business_no(self, db: Path) -> None:
+        """사례 A — 한 사업자번호에 표기가 넷이어도 이력은 하나로 모인다.
+
+        고객이 든 예(`SK브로드밴드주식회사` · `SK브로드밴드(주)` ·
+        `에스케이브로드밴드(주)` · `SK브로드밴드`)와 같은 모양입니다. 예전에는
+        **넷으로 나뉘어** 실제보다 적게 보였습니다.
+        """
+        for name in ("합성기업 가주식회사", "합성기업 가(주)", "㈜합성기업 가", "합성기업 가"):
+            _confirm(db, _add(db, name, business_no=_ONE), CONSTRUCTION)
+        current = _add(db, "합성기업 가", business_no=_ONE)
+
+        assert _labels(db, current)["total"] == 4
+
+    def test_spacing_differences_are_one_company(self, db: Path) -> None:
+        """공백 차이도 마찬가지다 — 사업자번호가 같으면 함께 잡힌다."""
         _confirm(db, _add(db, "합성기업가"), CONSTRUCTION)
         current = _add(db, _ALPHA)  # '합성기업 가'
 
+        assert _labels(db, current)["total"] == 1
+
+    def test_a_different_business_no_has_its_own_history(self, db: Path) -> None:
+        """다른 업체의 이력은 섞이지 않는다(원래 이 시험이 지키던 사실)."""
+        _confirm(db, _add(db, _ALPHA, business_no=_ONE), CONSTRUCTION)
+        current = _add(db, _BETA, business_no=_TWO)
+
         assert _labels(db, current)["total"] == 0
 
-    def test_a_different_company_has_its_own_history(self, db: Path) -> None:
-        _confirm(db, _add(db, _ALPHA), CONSTRUCTION)
-        current = _add(db, _BETA)
+    def test_same_name_different_business_no_is_separated(self, db: Path) -> None:
+        """사례 B — 이름이 같아도 사업자번호가 다르면 **다른 업체**다.
 
-        assert _labels(db, current)["total"] == 0
-
-    def test_same_name_different_business_no_is_counted_together(self, db: Path) -> None:
-        """지시 §11-⑪ — 이름이 같고 사업자번호가 다르면?
-
-        ⚠️ **거래처명으로만 묶습니다.** 사업자번호를 새 묶음 기준으로 쓰지
-        않기로 했으므로(§4), 이 경우 이력이 합쳐집니다. 실측상 현재 배치에서
-        1종(`(주)케이티`)이 여기에 해당합니다 — **고객 확인 사항**입니다.
+        .. note::
+            **변경 사유(STEP 64).** 이 시험은 원래 반대(합쳐진다)를 고정하면서
+            *"실측상 `(주)케이티` 1종이 여기 해당한다 — **고객 확인 사항**"*
+            이라고 적어 두었습니다. 고객이 *"사업자등록번호가 다르면 거래처명이
+            같더라도 동일 업체로 묶지 않는다"* 고 답해 방향이 정해졌습니다.
         """
-        _confirm(db, _add(db, _ALPHA, business_no="1000000001"), CONSTRUCTION)
-        current = _add(db, _ALPHA, business_no="2000000002")
+        _confirm(db, _add(db, _ALPHA, business_no=_ONE), CONSTRUCTION)
+        current = _add(db, _ALPHA, business_no=_TWO)
+
+        assert _labels(db, current)["total"] == 0
+
+    def test_a_renamed_company_keeps_its_history(self, db: Path) -> None:
+        """사례 C — 이름이 전혀 달라져도 사업자번호가 같으면 이력이 이어진다.
+
+        ⛔ **상호변경을 시스템이 판정한 것이 아닙니다.** 고객이 정한 기준
+        (사업자번호)을 그대로 적용한 결과일 뿐이며, 왜 이름이 달라졌는지는
+        사람이 확인할 일입니다.
+        """
+        _confirm(db, _add(db, "A기업", business_no=_ONE), CONSTRUCTION)
+        current = _add(db, "B기업", business_no=_ONE)
 
         assert _labels(db, current)["total"] == 1
+
+    def test_the_name_is_still_shown(self, db: Path) -> None:
+        """거래처명은 **표시용**으로 남는다 — 이 건의 이름을 그대로 싣는다."""
+        _confirm(db, _add(db, "A기업", business_no=_ONE), CONSTRUCTION)
+        current = _add(db, "B기업", business_no=_ONE)
+
+        block = _labels(db, current)
+        assert block["company_name"] == "B기업"  # 표시용 — 이 건의 이름
+        assert block["business_no"] == _ONE  # 기준 — 무엇으로 셌는가
 
 
 class TestNoVerdictFields:
@@ -292,7 +359,11 @@ class TestNoVerdictFields:
     def test_the_block_holds_only_facts(self, db: Path) -> None:
         current = _add(db, _ALPHA)
 
+        # 변경 사유(STEP 64): 묶음 기준이 사업자번호가 되면서 "무엇으로 셌는가"
+        # 를 밝히는 business_no 가 늘었다. 비교를 느슨하게 하지 않고 **새 필드를
+        # 기대 집합에 함께 적는다** — 이 시험은 "사실만 담는다" 를 지킨다.
         assert set(_labels(db, current)) == {
+            "business_no",
             "company_name",
             "labels",
             "total",

@@ -287,14 +287,16 @@ class CompanyLabelsResponseModel(BaseModel):
         빼 두었습니다 — 거래처 축에서는 그것이 "이 업체 = 이 유형" 으로
         읽히기 쉽기 때문입니다.
 
-    .. warning::
-        ⚠️ **거래처명이 정확히 같은 건만 셉니다.** 정규화 규칙이 없어
-        새로 만들지 않았습니다. 표기가 갈리면 이력이 나뉘고, 이름이 같고
-        사업자번호가 다르면 합쳐집니다 —
+    .. note::
+        **사업자등록번호가 정확히 같은 건만 셉니다**(2026-08-30 고객 확정 ·
+        ``DECISIONS.md`` §0.9.5 원칙 4). 거래처명 표기가 갈려도 번호가 같으면
+        한 업체로 모이고, 이름이 같아도 번호가 다르면 나뉩니다 —
         :mod:`~procurement.reviews.company_labels` 참조.
 
     Attributes:
-        company_name: 이 이력을 센 기준이 된 거래처명(저장된 값 그대로).
+        business_no: 이 이력을 센 **기준**이 된 사업자등록번호.
+        company_name: 이 건의 거래처명(**표시용**). ⛔ 묶음 기준이 아닙니다 —
+            같은 사업자번호에 다른 표기가 섞여 있어도 이력은 하나입니다.
         labels: 유형별 건수(내림차순). 이력이 없으면 빈 목록.
         total: 과거 확정 건수 합계.
         type_count: 과거에 붙은 서로 다른 유형 수.
@@ -306,6 +308,7 @@ class CompanyLabelsResponseModel(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    business_no: str
     company_name: str
     labels: list[PastLabelResponseModel]
     total: int
@@ -349,7 +352,7 @@ class ReviewItemResponseModel(BaseModel):
         analysis: 자동 분석 결과.
         review: 담당자 확정 결과.
         past_labels: 같은 적요의 과거 확정 이력(참고).
-        company_labels: 같은 **거래처**의 과거 확정 이력(참고).
+        company_labels: 같은 **업체**(사업자등록번호 기준)의 과거 확정 이력(참고).
             ⛔ 적요 이력(``past_labels``)과 **다른 블록**입니다 — 섞이면
             어느 축의 이력인지 알 수 없게 됩니다.
         description_hints: 적요에서 발견된 낱말들 — **참고 근거**.
@@ -376,7 +379,7 @@ class ReviewItemResponseModel(BaseModel):
             analysis=_analysis_of(review),
             review=_review_state_of(review),
             past_labels=_past_labels_of(target.past_labels, review.top_candidate),
-            company_labels=_company_labels_of(target.company_labels, purchase.company_name),
+            company_labels=_company_labels_of(target.company_labels, purchase),
             # ⛔ 원본 적요만 보고 만든다. 확정값·분석 결과를 읽지 않으므로
             #    담당자가 무엇을 골랐든 결과가 달라지지 않는다.
             description_hints=[
@@ -646,14 +649,18 @@ def _past_labels_of(summary: PastLabelSummary, top_candidate: object) -> PastLab
     )
 
 
-def _company_labels_of(summary: PastLabelSummary, company_name: str) -> CompanyLabelsResponseModel:
-    """거래처 과거 확정 이력을 응답 모델로 변환합니다.
+def _company_labels_of(summary: PastLabelSummary, purchase: Purchase) -> CompanyLabelsResponseModel:
+    """같은 업체의 과거 확정 이력을 응답 모델로 변환합니다.
 
-    ⛔ 적요 이력과 달리 **최다 유형·후보 비교를 담지 않습니다** — 거래처
+    ⛔ 적요 이력과 달리 **최다 유형·후보 비교를 담지 않습니다** — 업체
     축에서는 그것이 판정으로 읽히기 쉽기 때문입니다.
+
+    ``business_no`` 는 **무엇을 기준으로 셌는지**, ``company_name`` 은 이 건의
+    거래처명(표시용)입니다. 둘을 함께 실어 화면이 기준을 밝힐 수 있게 합니다.
     """
     return CompanyLabelsResponseModel(
-        company_name=company_name,
+        business_no=purchase.business_no,
+        company_name=purchase.company_name,
         labels=[
             PastLabelResponseModel(
                 purchase_type=label.purchase_type, label=label.label, count=label.count

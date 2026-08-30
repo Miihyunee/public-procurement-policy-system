@@ -111,7 +111,8 @@ class ReviewTarget:
         review: DB-2 검토 상태(분석 결과 + 담당자 확정).
         past_labels: 같은 적요를 **과거에 어떻게 확정했는지**. 참고 정보이며
             ⛔ 자동 확정에 쓰지 않습니다.
-        company_labels: 같은 **거래처**를 과거에 어떻게 확정했는지. 적요
+        company_labels: 같은 **업체**(사업자등록번호 기준)를 과거에 어떻게
+            확정했는지. 적요
             이력과 **같은 기준**으로 세며(확정 + 판단 보류 제외), 묶는 키만
             거래처명입니다. ⛔ 자동 확정에 쓰지 않습니다.
     """
@@ -406,7 +407,7 @@ class ReviewService:
                     purchase=purchase,
                     review=review,
                     past_labels=index.summary_for(purchase.description),
-                    company_labels=company_index.summary_for(purchase.company_name),
+                    company_labels=company_index.summary_for(purchase.business_no),
                 )
             )
 
@@ -461,7 +462,7 @@ class ReviewService:
                 purchase=purchase,
                 review=review,
                 past_labels=index.summary_for(purchase.description),
-                company_labels=company_index.summary_for(purchase.company_name),
+                company_labels=company_index.summary_for(purchase.business_no),
             )
             if _keeps(target, query):
                 targets.append(target)
@@ -767,13 +768,16 @@ class ReviewService:
         return self._past_label_index().summary_for(purchase.description)
 
     def _company_labels_for(self, purchase: Purchase) -> PastLabelSummary:
-        """한 건에 대한 **거래처** 과거 확정 이력.
+        """한 건에 대한 **같은 업체**의 과거 확정 이력.
+
+        묶는 키는 **사업자등록번호**입니다(2026-08-30 고객 확정 · §0.9.5 원칙
+        4). 거래처명 표기가 달라도 번호가 같으면 한 업체로 셉니다.
 
         ⛔ 자기 자신의 확정도 이력에 포함됩니다 — :meth:`_past_labels_for`
         와 **같은 규칙**입니다. 한쪽만 제외하면 두 블록의 숫자가 서로
         어긋나 담당자가 어느 쪽을 믿어야 할지 알 수 없게 됩니다.
         """
-        return self._company_label_index().summary_for(purchase.company_name)
+        return self._company_label_index().summary_for(purchase.business_no)
 
     def _require_purchase(self, purchase_id: int) -> Purchase:
         """구매를 조회하고 없으면 예외를 냅니다."""

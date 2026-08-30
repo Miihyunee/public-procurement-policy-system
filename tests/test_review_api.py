@@ -153,6 +153,10 @@ class TestResponseSeparatesSourceAnalysisReview:
         분석·확정·적요 이력 어디에도 섞이지 않는다는 사실을 검사한다.
         거래처 이력이 적요 이력(``past_labels``)과 섞이면 어느 축의 사실인지
         알 수 없게 되고, ``review`` 안에 들어가면 확정값으로 오인된다.
+
+        (STEP 64 에서 그 블록의 묶는 키가 거래처명 → **사업자등록번호**로
+        바뀌었다. 이 시험이 지키는 사실 — 블록이 서로 섞이지 않는다 — 은
+        묶는 키와 무관하므로 그대로다.)
         """
         purchase_id = _purchase(db_path)
         _analyze(db_path, purchase_id, (SERVICE, "0.72"), (CONSTRUCTION, "0.68"))
