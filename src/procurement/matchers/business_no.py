@@ -212,3 +212,37 @@ def _to_text(value: object) -> str:
     if isinstance(value, str):
         return text
     return _TRAILING_DECIMAL_PATTERN.sub("", text)
+
+
+def business_no_search_key(value: object) -> str:
+    """**검색어 비교용** 키 — 구분자만 지웁니다.
+
+    ``123-45-67890`` 과 ``1234567890`` 은 같은 사업자등록번호이지만, 지출결의서
+    · 세금계산서에는 **하이픈이 있는 형태로 인쇄**되고 시스템에는 숫자만
+    저장됩니다. 담당자가 종이에 있는 대로 옮겨 적으면 아무것도 찾지 못하고,
+    **0건은 "그런 거래가 없다" 로 읽힙니다.**
+
+    :func:`normalize_business_no` 와 **다릅니다.** 그쪽은 결합키를 만드는
+    함수라 10자리·숫자만을 요구하지만, 검색은 앞 몇 자리만 넣는 일이 흔해
+    자릿수를 따지지 않습니다.
+
+    ⛔ **값을 저장하거나 기업을 연결하는 데 쓰지 않습니다.** 오직 "보여줄지
+    말지" 를 정하는 비교용입니다.
+
+    Args:
+        value: 검색어 또는 저장된 사업자등록번호.
+
+    Returns:
+        구분자를 지운 문자열. 입력이 비면 빈 문자열.
+
+    Examples:
+        >>> business_no_search_key("123-45-67890")
+        '1234567890'
+        >>> business_no_search_key("123 45")
+        '12345'
+        >>> business_no_search_key(None)
+        ''
+    """
+    if value is None:
+        return ""
+    return _SEPARATOR_PATTERN.sub("", _to_text(value)).strip()

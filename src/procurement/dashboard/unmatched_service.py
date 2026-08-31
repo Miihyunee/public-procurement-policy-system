@@ -39,6 +39,7 @@ from decimal import Decimal
 from typing import Final
 
 from procurement.database.purchase_repository import PurchaseRepository
+from procurement.matchers.business_no import business_no_search_key
 
 #: 정렬 기준 — 미매칭 구매금액 합계.
 SORT_AMOUNT: Final = "amount"
@@ -247,6 +248,11 @@ def _keeps(row: UnmatchedCompany, search: str) -> bool:
     if not needle:
         return True
     if needle in row.business_no:
+        return True
+    # 하이픈이 있는 표기로 넣어도 찾을 수 있어야 한다 — 검토 화면 검색과 같은
+    # 이유다(STEP 73 검수에서 발견).
+    number = business_no_search_key(needle)
+    if number and number in business_no_search_key(row.business_no):
         return True
     return any(needle in name for name in row.company_names)
 

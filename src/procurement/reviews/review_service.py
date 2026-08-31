@@ -38,6 +38,7 @@ from procurement.core.description_key import normalize_description
 from procurement.core.period import PeriodFilter
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.database.review_repository import ReviewRepository
+from procurement.matchers.business_no import business_no_search_key
 from procurement.models.purchase import Purchase
 from procurement.models.review import (
     CONFIRMED,
@@ -221,7 +222,15 @@ def _keeps(target: ReviewTarget, query: ReviewQuery) -> bool:
             target.purchase.company_name,
             target.purchase.business_no,
         )
-        if needle and not any(needle in normalize_description(value) for value in haystacks):
+        # 사업자등록번호는 **한 번 더** 본다. 종이(지출결의서·세금계산서)에는
+        # `123-45-67890` 으로 인쇄되고 DB 에는 숫자만 저장되어, 담당자가 있는
+        # 그대로 옮겨 적으면 0건이 나온다 — 그리고 0건은 "그런 거래가 없다"
+        # 로 읽힌다(STEP 73 검수에서 발견).
+        number = business_no_search_key(query.search)
+        matched = any(needle in normalize_description(value) for value in haystacks) or (
+            bool(number) and number in business_no_search_key(target.purchase.business_no)
+        )
+        if needle and not matched:
             return False
 
     if query.status != ANY and review.review_status != query.status:
