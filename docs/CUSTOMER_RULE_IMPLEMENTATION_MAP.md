@@ -285,3 +285,36 @@ DECISIONS.md 에 🟢 로 기록 (🟡 였다면 이때 🟢 이 된다)
 
 ⚠️ **축 ① 은 설정, 축 ② 는 코드다.** 같은 "결의일자" 라는 답이 와도 드는
 품이 다르다 — 축 ① 은 설정값 하나, 축 ② 는 규칙 신설이다.
+
+---
+
+## 7. 답변이 오면 **깨질 것으로 예상되는 시험**
+
+⚠️ 아래 시험들은 **현재 동작을 기록**하고 있다. 답변으로 업무규칙이 바뀌면
+**깨지는 것이 정상**이며, 그 깨짐이 "숫자가 달라진다" 는 알림이다(§5 원칙 4 ①).
+
+⛔ 깨졌다고 지우지 않는다. 기대값을 갱신하고 **왜 바뀌었는지 시험에 적는다.**
+
+| 답변 | 먼저 깨질 시험(파수꾼) | 무엇을 지키고 있었나 |
+|---|---|---|
+| **W-1-2** 축 ② 변경 | `test_achievement_boundaries.py::TestGeneralPolicyBasisIsCurrentBehaviour` | 일반 3정책이 지급일을 본다는 **현재 동작**(확정 아님) |
+| 〃 | `test_achievement_boundaries.py::TestUnconfirmedRulesAreNotImplemented` | 미확정 규칙이 구현되지 않았다는 사실 |
+| 〃 | `test_unconfirmed_rules_impact.py::TestTheDocumentMatchesTheCode` | 문서가 적은 현재 동작과 코드의 일치 |
+| 〃 | `test_customer_answer_readiness.py::TestTheMapMatchesTheCode` | 결의일자 단독 규칙이 **없다**는 사실 |
+| **Q5-8** 저장 허용 | `test_performance_exclusion.py::test_q5_8_zero_and_negative_still_rejected_at_import` | 0원·음수가 적재되지 않는다는 현재 동작 |
+| 〃 | `test_import_trace.py` · `test_import_trace_export.py` | 미적재 행 수·사유·CSV 내용 |
+| 〃 | `test_end_to_end_import_calculation.py` | 원본 = 적재 + 미적재 항등식의 건수 |
+| **Q5-9** 공란 제외 | `test_unconfirmed_rules_impact.py::test_a_blank_budget_account_is_not_excluded` | 공란이 제외되지 않는다는 현재 동작 |
+| 〃 | `test_performance_exclusion.py::test_blank_account_is_not_excluded` | 〃 (계산 대상 포함) |
+| **Q71-B** 되돌리기 허용 | `test_performance_exclusion.py::TestBudgetAccountRule` (`can_reopen` · 되돌려도 유지) | 규칙 건은 되돌릴 수 없다는 현재 제한 |
+| **Q71-A** 원본 삭제 | `test_performance_exclusion.py::TestReversalAndHistory` · `test_the_row_is_never_deleted` | 원본이 지워지지 않는다는 현재 구조 |
+| **Q71-C** 금액 검색 | 없음 — 추가 기능이라 기존 시험이 깨지지 않는다 | — |
+| **Q71-D** 묶음 | `test_customer_answer_scope.py::TestNoExpenseDocumentGrouping` | 묶음 축·필드가 없다는 사실 |
+| **W-11** 조회 기준일 | `test_collector_sync_service.py` | 조회 파라미터 구성 |
+
+⚠️ 각 답변마다 **문구 시험**도 함께 깨질 수 있다 —
+`test_operations_checklist.py` · `test_operations_check_result.py` ·
+`test_customer_rule_implementation_map.py` 는 "아직 확정되지 않았다" 는 **문장**을
+지킨다. 확정되면 그 문장을 먼저 고치고 시험을 맞춘다.
+
+⛔ **답변이 "현행 유지" 면 위 시험 중 어느 것도 건드리지 않는다**(§5 원칙 3).
