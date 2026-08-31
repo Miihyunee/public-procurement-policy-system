@@ -454,7 +454,15 @@ class TestExistingBlocksAreUntouched:
             assert item["company_labels"]["total"] == 1
 
     def test_all_blocks_stay_independent(self, db: Path) -> None:
-        """지시 §15 — 기존 필드를 삭제하거나 의미를 바꾸지 않았다."""
+        """지시 §15 — 기존 필드를 삭제하거나 의미를 바꾸지 않았다.
+
+        .. note::
+            변경 사유(STEP 70): **실적 산입 여부**(``performance``) 블록이
+            늘었습니다(2026-08-31 고객 확정). 비교를 느슨하게 하지 않고 **새
+            블록을 기대 집합에 함께 적었고**, 그것이 다른 블록 안에 섞이지
+            않는다는 검사를 더했습니다 — 구매유형과 실적 산입은 다른 개념이라
+            한 블록으로 읽히면 안 됩니다.
+        """
         current = _add(db, _ALPHA)
 
         body: Any = TestClient(create_app(db)).get(f"/reviews/{current}").json()
@@ -463,6 +471,7 @@ class TestExistingBlocksAreUntouched:
             "source",
             "analysis",
             "review",
+            "performance",
             "past_labels",
             "company_labels",
             "description_hints",
@@ -470,6 +479,10 @@ class TestExistingBlocksAreUntouched:
         assert "company_labels" not in body["review"]
         assert "company_labels" not in body["analysis"]
         assert "company_labels" not in body["past_labels"]
+        # ⛔ 실적 산입 여부가 확정 블록·분석 블록 안으로 새지 않는다.
+        assert "performance_status" not in body["review"]
+        assert "performance" not in body["review"]
+        assert "performance" not in body["analysis"]
 
     def test_reading_writes_nothing(self, db: Path) -> None:
         """지시 §13 · §15 — 조회가 데이터를 바꾸지 않는다."""

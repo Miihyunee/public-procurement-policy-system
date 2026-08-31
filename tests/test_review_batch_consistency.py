@@ -291,13 +291,24 @@ class TestCurrentAndSuperseded:
         assert len(legacy_ids(client)) == 4
 
     def test_no_new_supersede_logic_was_added(self) -> None:
-        """⛔ 기간 조건은 배치 비교 한 줄뿐 — 대체 판정을 다시 하지 않는다."""
+        """⛔ 기간 조건은 배치 비교 한 줄뿐 — 대체 판정을 다시 하지 않는다.
+
+        .. note::
+            변경 사유(STEP 70): 검토 목록의 모집단 메서드 이름이
+            ``find_for_calculation`` → ``find_for_review`` 로 바뀌었습니다.
+            실적 제외가 생기면서 **검토 대상과 계산 대상이 갈라졌기** 때문이며,
+            검토 화면은 제외된 행도 보여야 합니다(사유 확인·되돌리기).
+
+            이 시험이 지키던 사실 — "대체 판정을 여기서 다시 하지 않고 저장소
+            조회에 맡긴다" — 는 그대로이므로, 검사를 느슨하게 하지 않고
+            **바뀐 이름으로** 고쳤습니다.
+        """
         from procurement.reviews.review_service import keeps_batch
 
         source = keeps_batch.__doc__ or ""
 
         assert "SUPERSEDED" in source
-        assert "find_for_calculation" in source
+        assert "find_for_review" in source
 
 
 # ----------------------------------------------------------------------

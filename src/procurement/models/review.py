@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from procurement.core.performance_exclusion import INCLUDED
 from procurement.core.purchase_type import PURCHASE_TYPE_LABELS, PURCHASE_TYPES
 from procurement.models.classification import NOT_ANALYZED, TypeCandidate
 
@@ -55,7 +56,15 @@ ACTION_CONFIRMED = "CONFIRMED"
 ACTION_REOPENED = "REOPENED"
 
 #: 허용되는 이력 행위.
-REVIEW_ACTIONS: frozenset[str] = frozenset({ACTION_ANALYZED, ACTION_CONFIRMED, ACTION_REOPENED})
+#: 담당자가 **실적에서 뺀** 이력(2026-08-31 고객 확정 · STEP 70).
+ACTION_EXCLUDED = "EXCLUDED"
+
+#: 실적 제외를 **되돌린** 이력.
+ACTION_INCLUDED = "INCLUDED"
+
+REVIEW_ACTIONS: frozenset[str] = frozenset(
+    {ACTION_ANALYZED, ACTION_CONFIRMED, ACTION_REOPENED, ACTION_EXCLUDED, ACTION_INCLUDED}
+)
 
 
 class ReviewValidationError(ValueError):
@@ -103,6 +112,18 @@ class PurchaseReview:
         reviewed_by: 확정자.
         reviewed_at: 확정 시각.
         review_note: 담당자 메모.
+        performance_status: **실적 산입 여부** — ``INCLUDED`` / ``EXCLUDED``
+            (2026-08-31 고객 확정 · STEP 70).
+
+            .. warning::
+                ⛔ ``final_purchase_type`` 과 **다른 개념**입니다. 유형을
+                용역으로 확정한다고 실적에서 빠지지 않습니다. 한 필드에 섞지
+                않으려고 따로 둡니다.
+
+        exclusion_reason: 실적에서 뺀 사유 코드
+            (:mod:`procurement.core.performance_exclusion`). 포함 상태면 ``None``.
+        excluded_by: 실적에서 뺀 사람.
+        excluded_at: 실적에서 뺀 시각.
 
         review_id: 내부 고유 ID. 저장 전에는 ``None``.
         created_at / updated_at: 저장 시 채워집니다.
@@ -122,6 +143,11 @@ class PurchaseReview:
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
     review_note: str | None = None
+
+    performance_status: str = INCLUDED
+    exclusion_reason: str | None = None
+    excluded_by: str | None = None
+    excluded_at: datetime | None = None
 
     review_id: int | None = None
     created_at: datetime | None = None

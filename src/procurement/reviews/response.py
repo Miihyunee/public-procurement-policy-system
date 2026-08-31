@@ -32,6 +32,17 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, StrictStr, field_serializer
 
 from procurement.core.description_hints import DescriptionHint, find_hints
+from procurement.core.performance_exclusion import (
+    EXCLUDED,
+    EXCLUDED_BUDGET_ACCOUNTS,
+    EXCLUSION_REASON_LABELS,
+    INCLUDED,
+    PERFORMANCE_STATUS_LABELS,
+    REASON_BUDGET_ACCOUNT_RULE,
+    SHORT_TERM_VEHICLE_NOTICE,
+    exclusion_reason_label,
+    is_excluded_budget_account,
+)
 from procurement.core.purchase_type import PURCHASE_TYPE_LABELS
 from procurement.models.purchase import Purchase
 from procurement.models.review import (
@@ -215,6 +226,104 @@ class ReviewStateResponseModel(BaseModel):
     review_note: str | None
 
 
+class PerformanceResponseModel(BaseModel):
+    """**실적 산입 여부** — 이 구매가 달성률 계산에 들어가는가.
+
+    .. warning::
+        ⛔ **구매유형과 다른 블록입니다.** ``review`` 안에 넣지 않은 이유는,
+        "용역으로 확정했다" 와 "강사료라서 실적에서 뺐다" 가 한 값으로 읽히면
+        안 되기 때문입니다. 한 건이 **용역이면서 실적 제외**일 수 있습니다.
+
+    Attributes:
+        status: ``INCLUDED`` / ``EXCLUDED``.
+        status_label: 한글 라벨(실적 포함 / 실적 제외).
+        reason: 제외 사유 코드. 포함 상태면 ``null``.
+        reason_label: 사유의 한글 라벨. 포함 상태면 ``null``.
+        excluded_by: 제외를 확정한 사람. 규칙으로 빠진 건이면 ``null``.
+        excluded_at: 제외한 시각. 〃
+        by_budget_account_rule: **예산과목 규칙**으로 빠졌는가.
+            ``true`` 면 담당자가 되돌릴 수 없습니다 — 고객이 확정한 규칙입니다.
+        can_reopen: 담당자가 실적 제외를 되돌릴 수 있는가.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    status_label: str
+    reason: str | None
+    reason_label: str | None
+    excluded_by: str | None
+    excluded_at: datetime | None
+    by_budget_account_rule: bool
+    can_reopen: bool
+
+    @classmethod
+    def from_target(cls, review: PurchaseReview, purchase: Purchase) -> PerformanceResponseModel:
+        """검토 상태와 구매 원본에서 실적 산입 여부를 만듭니다.
+
+        빠지는 경로가 둘이라 **둘 다** 봅니다 — 예산과목 규칙과 담당자 확정.
+        규칙으로 빠진 건은 담당자 확정이 없어도 ``EXCLUDED`` 로 나갑니다.
+        """
+        by_rule = is_excluded_budget_account(purchase.budget_account)
+        by_reviewer = review.performance_status == EXCLUDED
+
+        if by_rule:
+            return cls(
+                status=EXCLUDED,
+                status_label=PERFORMANCE_STATUS_LABELS[EXCLUDED],
+                reason=REASON_BUDGET_ACCOUNT_RULE,
+                reason_label=exclusion_reason_label(REASON_BUDGET_ACCOUNT_RULE),
+                # 규칙으로 빠진 건은 사람이 누른 것이 아니다 — 비워 둔다.
+                excluded_by=None,
+                excluded_at=None,
+                by_budget_account_rule=True,
+                can_reopen=False,
+            )
+
+        status = EXCLUDED if by_reviewer else INCLUDED
+        return cls(
+            status=status,
+            status_label=PERFORMANCE_STATUS_LABELS[status],
+            reason=review.exclusion_reason if by_reviewer else None,
+            reason_label=exclusion_reason_label(review.exclusion_reason) if by_reviewer else None,
+            excluded_by=review.excluded_by if by_reviewer else None,
+            excluded_at=review.excluded_at if by_reviewer else None,
+            by_budget_account_rule=False,
+            can_reopen=by_reviewer,
+        )
+
+
+class ExcludePerformanceRequest(BaseModel):
+    """실적 제외 확정 요청 본문.
+
+    Attributes:
+        reason: 제외 사유 코드. **필수**입니다 — 왜 뺐는지 없이 빼면 나중에
+            근거를 확인할 수 없습니다.
+        excluded_by: 확정한 사람.
+        note: 메모. 사유가 ``OTHER`` 일 때 무엇인지 적습니다.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reason: StrictStr
+    excluded_by: StrictStr | None = None
+    note: StrictStr | None = None
+
+
+class IncludePerformanceRequest(BaseModel):
+    """실적 제외를 되돌리는 요청 본문.
+
+    Attributes:
+        changed_by: 되돌린 사람.
+        note: 사유.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    changed_by: StrictStr | None = None
+    note: StrictStr | None = None
+
+
 class PastLabelResponseModel(BaseModel):
     """과거 같은 적요가 확정된 유형 하나.
 
@@ -352,6 +461,7 @@ class ReviewItemResponseModel(BaseModel):
         analysis: 자동 분석 결과.
         review: 담당자 확정 결과.
         past_labels: 같은 적요의 과거 확정 이력(참고).
+        performance: **실적 산입 여부**(포함/제외). ⛔ ``review`` 와 별개입니다.
         company_labels: 같은 **업체**(사업자등록번호 기준)의 과거 확정 이력(참고).
             ⛔ 적요 이력(``past_labels``)과 **다른 블록**입니다 — 섞이면
             어느 축의 이력인지 알 수 없게 됩니다.
@@ -363,6 +473,7 @@ class ReviewItemResponseModel(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     source: PurchaseSourceResponseModel
+    performance: PerformanceResponseModel
     analysis: AnalysisResponseModel
     review: ReviewStateResponseModel
     past_labels: PastLabelsResponseModel
@@ -376,6 +487,7 @@ class ReviewItemResponseModel(BaseModel):
         review = target.review
         return cls(
             source=PurchaseSourceResponseModel.from_purchase(purchase),
+            performance=PerformanceResponseModel.from_target(review, purchase),
             analysis=_analysis_of(review),
             review=_review_state_of(review),
             past_labels=_past_labels_of(target.past_labels, review.top_candidate),
@@ -590,6 +702,58 @@ def purchase_type_options() -> list[PurchaseTypeOptionResponseModel]:
     ]
     options.append(PurchaseTypeOptionResponseModel(value=None, label="판단 보류"))
     return options
+
+
+class ExclusionReasonOptionResponseModel(BaseModel):
+    """실적 제외 사유 선택지 하나.
+
+    Attributes:
+        value: 사유 코드.
+        label: 화면 라벨.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    value: str
+    label: str
+
+
+class ExclusionReasonsResponseModel(BaseModel):
+    """실적 제외 사유 선택지와 안내 문구.
+
+    Attributes:
+        items: 담당자가 고를 수 있는 사유. 화면 선택지의 **순서**입니다.
+        vehicle_lease_notice: 단기 차량 임차를 어떻게 판단하는지에 대한 안내.
+
+            ⛔ **자동 판정 기준이 아닙니다.** 사람에게 보여 주는 말이며,
+            코드가 이 문장으로 무엇을 결정하지 않습니다.
+        excluded_budget_accounts: 내용과 관계없이 실적에서 빠지는 예산과목.
+            화면이 "이 건은 규칙으로 빠졌습니다" 를 설명할 때 씁니다.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[ExclusionReasonOptionResponseModel]
+    vehicle_lease_notice: str
+    excluded_budget_accounts: list[str]
+
+
+def build_exclusion_reasons_response() -> ExclusionReasonsResponseModel:
+    """선택지를 만듭니다 — 교육비 · 강사료 · 단기 차량 임차 · 기타.
+
+    ⛔ 화면이 선택지를 지어내지 않도록 서버가 내려줍니다.
+    :data:`~procurement.core.performance_exclusion.EXCLUSION_REASON_LABELS` 를
+    그대로 쓰며, 규칙이 붙이는 사유(예산과목)는 **선택지에 넣지 않습니다** —
+    담당자가 고를 수 있는 것이 아니기 때문입니다.
+    """
+    return ExclusionReasonsResponseModel(
+        items=[
+            ExclusionReasonOptionResponseModel(value=code, label=label)
+            for code, label in EXCLUSION_REASON_LABELS.items()
+        ],
+        vehicle_lease_notice=SHORT_TERM_VEHICLE_NOTICE,
+        excluded_budget_accounts=sorted(EXCLUDED_BUDGET_ACCOUNTS),
+    )
 
 
 def _candidate_of(candidate: object) -> CandidateResponseModel:

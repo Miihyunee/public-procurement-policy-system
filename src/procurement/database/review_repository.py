@@ -38,6 +38,11 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Final
 
+from procurement.core.performance_exclusion import (
+    EXCLUDED,
+    INCLUDED,
+    validate_exclusion_reason,
+)
 from procurement.database.base import BaseRepository
 from procurement.models.classification import (
     ANALYZED,
@@ -47,6 +52,8 @@ from procurement.models.classification import (
 from procurement.models.review import (
     ACTION_ANALYZED,
     ACTION_CONFIRMED,
+    ACTION_EXCLUDED,
+    ACTION_INCLUDED,
     ACTION_REOPENED,
     CONFIRMED,
     PENDING,
@@ -84,6 +91,14 @@ CREATE TABLE IF NOT EXISTS purchase_review (
     reviewed_at DATETIME,
     review_note TEXT,
 
+    -- 실적 산입 여부(2026-08-31 고객 확정 · STEP 70).
+    -- ⛔ final_purchase_type 과 다른 개념이라 별도 컬럼으로 둔다.
+    -- 기본값 INCLUDED — 아무것도 하지 않은 행은 실적에 그대로 들어간다.
+    performance_status TEXT NOT NULL DEFAULT 'INCLUDED',
+    exclusion_reason TEXT,
+    excluded_by TEXT,
+    excluded_at DATETIME,
+
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 )
@@ -110,6 +125,20 @@ CREATE_INDEX_SQL = (
     "ON purchase_review_history (purchase_id)",
     "CREATE INDEX IF NOT EXISTS idx_review_status ON purchase_review (review_status)",
 )
+
+
+def _optional_text(row: sqlite3.Row, column: str) -> str | None:
+    """구(舊) 스키마 DB 에서도 안전하게 컬럼 값을 읽습니다.
+
+    ``ALTER TABLE`` 마이그레이션 전의 DB 를 그대로 열었을 때 컬럼이 없으면
+    :class:`IndexError` 가 납니다. 없는 컬럼은 **값이 없는 것**으로 봅니다 —
+    실적 산입 여부라면 그것이 곧 :data:`INCLUDED`(기본값)입니다.
+    """
+    try:
+        value = row[column]
+    except IndexError:
+        return None
+    return str(value) if value is not None else None
 
 
 def _to_db(value: datetime) -> str:
@@ -500,6 +529,114 @@ class ReviewRepository(BaseRepository):
         assert updated is not None
         return updated
 
+    def exclude_from_performance(
+        self,
+        purchase_id: int,
+        *,
+        reason: str,
+        excluded_by: str | None = None,
+        note: str | None = None,
+    ) -> PurchaseReview:
+        """이 구매를 **실적 계산에서 뺍니다**(2026-08-31 고객 확정 · STEP 70).
+
+        .. warning::
+            ⛔ **구매유형을 건드리지 않습니다.** ``final_purchase_type`` ·
+            ``review_status`` 를 그대로 두므로, "용역으로 확정했고 강사료라서
+            실적에서 뺐다" 가 함께 남습니다. 두 사실을 한 필드에 섞지 않습니다.
+
+        .. warning::
+            ⛔ **행을 지우지 않습니다.** 고객은 업무상 "삭제" 라고 표현하지만,
+            시스템은 원본을 보존하고 계산에서만 뺍니다 — 나중에 누가·언제·왜
+            뺐는지 확인할 수 있어야 하기 때문입니다(§0.10).
+
+        Args:
+            purchase_id: DB-1 구매 ID.
+            reason: 제외 사유 코드
+                (:mod:`procurement.core.performance_exclusion`).
+            excluded_by: 제외를 확정한 사람.
+            note: 메모. 사유가 ``OTHER`` 일 때 무엇인지 적습니다.
+
+        Returns:
+            갱신된 :class:`PurchaseReview`.
+
+        Raises:
+            ExclusionReasonError: 허용되지 않는 사유 코드인 경우.
+        """
+        validate_exclusion_reason(reason)
+
+        before = self.ensure(purchase_id)
+        now = datetime.now()
+
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE purchase_review SET "
+                "performance_status = ?, exclusion_reason = ?, excluded_by = ?, "
+                "excluded_at = ?, updated_at = ? WHERE purchase_id = ?",
+                (EXCLUDED, reason, excluded_by, _to_db(now), _to_db(now), purchase_id),
+            )
+            self._append_history(
+                conn,
+                ReviewHistoryEntry(
+                    purchase_id=purchase_id,
+                    action=ACTION_EXCLUDED,
+                    changed_at=now,
+                    changed_by=excluded_by,
+                    # ⛔ 유형은 바뀌지 않았다 — 앞뒤 값을 같게 적어 그 사실을 남긴다.
+                    before_type=before.final_purchase_type,
+                    after_type=before.final_purchase_type,
+                    note=note,
+                    candidates=list(before.candidates),
+                ),
+            )
+
+        updated = self.find_by_purchase_id(purchase_id)
+        assert updated is not None
+        return updated
+
+    def include_in_performance(
+        self, purchase_id: int, *, changed_by: str | None = None, note: str | None = None
+    ) -> PurchaseReview:
+        """실적 제외를 **되돌립니다**.
+
+        ⛔ 제외했던 이력을 지우지 않습니다. 사유·시각·사람을 비우고 상태만
+        :data:`INCLUDED` 로 되돌리며, **되돌렸다는 사실은 이력에 남습니다.**
+
+        Args:
+            purchase_id: DB-1 구매 ID.
+            changed_by: 되돌린 사람.
+            note: 사유.
+
+        Returns:
+            갱신된 :class:`PurchaseReview`.
+        """
+        before = self.ensure(purchase_id)
+        now = datetime.now()
+
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE purchase_review SET "
+                "performance_status = ?, exclusion_reason = NULL, excluded_by = NULL, "
+                "excluded_at = NULL, updated_at = ? WHERE purchase_id = ?",
+                (INCLUDED, _to_db(now), purchase_id),
+            )
+            self._append_history(
+                conn,
+                ReviewHistoryEntry(
+                    purchase_id=purchase_id,
+                    action=ACTION_INCLUDED,
+                    changed_at=now,
+                    changed_by=changed_by,
+                    before_type=before.final_purchase_type,
+                    after_type=before.final_purchase_type,
+                    note=note,
+                    candidates=list(before.candidates),
+                ),
+            )
+
+        updated = self.find_by_purchase_id(purchase_id)
+        assert updated is not None
+        return updated
+
     def reopen(
         self, purchase_id: int, *, reopened_by: str | None = None, note: str | None = None
     ) -> PurchaseReview:
@@ -592,6 +729,10 @@ class ReviewRepository(BaseRepository):
             reviewed_by=row["reviewed_by"],
             reviewed_at=_from_db(row["reviewed_at"]),
             review_note=row["review_note"],
+            performance_status=_optional_text(row, "performance_status") or INCLUDED,
+            exclusion_reason=_optional_text(row, "exclusion_reason"),
+            excluded_by=_optional_text(row, "excluded_by"),
+            excluded_at=_from_db(_optional_text(row, "excluded_at")),
             created_at=_from_db(row["created_at"]),
             updated_at=_from_db(row["updated_at"]),
         )

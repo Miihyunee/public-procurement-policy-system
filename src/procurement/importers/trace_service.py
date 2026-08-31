@@ -247,7 +247,7 @@ class ImportTraceService:
         """
         # ⚠️ 두 쪽 다 **대체된 배치를 뺀** 같은 기준으로 읽는다. 한쪽만 전체를
         #    읽으면 같은 기간을 다시 올렸을 때 미적재 건수만 계속 불어난다.
-        stored_rows = self._purchase_repository.find_for_calculation(None)
+        stored_rows = self._purchase_repository.find_for_review(None)
         rejections = self._rejection_repository.find_current()
 
         stored_by_batch: dict[int | None, int] = {}
@@ -342,7 +342,7 @@ class ImportTraceService:
     def _review_counts(self) -> tuple[dict[int | None, int], dict[int | None, int]]:
         """배치별 (검토 대상 건수, 확정 건수).
 
-        ⚠️ **현재 배치만** 셉니다 — :meth:`find_for_calculation` 이 대체된
+        ⚠️ **현재 배치만** 셉니다 — :meth:`find_for_review` 가 대체된
         배치를 이미 빼기 때문입니다. 대체된 배치의 확정 이력이 진행률에 섞이면
         재업로드할수록 숫자가 부풀어 오릅니다(STEP 12 에서 겪은 문제).
 
@@ -351,7 +351,7 @@ class ImportTraceService:
         """
         stored: dict[int | None, int] = {}
         confirmed: dict[int | None, int] = {}
-        purchases = self._purchase_repository.find_for_calculation(None)
+        purchases = self._purchase_repository.find_for_review(None)
         for purchase in purchases:
             stored[purchase.batch_id] = stored.get(purchase.batch_id, 0) + 1
 

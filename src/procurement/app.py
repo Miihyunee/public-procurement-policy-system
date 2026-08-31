@@ -57,6 +57,7 @@ from procurement.api.unmatched_response import UnmatchedPageResponseModel
 from procurement.calculators import ProcurementAchievementCalculator
 from procurement.calculators.procurement_achievement import CalculatorValidationError
 from procurement.core.config import settings
+from procurement.core.performance_exclusion import ExclusionReasonError
 from procurement.core.period import PeriodFilter
 from procurement.dashboard import DashboardDataService
 from procurement.dashboard.missing_resolution_export import (
@@ -136,6 +137,9 @@ from procurement.reviews.query import (
 from procurement.reviews.response import (
     ConditionProgressResponseModel,
     ConfirmReviewRequest,
+    ExcludePerformanceRequest,
+    ExclusionReasonsResponseModel,
+    IncludePerformanceRequest,
     PageResponseModel,
     PurchaseTypeOptionResponseModel,
     ReopenReviewRequest,
@@ -144,6 +148,7 @@ from procurement.reviews.response import (
     ReviewItemResponseModel,
     ReviewListResponseModel,
     ReviewProgressResponseModel,
+    build_exclusion_reasons_response,
     purchase_type_options,
 )
 from procurement.reviews.review_service import (
@@ -1325,6 +1330,24 @@ def create_app(
         """확정 / 미확정 / 확인 권장 건수를 반환합니다."""
         return ReviewProgressResponseModel.from_progress(review_service.progress())
 
+    # ⚠️ 정적 경로는 ``/reviews/{purchase_id}`` **앞에** 둔다. 뒤에 두면
+    #    "exclusion-reasons" 가 purchase_id 로 해석되어 422 가 된다.
+    @app.get(
+        "/reviews/exclusion-reasons",
+        response_model=ExclusionReasonsResponseModel,
+        summary="실적 제외 사유 선택지",
+        tags=["reviews"],
+    )
+    def list_exclusion_reasons() -> ExclusionReasonsResponseModel:
+        """담당자가 고를 수 있는 **실적 제외 사유**를 반환합니다.
+
+        화면이 선택지를 하드코딩하지 않도록 서버가 내려줍니다. 단기 차량 임차를
+        어떻게 판단하는지에 대한 안내 문구도 함께 담습니다.
+
+        ⛔ 이 안내는 **사람에게 보여 주는 말**이며 자동 판정 기준이 아닙니다.
+        """
+        return build_exclusion_reasons_response()
+
     @app.get(
         "/reviews/{purchase_id}",
         response_model=ReviewItemResponseModel,
@@ -1406,6 +1429,79 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ReviewStateError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return ReviewItemResponseModel.from_target(target)
+
+    @app.put(
+        "/reviews/{purchase_id}/performance-exclusion",
+        response_model=ReviewItemResponseModel,
+        summary="실적 제외 확정",
+        tags=["reviews"],
+    )
+    def exclude_from_performance(
+        purchase_id: int, payload: ExcludePerformanceRequest
+    ) -> ReviewItemResponseModel:
+        """이 구매를 **달성률 계산에서 뺍니다**(2026-08-31 고객 확정 · §0.10).
+
+        고객이 지출결의서·세금계산서·품의서를 확인한 뒤 내리는 판단을 담당자가
+        여기서 확정합니다.
+
+        ⛔ **적요로 자동 판정하지 않습니다.** `교육`·`강사`·`임차`·`렌트` 같은
+        낱말이 있다는 이유만으로 시스템이 이 요청을 보내지 않습니다. 사람이
+        확인하고 누를 때만 동작합니다.
+
+        ⛔ **행을 지우지 않습니다.** 원본은 그대로 남고 계산에서만 빠지며,
+        누가·언제·왜 뺐는지가 검토 이력에 남습니다. 검토 화면에도 계속 보입니다
+        (그래야 되돌릴 수 있습니다).
+
+        ⛔ **구매유형을 건드리지 않습니다.** 유형과 실적 산입 여부는 다른
+        개념이라 다른 필드에 남습니다 — 한 건이 **용역이면서 실적 제외**일 수
+        있습니다.
+
+        사유는 `교육비` · `강사료` · `단기 차량 임차` · `기타` 중 하나입니다.
+
+        Raises:
+            HTTPException: 구매가 없으면 404, 허용되지 않는 사유면 422.
+        """
+        try:
+            target = review_service.exclude_from_performance(
+                purchase_id,
+                reason=payload.reason,
+                excluded_by=payload.excluded_by,
+                note=payload.note,
+            )
+        except ReviewNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ExclusionReasonError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return ReviewItemResponseModel.from_target(target)
+
+    @app.delete(
+        "/reviews/{purchase_id}/performance-exclusion",
+        response_model=ReviewItemResponseModel,
+        summary="실적 제외 되돌리기",
+        tags=["reviews"],
+    )
+    def include_in_performance(
+        purchase_id: int, payload: IncludePerformanceRequest | None = None
+    ) -> ReviewItemResponseModel:
+        """실적 제외를 되돌려 다시 계산에 넣습니다.
+
+        ⛔ 제외했던 이력을 지우지 않습니다 — 되돌렸다는 사실도 함께 남습니다.
+
+        ⚠️ **예산과목 규칙으로 빠진 건은 이 요청으로 돌아오지 않습니다.**
+        그것은 담당자의 판단이 아니라 고객이 확정한 규칙이기 때문입니다
+        (응답의 ``performance.by_budget_account_rule`` 이 ``true``).
+
+        Raises:
+            HTTPException: 구매가 없으면 404.
+        """
+        body = payload or IncludePerformanceRequest()
+        try:
+            target = review_service.include_in_performance(
+                purchase_id, changed_by=body.changed_by, note=body.note
+            )
+        except ReviewNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         return ReviewItemResponseModel.from_target(target)
 
     @app.get(

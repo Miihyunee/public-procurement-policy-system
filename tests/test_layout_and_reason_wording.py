@@ -306,6 +306,13 @@ class TestNothingElseMoved:
         STEP 20 에서 검토 **변경 이력** CSV(``/reviews/history.csv``)를 새로
         열었으므로 목록에 한 줄을 더했습니다 — 지키려는 사실(화면이 아무 경로나
         부르지 않는다)은 그대로이며, 목록에 없는 경로가 생기면 여전히 실패합니다.
+
+        STEP 70 에서 **실적 제외**(2026-08-31 고객 확정)를 위해 한 줄을 더
+        더했습니다: ``/reviews/exclusion-reasons`` — 제외 사유 선택지를 서버가
+        내려주는 경로입니다(화면이 선택지를 지어내지 않게).
+
+        제외 확정·되돌리기는 ``"/reviews/" + id + "/performance-exclusion"`` 로
+        조립되므로 여기 잡히는 문자열은 이미 허용된 ``/reviews/`` 뿐입니다.
         """
         found = set(re.findall(r'"(/(?:imports|reviews)[a-z_./{}]*)', page))
         allowed = {
@@ -320,6 +327,8 @@ class TestNothingElseMoved:
             "/reviews/options",
             "/reviews/export.csv",
             "/reviews/history.csv",
+            # STEP 70 — 실적 제외 사유 선택지. 정규식이 하이픈 앞까지만 잡는다.
+            "/reviews/exclusion",
         }
         assert found <= allowed, found - allowed
 

@@ -190,7 +190,7 @@ def keeps_batch(purchase: Purchase, batch_id: int | None) -> bool:
     아직 확정되지 않은 업무규칙입니다(D-24).
 
     ⛔ 대체된(SUPERSEDED) 배치를 여기서 판단하지 않습니다. 애초에
-    ``find_for_calculation`` 이 현재 배치의 구매만 주므로, 대체된 배치 ID 로
+    ``find_for_review`` 가 현재 배치의 구매만 주므로, 대체된 배치 ID 로
     물으면 맞는 구매가 없어 자연히 0건이 됩니다.
 
     Args:
@@ -211,8 +211,17 @@ def _keeps(target: ReviewTarget, query: ReviewQuery) -> bool:
         return False
 
     if query.search:
+        # 고객은 결의번호가 없어 **적요 + 업체명 또는 사업자등록번호 + 금액**을
+        # 맞대어 지출결의서를 찾는다고 답했습니다(2026-08-31 · Q5-3). 세 가지
+        # 식별값을 한 칸에서 함께 찾습니다 — 담당자가 어느 칸에 넣을지 고르지
+        # 않아도 되게. ⛔ 금액은 화면에 그대로 보이고 정렬로 맞춥니다.
         needle = normalize_description(query.search)
-        if needle and needle not in normalize_description(target.purchase.description):
+        haystacks = (
+            target.purchase.description,
+            target.purchase.company_name,
+            target.purchase.business_no,
+        )
+        if needle and not any(needle in normalize_description(value) for value in haystacks):
             return False
 
     if query.status != ANY and review.review_status != query.status:
@@ -384,7 +393,7 @@ class ReviewService:
                 f"허용되지 않는 필터입니다: {review_filter!r} (허용: {allowed})"
             )
 
-        purchases = self._purchase_repository.find_for_calculation(period)
+        purchases = self._purchase_repository.find_for_review(period)
         stored = self._review_repository.find_all()
         reviews = {review.purchase_id: review for review in stored}
         index = self._past_label_index(purchases, stored)
@@ -444,7 +453,7 @@ class ReviewService:
         CSV 내보내기처럼 "지금 보고 있는 조건의 전체" 가 필요한 경우에만
         씁니다. 화면 목록은 :meth:`search` 를 써서 한 페이지만 가져갑니다.
         """
-        purchases = self._purchase_repository.find_for_calculation(period)
+        purchases = self._purchase_repository.find_for_review(period)
         stored = self._review_repository.find_all()
         reviews = {review.purchase_id: review for review in stored}
         index = self._past_label_index(purchases, stored)
@@ -502,7 +511,7 @@ class ReviewService:
         """한 기간(=배치)에 속한 구매들의 **변경 이력 전부**를 반환합니다.
 
         기간은 화면·목록·CSV 와 **같은 뜻**이어야 하므로, 여기서도 날짜를 다시
-        계산하지 않고 :meth:`PurchaseRepository.find_for_calculation` 이 주는
+        계산하지 않고 :meth:`PurchaseRepository.find_for_review` 가 주는
         **현재 배치의 구매**만 대상으로 삼습니다. 그래서 대체된(SUPERSEDED)
         배치의 이력은 자연히 빠집니다 — 그 배치의 구매가 애초에 나오지 않기
         때문입니다.
@@ -518,7 +527,7 @@ class ReviewService:
         """
         by_id: dict[int, Purchase] = {
             purchase.purchase_id: purchase
-            for purchase in self._purchase_repository.find_for_calculation(None)
+            for purchase in self._purchase_repository.find_for_review(None)
             if purchase.purchase_id is not None and keeps_batch(purchase, batch_id)
         }
         entries = self._review_repository.find_history_of(by_id)
@@ -533,7 +542,7 @@ class ReviewService:
         Args:
             period: 기간 조건. ``None`` 이면 제한 없음.
         """
-        purchases = self._purchase_repository.find_for_calculation(period)
+        purchases = self._purchase_repository.find_for_review(period)
         reviews = {review.purchase_id: review for review in self._review_repository.find_all()}
 
         total = confirmed = ambiguous = analyzed = 0
@@ -635,6 +644,86 @@ class ReviewService:
             company_labels=self._company_labels_for(purchase),
         )
 
+    def exclude_from_performance(
+        self,
+        purchase_id: int,
+        *,
+        reason: str,
+        excluded_by: str | None = None,
+        note: str | None = None,
+    ) -> ReviewTarget:
+        """이 구매를 **실적 계산에서 뺍니다**(2026-08-31 고객 확정 · §0.10).
+
+        고객이 지출결의서·세금계산서·품의서를 확인한 뒤 내리는 판단을 화면에서
+        확정하는 자리입니다.
+
+        .. warning::
+            ⛔ **구매유형을 건드리지 않습니다.** 유형과 실적 산입 여부는 다른
+            개념이며 다른 필드에 남습니다 — "용역으로 확정했고 강사료라서
+            실적에서 뺐다" 가 함께 보여야 합니다.
+
+        .. warning::
+            ⛔ **적요로 자동 판정하지 않습니다.** 이 메서드는 사람이 부를 때만
+            동작합니다. 낱말을 보고 자동으로 부르는 코드를 만들지 않습니다.
+
+        Args:
+            purchase_id: DB-1 구매 ID.
+            reason: 제외 사유 코드(:mod:`procurement.core.performance_exclusion`).
+            excluded_by: 확정한 사람.
+            note: 메모.
+
+        Returns:
+            갱신된 :class:`ReviewTarget`.
+
+        Raises:
+            ReviewNotFoundError: 해당 구매가 없는 경우.
+            ExclusionReasonError: 허용되지 않는 사유 코드인 경우.
+        """
+        purchase = self._require_purchase(purchase_id)
+        review = self._review_repository.exclude_from_performance(
+            purchase_id, reason=reason, excluded_by=excluded_by, note=note
+        )
+        return ReviewTarget(
+            purchase=purchase,
+            review=review,
+            past_labels=self._past_labels_for(purchase),
+            company_labels=self._company_labels_for(purchase),
+        )
+
+    def include_in_performance(
+        self, purchase_id: int, *, changed_by: str | None = None, note: str | None = None
+    ) -> ReviewTarget:
+        """실적 제외를 **되돌립니다**.
+
+        ⛔ 제외했던 이력을 지우지 않습니다 — 되돌렸다는 사실도 이력에 남습니다.
+
+        .. note::
+            **예산과목 규칙으로 빠진 건은 되돌릴 수 없습니다.** 그것은 담당자의
+            판단이 아니라 고객이 확정한 규칙이므로, 화면에서 되돌린다고 계산에
+            들어오지 않습니다. 규칙을 바꾸려면 고객 확인이 필요합니다.
+
+        Args:
+            purchase_id: DB-1 구매 ID.
+            changed_by: 되돌린 사람.
+            note: 사유.
+
+        Returns:
+            갱신된 :class:`ReviewTarget`.
+
+        Raises:
+            ReviewNotFoundError: 해당 구매가 없는 경우.
+        """
+        purchase = self._require_purchase(purchase_id)
+        review = self._review_repository.include_in_performance(
+            purchase_id, changed_by=changed_by, note=note
+        )
+        return ReviewTarget(
+            purchase=purchase,
+            review=review,
+            past_labels=self._past_labels_for(purchase),
+            company_labels=self._company_labels_for(purchase),
+        )
+
     def analyze(self, purchase_id: int) -> ReviewTarget:
         """적요를 분석해 후보를 DB-2 에 기록합니다.
 
@@ -678,7 +767,7 @@ class ReviewService:
             return 0
 
         analyzed = 0
-        for purchase in self._purchase_repository.find_for_calculation(period):
+        for purchase in self._purchase_repository.find_for_review(period):
             if purchase.purchase_id is None:
                 continue
             result = self._classifier.classify(purchase.description)
@@ -720,7 +809,7 @@ class ReviewService:
         rows = (
             list(purchases)
             if purchases is not None
-            else self._purchase_repository.find_for_calculation(None)
+            else self._purchase_repository.find_for_review(None)
         )
         states = list(reviews) if reviews is not None else self._review_repository.find_all()
         self._index = PastLabelIndex(rows, states)
@@ -752,7 +841,7 @@ class ReviewService:
         rows = (
             list(purchases)
             if purchases is not None
-            else self._purchase_repository.find_for_calculation(None)
+            else self._purchase_repository.find_for_review(None)
         )
         states = list(reviews) if reviews is not None else self._review_repository.find_all()
         self._company_index = CompanyLabelIndex(rows, states)

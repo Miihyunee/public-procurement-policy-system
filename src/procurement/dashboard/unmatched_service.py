@@ -27,7 +27,7 @@ procurement.dashboard.unmatched_service
     **같은 모집단**이어야 화면의 숫자가 서로 맞습니다.
 
     ⚠️ 따라서 **대체된(SUPERSEDED) 배치의 행도 포함**됩니다. 계산 대상
-    (``find_for_calculation``)과 모집단이 다르다는 사실은 응답의
+    (``find_for_review``)과 모집단이 다르다는 사실은 응답의
     ``includes_superseded`` 로 화면에 그대로 알립니다. 어느 쪽이 옳은지는
     업무 판단이므로 여기서 정하지 않습니다.
 """
@@ -238,7 +238,7 @@ class UnmatchedCompanyService:
         어느 모집단이 옳은지는 업무 판단입니다. 여기서는 **사실만 알립니다.**
         """
         every = len(self._purchase_repository.find_all())
-        return every > len(self._purchase_repository.find_for_calculation())
+        return every > len(self._purchase_repository.find_for_review())
 
 
 def _keeps(row: UnmatchedCompany, search: str) -> bool:

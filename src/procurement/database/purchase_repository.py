@@ -19,6 +19,7 @@ import sqlite3
 from datetime import date, datetime
 from decimal import Decimal
 
+from procurement.core.performance_exclusion import EXCLUDED, EXCLUDED_BUDGET_ACCOUNTS
 from procurement.core.period import PeriodFilter
 from procurement.database.base import BaseRepository
 from procurement.models.import_batch import STATUS_ACTIVE
@@ -57,6 +58,10 @@ CREATE TABLE IF NOT EXISTS purchase (
 CREATE_BATCH_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_purchase_batch ON purchase (batch_id)"
 )
+
+#: 실적에서 빼는 예산과목 — SQL 파라미터 순서를 고정하기 위해 정렬해 둡니다.
+#: (frozenset 은 순서가 보장되지 않아 SQL 이 실행마다 달라져 보일 수 있습니다.)
+SORTED_EXCLUDED_BUDGET_ACCOUNTS: tuple[str, ...] = tuple(sorted(EXCLUDED_BUDGET_ACCOUNTS))
 
 # 공백만 있는 값도 허용하지 않는 문자열 필수값
 _REQUIRED_TEXT_FIELDS = ("business_no", "company_name")
@@ -240,31 +245,76 @@ class PurchaseRepository(BaseRepository):
         rows = self.execute("SELECT * FROM purchase ORDER BY purchase_id")
         return [self._row_to_purchase(row) for row in rows]
 
-    def find_for_calculation(self, period: PeriodFilter | None = None) -> list[Purchase]:
-        """**계산 대상** 구매실적을 조회합니다.
+    def find_for_review(self, period: PeriodFilter | None = None) -> list[Purchase]:
+        """**검토 대상** 구매실적을 조회합니다.
 
         ``find_all()`` 과 두 가지가 다릅니다.
 
-        1. **대체된 배치의 행을 제외**합니다. 계산 대상은 다음과 같습니다::
+        1. **대체된 배치의 행을 제외**합니다::
 
                batch_id 가 NULL 이거나
                batch_id 가 status='ACTIVE' 인 배치를 가리키는 행
 
            ``batch_id`` 가 ``NULL`` 인 행을 포함하는 이유는, 배치 도입 이전에
-           적재된 데이터를 계산에서 갑자기 사라지게 만들지 않기 위함입니다.
+           적재된 데이터를 갑자기 사라지게 만들지 않기 위함입니다.
 
         2. ``period`` 를 주면 **기간 조건**을 적용합니다.
+
+        .. important::
+            **실적에서 빠진 행도 그대로 나옵니다.** 담당자가 화면에서 그 행을
+            보고 사유를 확인하거나 **제외를 되돌릴** 수 있어야 하기 때문입니다.
+            빠진 행이 목록에서 사라지면 되돌릴 방법이 없습니다.
+
+            계산 모집단은 :meth:`find_for_calculation` 입니다 — 여기서 실적
+            제외 조건이 **한 겹 더** 붙습니다.
 
         ``import_batch`` 테이블이 아직 없는 DB(구 스키마)에서는 배치 조건을
         건너뛰고 기존과 동일하게 동작합니다.
 
         Args:
-            period: 적용할 기간 조건. ``None`` 이면 기간 제한 없이 전체를
-                조회합니다(기존 동작과 동일).
+            period: 적용할 기간 조건. ``None`` 이면 기간 제한 없이 전체.
 
         Returns:
             :class:`Purchase` 목록. 없으면 빈 목록.
         """
+        conditions, params = self._review_scope_conditions(period)
+        return self._select_purchases(conditions, params)
+
+    def find_for_calculation(self, period: PeriodFilter | None = None) -> list[Purchase]:
+        """**계산 대상** 구매실적을 조회합니다 — 달성률 분모·분자의 모집단.
+
+        :meth:`find_for_review` 의 조건에 **실적 제외**가 한 겹 더 붙습니다
+        (2026-08-31 고객 확정 · ``DECISIONS.md`` §0.10)::
+
+            검토 대상
+              − 예산과목이 고객 지목 6종인 행
+              − 담당자가 실적 제외로 확정한 행
+
+        .. warning::
+            ⛔ **행을 지우지 않습니다.** 계산에서만 뺍니다. 그 행은 검토
+            화면에 그대로 남고, 누가·언제·왜 뺐는지는 검토 이력에 남습니다.
+
+        .. warning::
+            ⛔ **적요를 보지 않습니다.** `교육`·`강사`·`임차`·`렌트` 같은 낱말로
+            빼지 않습니다 — 고객이 지출결의서·품의서를 확인해 판단한다고 했고
+            그 자료는 시스템에 없습니다.
+
+        Args:
+            period: 적용할 기간 조건. ``None`` 이면 기간 제한 없이 전체.
+
+        Returns:
+            :class:`Purchase` 목록. 없으면 빈 목록.
+        """
+        conditions, params = self._review_scope_conditions(period)
+        exclusion_conditions, exclusion_params = self._performance_exclusion_conditions()
+        conditions.extend(exclusion_conditions)
+        params.extend(exclusion_params)
+        return self._select_purchases(conditions, params)
+
+    def _review_scope_conditions(
+        self, period: PeriodFilter | None
+    ) -> tuple[list[str], list[object]]:
+        """배치·기간 조건 — 검토 대상과 계산 대상이 **함께** 쓰는 부분."""
         conditions: list[str] = []
         params: list[object] = []
 
@@ -282,10 +332,14 @@ class PurchaseRepository(BaseRepository):
             params.append(_to_db_date(period.start))
             params.append(_to_db_date(period.end))
 
+        return conditions, params
+
+    def _select_purchases(
+        self, conditions: list[str], params: list[object]
+    ) -> list[Purchase]:
+        """조건을 붙여 구매 행을 읽습니다(정렬은 항상 ``purchase_id``)."""
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = self.execute(
-            f"SELECT * FROM purchase{where} ORDER BY purchase_id", tuple(params)
-        )
+        rows = self.execute(f"SELECT * FROM purchase{where} ORDER BY purchase_id", tuple(params))
         return [self._row_to_purchase(row) for row in rows]
 
     def count_missing_resolution_date(self) -> tuple[int, Decimal]:
@@ -386,6 +440,59 @@ class PurchaseRepository(BaseRepository):
             "SELECT * FROM purchase WHERE batch_id = ? ORDER BY purchase_id", (batch_id,)
         )
         return [self._row_to_purchase(row) for row in rows]
+
+    def _performance_exclusion_conditions(self) -> tuple[list[str], list[object]]:
+        """**실적에서 빠지는 행**을 걸러 내는 조건을 만듭니다.
+
+        2026-08-31 고객 확정(``DECISIONS.md`` §0.10). 빼는 경로는 둘뿐입니다.
+
+        1. **예산과목 규칙** — 고객이 지목한 6종은 내용과 관계없이 뺍니다.
+           ⛔ 부분 문자열이 아니라 **정확히 같은 값**만 봅니다.
+        2. **담당자 확정** — 검토 화면에서 사람이 사유와 함께 확정한 건.
+
+        .. warning::
+            ⛔ **적요를 보지 않습니다.** `교육`·`강사`·`임차`·`렌트` 같은 낱말로
+            빼지 않습니다 — 고객이 지출결의서·품의서를 확인해서 판단한다고 했고,
+            그 자료는 시스템에 없습니다(§0.9.5 원칙 1).
+
+        구 스키마 DB(검토 테이블이나 새 컬럼이 없는 경우)에서는 담당자 확정
+        조건을 건너뛰고 **기존과 동일하게** 동작합니다.
+        """
+        conditions: list[str] = []
+        params: list[object] = []
+
+        # ① 예산과목 규칙. 앞뒤 공백만 떼고 정확히 비교한다(TRIM).
+        placeholders = ", ".join("?" for _ in SORTED_EXCLUDED_BUDGET_ACCOUNTS)
+        conditions.append(
+            f"(budget_account IS NULL OR TRIM(budget_account) NOT IN ({placeholders}))"
+        )
+        params.extend(SORTED_EXCLUDED_BUDGET_ACCOUNTS)
+
+        # ② 담당자가 확정한 제외.
+        if self._has_performance_status_column():
+            conditions.append(
+                "NOT EXISTS (SELECT 1 FROM purchase_review r "
+                "WHERE r.purchase_id = purchase.purchase_id "
+                "AND r.performance_status = ?)"
+            )
+            params.append(EXCLUDED)
+
+        return conditions, params
+
+    def _has_performance_status_column(self) -> bool:
+        """검토 테이블에 ``performance_status`` 컬럼이 있는지 확인합니다.
+
+        구 스키마 DB 에서도 계산이 동작해야 하므로, 조건을 붙이기 전에 확인
+        합니다. 없으면 담당자 확정 제외가 없다는 뜻이므로 조건을 붙이지
+        않습니다 — 기존 계산 결과가 그대로 유지됩니다.
+        """
+        tables = self.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'purchase_review'"
+        )
+        if not tables:
+            return False
+        columns = {row["name"] for row in self.execute("PRAGMA table_info(purchase_review)")}
+        return "performance_status" in columns
 
     def _has_import_batch_table(self) -> bool:
         """``import_batch`` 테이블이 존재하는지 확인합니다.

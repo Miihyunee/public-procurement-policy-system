@@ -159,7 +159,11 @@ class ReviewQuery:
     """검토 목록 조회 조건.
 
     Attributes:
-        search: 적요 부분 문자열. 빈 값이면 전체. 띄어쓰기 차이는 무시합니다.
+        search: **적요 · 거래처명 · 사업자등록번호** 부분 문자열. 빈 값이면
+            전체. 띄어쓰기 차이는 무시합니다.
+
+            결의번호가 없어 담당자가 이 세 값으로 지출결의서를 찾는다고
+            고객이 답했습니다(2026-08-31 · Q5-3). 한 칸에서 함께 찾습니다.
         status: :data:`STATUS_FILTERS` 중 하나.
         decision: :data:`DECISION_FILTERS` 중 하나.
         history: :data:`HISTORY_FILTERS` 중 하나.

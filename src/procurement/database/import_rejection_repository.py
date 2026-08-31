@@ -174,7 +174,7 @@ class ImportRejectionRepository(BaseRepository):
 
         같은 기간을 다시 올리면 이전 배치가 ``SUPERSEDED`` 가 되고 그 배치의
         ``purchase`` 행은 계산·검토에서 빠집니다
-        (:meth:`~procurement.database.purchase_repository.PurchaseRepository.find_for_calculation`).
+        (:meth:`~procurement.database.purchase_repository.PurchaseRepository.find_for_review`).
         미적재 기록도 **같은 규칙**을 따라야 원본 대비 숫자가 맞습니다 —
         그러지 않으면 재업로드 뒤 "미적재" 건수만 계속 불어납니다.
 

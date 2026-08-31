@@ -60,7 +60,7 @@ procurement.reviews.company_labels
                           ``final_purchase_type`` 이 ``None`` 이 아닌 것
                           (판단 보류는 사람이 결론을 내지 않은 것이라 제외)
     모집단                호출자가 넘겨준 구매 목록. 운영에서는
-                          ``find_for_calculation(None)`` = **현재 배치**이며
+                          ``find_for_review(None)`` = **현재 배치**이며
                           대체된(SUPERSEDED) 배치는 들어오지 않습니다
     현재 행               ⛔ **제외하지 않습니다** — 적요 이력과 같은 규칙입니다
     ==================== ====================================================

@@ -130,6 +130,9 @@ _REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
         "candidates_json",
         "review_status",
         "final_purchase_type",
+        # 2026-08-31 고객 확정 — 실적 산입 여부(STEP 70). 이 컬럼이 없으면
+        # 실적 제외가 계산에 반영되지 않으므로 필수 스키마로 본다.
+        "performance_status",
     ),
     "purchase_review_history": (
         "history_id",
@@ -260,6 +263,13 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # "설명되지 않는 행" 을 계산한다. 기존 배치는 NULL 이 되며, 그것이 곧
     # "원본 행 수를 모른다" 는 뜻이다(0 으로 채우지 않는다).
     ("import_batch", "source_row_count", "INTEGER"),
+    # 2026-08-31 고객 확정(DECISIONS §0.10 · STEP 70) — 실적 산입 여부.
+    # ⛔ 기존 행의 값은 NULL 이 되며, 읽을 때 INCLUDED 로 봅니다. 따라서
+    #    마이그레이션만으로 기존 달성률이 달라지지 않습니다.
+    ("purchase_review", "performance_status", "TEXT"),
+    ("purchase_review", "exclusion_reason", "TEXT"),
+    ("purchase_review", "excluded_by", "TEXT"),
+    ("purchase_review", "excluded_at", "DATETIME"),
 )
 
 
