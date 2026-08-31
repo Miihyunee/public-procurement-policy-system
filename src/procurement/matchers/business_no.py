@@ -227,7 +227,14 @@ def business_no_search_key(value: object) -> str:
     자릿수를 따지지 않습니다.
 
     ⛔ **값을 저장하거나 기업을 연결하는 데 쓰지 않습니다.** 오직 "보여줄지
-    말지" 를 정하는 비교용입니다.
+    말지" 를 정하는 비교용입니다. 저장은
+    :func:`~procurement.core.business_no_storage.to_storage_business_no`,
+    기업 연결은 :func:`normalize_business_no` 입니다 — 지금은 결과가 겹치는
+    것이 있어도 **셋은 서로 다른 규칙**이며, 한쪽을 고칠 때 나머지가 딸려가면
+    안 됩니다.
+
+    ⛔ **부분 일치를 기업 매칭에 쓰지 않습니다.** ``22081`` 로도 키가 만들어
+    지지만, 그것으로 기업을 연결하면 **엉뚱한 회사의 실적**이 됩니다.
 
     Args:
         value: 검색어 또는 저장된 사업자등록번호.

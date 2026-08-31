@@ -17,7 +17,14 @@ End-to-End 데이터 연계 구조 검증.
 
     - 인증 유효기간을 벗어난 구매 (판정 기준일 기준)
     - 인증이 없는 기업의 구매
-    - **사업자번호 형식 불일치로 매칭에 실패하는 구매** (정규화 미구현)
+    - 기업정보가 아예 없는 사업자번호의 구매 (분모에만 들어간다)
+
+.. note::
+    **2026-08-31 (STEP 74) 에 기대값이 바뀐 곳이 있습니다.** 예전에는
+    ``123-45-67890`` 처럼 표기가 다르면 매칭에 실패했고, 이 파일이 그
+    **결함을 기록**하고 있었습니다. 이제 저장·조회가 같은 형태로 맞춰지므로
+    같은 사업자로 연결됩니다. 검증이 느슨해진 것이 아니라 **동작이 고쳐진**
+    것입니다 — ``DECISIONS.md`` §0.11.
 """
 
 from __future__ import annotations
@@ -64,10 +71,10 @@ def _seed_minimal_dataset(path: Path) -> None:
     금액 구성(전체 10,000,000원)::
 
         중소기업 인정   3,000,000  (전체의 30%)
+        중소기업 인정   2,000,000  (하이픈 표기 · STEP 74 이후 연결됨)
         창업기업 인정   2,000,000  (전체의 20%)
         인증기간 밖     2,000,000
         인증 없음       1,000,000
-        매칭 실패       2,000,000
     """
     company_repo = CompanyRepository(path)
     policy_repo = PolicyRepository(path)
@@ -144,7 +151,7 @@ def _seed_minimal_dataset(path: Path) -> None:
     add_purchase(BUSINESS_NO_B, date(2026, 8, 1), date(2026, 9, 1), "1000000")
     # ⑤ 인증 없는 기업 — 정책 실적 아님, 전체 구매액에는 포함
     add_purchase(BUSINESS_NO_C, date(2026, 3, 1), date(2026, 3, 15), "1000000")
-    # ⑥ 하이픈 표기 — 정규화가 없어 기업 매칭에 실패한다
+    # ⑥ 하이픈 표기 — 표기가 달라도 가기업으로 연결된다(STEP 74 이전에는 실패했다)
     add_purchase(BUSINESS_NO_A_HYPHENATED, date(2026, 3, 1), date(2026, 3, 15), "2000000")
 
 
@@ -160,19 +167,46 @@ class TestMatchingStep:
     def test_matcher_links_purchases_to_companies(self, seeded: Path) -> None:
         """사업자번호가 일치하는 구매는 기업과 연결됩니다."""
         matcher = CompanyMatcher(CompanyRepository(seeded), PurchaseRepository(seeded))
-        assert matcher.match_all() == 5  # 전체 6건 중 하이픈 1건 실패
+        assert matcher.match_all() == 6  # 표기가 달라도 6건 모두 연결된다(STEP 74)
 
-    def test_hyphenated_business_no_fails_to_match(self, seeded: Path) -> None:
-        """하이픈이 포함된 사업자번호는 매칭에 실패합니다.
+    def test_hyphenated_business_no_now_matches(self, seeded: Path) -> None:
+        """하이픈이 포함된 사업자번호도 **같은 기업**으로 연결됩니다.
 
-        현재 시스템에는 **사업자번호 정규화 로직이 없습니다.** 고객 데이터가
-        ``123-45-67890`` 형식으로 들어오면 저장된 ``1234567890`` 과 일치하지
-        않아 정책 실적에서 누락됩니다.
+        ⭐ 2026-08-31 이전에는 여기서 매칭이 실패했고, 이 시험이 그 **결함을
+        기록**하고 있었습니다. 저장·조회가 같은 형태로 맞춰지면서 해결되었습니다
+        (``DECISIONS.md`` §0.11).
+
+        ⛔ 표기만 맞춘 것입니다. 번호가 다르면 여전히 남남입니다 —
+        :meth:`test_a_business_no_without_a_company_stays_unmatched`.
         """
         CompanyMatcher(CompanyRepository(seeded), PurchaseRepository(seeded)).match_all()
 
+        assert PurchaseRepository(seeded).find_unmatched() == []
+
+        hyphenated = next(
+            purchase
+            for purchase in PurchaseRepository(seeded).find_all()
+            if purchase.business_no == BUSINESS_NO_A_HYPHENATED
+        )
+        company_a = CompanyRepository(seeded).find_by_business_no(BUSINESS_NO_A)
+        assert company_a is not None
+        assert hyphenated.company_id == company_a.company_id
+
+    def test_a_business_no_without_a_company_stays_unmatched(self, seeded: Path) -> None:
+        """⛔ 기업정보가 없는 번호는 **연결되지 않는다.** 표기를 맞춘 것뿐이다."""
+        PurchaseRepository(seeded).insert(
+            Purchase(
+                business_no="9999999999",
+                company_name="등록되지 않은 업체",
+                contract_date=date(2026, 3, 1),
+                payment_date=date(2026, 3, 15),
+                amount=Decimal("500000"),
+            )
+        )
+        CompanyMatcher(CompanyRepository(seeded), PurchaseRepository(seeded)).match_all()
+
         unmatched = PurchaseRepository(seeded).find_unmatched()
-        assert [purchase.business_no for purchase in unmatched] == [BUSINESS_NO_A_HYPHENATED]
+        assert [purchase.business_no for purchase in unmatched] == ["9999999999"]
 
     def test_matcher_is_idempotent(self, seeded: Path) -> None:
         """이미 매칭된 건은 다시 처리하지 않습니다."""
@@ -209,7 +243,12 @@ class TestEndToEndCalculation:
         assert payload["total_purchase_amount"] == "9000000"
 
     def test_payment_date_policy_calculation(self, matched: Path) -> None:
-        """중소기업(지급일 기준) — 유효기간 내 3,000,000 만 인정됩니다."""
+        """중소기업(지급일 기준) — 유효기간 내 5,000,000 이 인정됩니다.
+
+        ⭐ 하이픈 표기 2,000,000(구매 ⑥)이 STEP 74 로 연결되면서 3,000,000 →
+        5,000,000 이 되었습니다. **계산이 바뀐 것이 아니라 연결되지 않던 것이
+        연결된** 결과입니다 — 분모 9,000,000 은 그대로입니다.
+        """
         payload = (
             TestClient(create_app(matched, period_date_field="payment_date"))
             .get("/dashboard/summary?year=2026")
@@ -217,12 +256,13 @@ class TestEndToEndCalculation:
         )
         item = {p["policy_code"]: p for p in payload["policies"]}["SMALL_BUSINESS"]
 
-        assert item["purchase_amount"] == "3000000"  # 유효기간 밖 1,000,000 제외
+        assert item["purchase_amount"] == "5000000"  # 유효기간 밖 1,000,000 은 여전히 제외
         assert item["target_rate"] == "50"
-        # 분모가 9,000,000(2026년)이므로 구매비율 33.33% / 목표 50% → 66.67%
-        assert item["achievement_rate"] == "66.67"
-        assert item["shortage_rate"] == "33.33"
-        assert item["status"] == "SHORTAGE"
+        assert item["total_purchase_amount"] == "9000000"  # 분모는 움직이지 않는다
+        # 구매비율 55.56% / 목표 50% → 111.11%
+        assert item["achievement_rate"] == "111.11"
+        assert item["shortage_rate"] == "0.00"
+        assert item["status"] == "NORMAL"
 
     def test_contract_date_policy_calculation(self, matched: Path) -> None:
         """창업기업(계약일 기준) — 계약일이 유효기간 내면 인정됩니다.
@@ -245,7 +285,11 @@ class TestEndToEndCalculation:
         assert item["status"] == "NORMAL"
 
     def test_uncertified_company_purchase_is_excluded_from_policy(self, matched: Path) -> None:
-        """인증이 없는 기업의 구매는 어떤 정책 실적에도 포함되지 않습니다."""
+        """인증이 없는 기업의 구매는 어떤 정책 실적에도 포함되지 않습니다.
+
+        ⛔ **기업이 연결되었다고 실적이 되지 않습니다.** 다기업(구매 ⑤)은
+        매칭되지만 인증이 없어 어느 정책에도 들어가지 않습니다.
+        """
         payload = (
             TestClient(create_app(matched, period_date_field="payment_date"))
             .get("/dashboard/summary?year=2026")
@@ -256,8 +300,10 @@ class TestEndToEndCalculation:
             for p in payload["policies"]
             if p["purchase_amount"] is not None
         )
-        # 전체 10,000,000 중 정책 인정은 5,000,000 뿐이다.
-        assert policy_total == Decimal("5000000")
+        # 2026년 분모 9,000,000 중 정책 인정은 7,000,000(중소 5,000,000 + 창업 2,000,000).
+        assert policy_total == Decimal("7000000")
+        # 남는 2,000,000 = 인증 없는 기업 1,000,000 + 인증기간 밖 1,000,000
+        assert Decimal(payload["total_purchase_amount"]) - policy_total == Decimal("2000000")
 
 
 class TestMatchingRateImpact:
@@ -266,11 +312,22 @@ class TestMatchingRateImpact:
     def test_unmatched_purchase_lowers_achievement_rate(self, seeded: Path) -> None:
         """매칭 실패 건은 분모(전체 구매액)에만 들어가 달성률을 낮춥니다.
 
-        2026년 분모는 9,000,000원입니다(지급일 2027년 건 제외).
-        하이픈 표기 2,000,000원이 매칭되었다면 중소기업 구매액은 5,000,000원이
-        되어 달성률이 더 높았을 것입니다. 매칭 실패로 66.67% 로 계산됩니다.
+        ⚠️ 예전에는 **하이픈 표기 건**이 이 역할을 했습니다. 그 건은 STEP 74 로
+        연결되었으므로, 이제 **기업정보가 아예 없는 사업자번호**로 같은 성질을
+        확인합니다 — 지켜야 할 것은 표기 문제가 아니라 *"연결되지 않은 구매도
+        분모에는 들어간다"* 이기 때문입니다.
+
         **매칭률을 함께 보고해야 하는 이유**를 보여주는 케이스입니다.
         """
+        PurchaseRepository(seeded).insert(
+            Purchase(
+                business_no="9999999999",
+                company_name="등록되지 않은 업체",
+                contract_date=date(2026, 3, 1),
+                payment_date=date(2026, 3, 15),
+                amount=Decimal("3000000"),
+            )
+        )
         CompanyMatcher(CompanyRepository(seeded), PurchaseRepository(seeded)).match_all()
         payload = (
             TestClient(create_app(seeded, period_date_field="payment_date"))
@@ -279,17 +336,23 @@ class TestMatchingRateImpact:
         )
         item = {p["policy_code"]: p for p in payload["policies"]}["SMALL_BUSINESS"]
 
-        assert item["achievement_rate"] == "66.67"
+        # 분모만 9,000,000 → 12,000,000 으로 늘고 분자는 5,000,000 그대로다.
+        assert item["total_purchase_amount"] == "12000000"
+        assert item["purchase_amount"] == "5000000"
+        # 구매비율 41.67% / 목표 50% → 83.33% (연결되었다면 더 높았을 값)
+        assert item["achievement_rate"] == "83.33"
 
         matched_count = len(
             [p for p in PurchaseRepository(seeded).find_all() if p.company_id is not None]
         )
-        assert matched_count == 5  # 매칭률 5/6
+        assert matched_count == 6  # 매칭률 6/7 — 남은 1건은 기업정보가 없다
 
     def test_normalized_business_no_would_match(self, seeded: Path) -> None:
-        """하이픈을 제거하면 매칭에 성공합니다(정규화 필요성 확인).
+        """하이픈을 제거한 번호로도 같은 기업을 찾습니다.
 
-        Import 단계에서 정규화가 이루어지면 해결되는 문제임을 보여줍니다.
+        ⚠️ 예전에는 *"정규화가 있었다면 이렇게 됐을 것"* 을 보여주는 시험이었고,
+        지금은 **실제 동작**입니다(STEP 74). 손으로 하이픈을 지운 값이든 원래
+        표기든 같은 기업이 나와야 합니다.
         """
         purchase_repo = PurchaseRepository(seeded)
         target = next(
@@ -297,6 +360,9 @@ class TestMatchingRateImpact:
         )
         assert target.purchase_id is not None
 
-        company = CompanyRepository(seeded).find_by_business_no(target.business_no.replace("-", ""))
+        repository = CompanyRepository(seeded)
+        company = repository.find_by_business_no(target.business_no.replace("-", ""))
         assert company is not None
         assert company.business_no == BUSINESS_NO_A
+        # 원래 표기로 물어도 같은 기업이다.
+        assert repository.find_by_business_no(target.business_no) == company
