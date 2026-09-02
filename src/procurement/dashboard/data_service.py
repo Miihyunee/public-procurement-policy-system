@@ -32,6 +32,7 @@ from procurement.dashboard.models import (
     PolicySummary,
 )
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models.policy import Policy
 from procurement.models.purchase import Purchase
@@ -51,23 +52,31 @@ class DashboardDataService:
         calculator: ProcurementAchievementCalculator,
         policy_repository: PolicyRepository | None = None,
         purchase_repository: PurchaseRepository | None = None,
+        policy_target_repository: PolicyTargetRepository | None = None,
     ) -> None:
         """서비스를 초기화합니다.
 
         Args:
             calculator: 달성률 계산에 사용할 :class:`ProcurementAchievementCalculator`.
-            policy_repository: 시스템에 등록된 목표율을 조회할
-                :class:`PolicyRepository`. :meth:`build_summary_from_registered_targets`
-                를 사용할 때만 필요하며, 외부 입력 방식(:meth:`build_summary`)만
-                사용할 경우 생략할 수 있습니다.
+            policy_repository: 활성 정책 **목록**을 조회할 :class:`PolicyRepository`.
+                :meth:`build_summary_from_registered_targets` 를 사용할 때만
+                필요하며, 외부 입력 방식(:meth:`build_summary`)만 사용할 경우
+                생략할 수 있습니다.
             purchase_repository: **결의일자 미기재 건수**를 세는 데만 쓰는
                 :class:`PurchaseRepository`. ⛔ 계산에는 쓰이지 않습니다 —
                 달성률은 지금도 ``calculator`` 만 산출합니다. 생략하면 안내
                 값이 "해당 없음" 으로 나갑니다.
+            policy_target_repository: **연도별 목표비율**을 조회할
+                :class:`PolicyTargetRepository`. 주입하면 목표비율을 여기서
+                읽습니다(DECISIONS §0.20). 생략하면 예전처럼
+                ``Policy.target_rate`` 를 읽습니다 — 기존 호출부를 깨지 않기
+                위한 하위호환 경로이며, ⛔ 새 경로는 ``Policy.target_rate`` 를
+                읽지 않습니다.
         """
         self._calculator = calculator
         self._policy_repository = policy_repository
         self._purchase_repository = purchase_repository
+        self._policy_target_repository = policy_target_repository
 
     def build_summary(
         self, target_rates: dict[int, Decimal], period: PeriodFilter | None = None
@@ -146,11 +155,7 @@ class DashboardDataService:
             if policy.policy_id is not None
         ]
 
-        target_rates: dict[int, Decimal] = {
-            policy.policy_id: policy.target_rate
-            for policy in policies
-            if policy.policy_id is not None and policy.target_rate is not None
-        }
+        target_rates = self._resolve_target_rates(policies, period)
 
         total_amount = self._calculator.calculate_total_purchase(period)
         # 목표율이 있는 정책만 계산 대상으로 넘긴다(기존 계산 경로 그대로).
@@ -180,6 +185,49 @@ class DashboardDataService:
     # ------------------------------------------------------------------
     # 내부 헬퍼
     # ------------------------------------------------------------------
+    def _resolve_target_rates(
+        self, policies: list[Policy], period: PeriodFilter | None
+    ) -> dict[int, Decimal]:
+        """계산기에 넘길 ``{policy_id: 목표비율}`` 을 만듭니다.
+
+        **연도별 목표비율이 정본입니다**(DECISIONS §0.20).
+        :class:`PolicyTargetRepository` 가 주입되어 있고 대상 연도를 알 수 있으면
+        그 연도의 값만 씁니다.
+
+        .. warning::
+            ⛔ **연도끼리 값을 빌려오지 않습니다.** 2026년 목표가 없으면 2025년
+            값을 끌어다 쓰지 않고 **미설정**입니다. ⛔ 0 으로 대체하지도, 예전
+            ``Policy.target_rate`` 로 메우지도 않습니다 — 그렇게 하면 "설정하지
+            않았다" 와 "설정했다" 를 구분할 수 없습니다.
+
+        .. note::
+            ``policy_target_repository`` 를 주입하지 않은 호출부는 예전처럼
+            ``Policy.target_rate`` 를 씁니다. 기존 코드를 깨지 않기 위한
+            하위호환 경로입니다.
+
+        Args:
+            policies: 활성 정책 목록.
+            period: 적용할 기간 조건. 연도는 ``period.start.year`` 로 읽습니다 —
+                API 는 언제나 :meth:`PeriodFilter.for_year` 로 만들기 때문입니다.
+
+        Returns:
+            목표비율이 **설정된 정책만** 담긴 매핑.
+        """
+        if self._policy_target_repository is None or period is None:
+            # 하위호환 경로 — 연도 축이 없던 시절의 값.
+            return {
+                policy.policy_id: policy.target_rate
+                for policy in policies
+                if policy.policy_id is not None and policy.target_rate is not None
+            }
+
+        active_ids = {policy.policy_id for policy in policies if policy.policy_id is not None}
+        registered = self._policy_target_repository.rates_by_policy_id(period.start.year)
+        # 비활성 정책의 목표비율이 남아 있어도 계산 대상에 넣지 않는다.
+        return {
+            policy_id: rate for policy_id, rate in registered.items() if policy_id in active_ids
+        }
+
     def _missing_resolution_date(self, period: PeriodFilter | None) -> MissingResolutionDate:
         """결의일자가 없어 기간 산정에서 빠진 건수·금액을 셉니다.
 

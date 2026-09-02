@@ -28,6 +28,7 @@ from procurement.database.bootstrap import (
     verify_bootstrap,
 )
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Purchase
 from procurement.models.policy import Policy
@@ -508,13 +509,18 @@ class TestDashboardAfterBootstrap:
             assert item["status_label"] == "목표율 미설정"
 
     def test_policy_is_calculated_once_target_rate_is_set(self, db_path: Path) -> None:
-        """목표율을 등록하면 별도 조치 없이 계산 대상이 됩니다."""
+        """목표비율을 등록하면 별도 조치 없이 계산 대상이 됩니다.
+
+        ⚠️ STEP 93 — 목표비율의 정본이 **연도별** 값으로 바뀌었다
+        (DECISIONS §0.20). 그래서 등록하는 자리가 ``policy.target_rate`` 에서
+        ``policy_target`` 으로 옮겨졌다.
+        ⛔ 기대값은 그대로다 — "등록하면 계산된다" 를 여전히 검증한다.
+        """
         bootstrap(db_path)
-        with sqlite3.connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE policy SET target_rate = ? WHERE policy_code = ?",
-                ("50", "SMALL_BUSINESS"),
-            )
+        policy = PolicyRepository(db_path).find_by_policy_code("SMALL_BUSINESS")
+        assert policy is not None
+        assert policy.policy_id is not None
+        PolicyTargetRepository(db_path).upsert(2026, policy.policy_id, Decimal("50"))
         payload = (
             TestClient(create_app(db_path, period_date_field="payment_date"))
             .get("/dashboard/summary?year=2026")

@@ -290,7 +290,17 @@ class TestDashboardIntegration:
         return db_path
 
     def test_status_changes_after_target_rate_is_registered(self, seeded: Path) -> None:
-        """목표율 등록 전에는 TARGET_RATE_NOT_SET, 등록 후에는 계산 상태입니다."""
+        """목표비율 등록 전에는 TARGET_RATE_NOT_SET, 등록 후에는 계산 상태입니다.
+
+        ⚠️ **STEP 93 규칙 변경.** 대시보드가 읽는 목표비율이 **연도별** 값으로
+        바뀌었다(DECISIONS §0.20 · 지시서 §8). 그래서 등록에 쓰는 경로가 구
+        ``PUT /policies/{code}/target-rate`` 에서 신규
+        ``PUT /policy-targets/{year}/{code}`` 로 옮겨졌다.
+
+        ⛔ 기대값은 그대로다 — "등록 전 미설정 → 등록 후 계산" 과 달성률 200%
+        를 여전히 검증한다. 구 API 자체는 삭제되지 않았고 다른 시험이 계속
+        검증한다(지시서 §7).
+        """
         client = TestClient(
             create_app(seeded, admin_token=TEST_TOKEN, period_date_field="payment_date")
         )
@@ -299,7 +309,12 @@ class TestDashboardIntegration:
         item = {p["policy_code"]: p for p in before["policies"]}["SMALL_BUSINESS"]
         assert item["status"] == "TARGET_RATE_NOT_SET"
 
-        _put(client, "SMALL_BUSINESS", {"target_rate": "50"})
+        response = client.put(
+            "/policy-targets/2026/SMALL_BUSINESS",
+            json={"target_rate": "50"},
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        )
+        assert response.status_code == 200
 
         after = client.get("/dashboard/summary?year=2026").json()
         item = {p["policy_code"]: p for p in after["policies"]}["SMALL_BUSINESS"]

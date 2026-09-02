@@ -52,6 +52,7 @@ from procurement.database.certification_repository import CertificationRepositor
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Certification, Company
 from procurement.models.import_batch import STATUS_ACTIVE, STATUS_SUPERSEDED
@@ -206,6 +207,19 @@ def _register_certified_company(db_path: Path, business_no: str, name: str) -> i
     return company.company_id
 
 
+def _register_target(db_path: Path, rate: Decimal, year: int = 2026) -> None:
+    """중소기업 목표비율을 **그 연도에** 등록합니다.
+
+    ⚠️ STEP 93 — 목표비율의 정본은 연도별 값이다(DECISIONS §0.20).
+    ``Policy.target_rate`` 는 하위호환으로 남아 있을 뿐 계산에 쓰이지 않는다.
+    ⛔ 기대값은 바뀌지 않았다 — 값을 **어디에 두는지**만 바뀌었다.
+    """
+    policy = PolicyRepository(db_path).find_by_policy_code("SMALL_BUSINESS")
+    assert policy is not None
+    assert policy.policy_id is not None
+    PolicyTargetRepository(db_path).upsert(year, policy.policy_id, rate)
+
+
 def _summary(client: TestClient, year: int = 2026) -> dict[str, Any]:
     body: dict[str, Any] = client.get(f"/dashboard/summary?year={year}").json()
     return body
@@ -282,7 +296,7 @@ class TestMatchingReachesTheNumerator:
     ) -> None:
         """기업정보가 없으면 **분모에만** 들어간다 — 정상 흐름이다."""
         _upload(client, _excel(tmp_path / "a.xlsx", ROWS_A))
-        PolicyRepository(db_path).update_target_rate("SMALL_BUSINESS", Decimal("30"))
+        _register_target(db_path, Decimal("30"))
 
         small = next(
             p for p in _summary(client)["policies"] if p["policy_code"] == "SMALL_BUSINESS"
@@ -300,7 +314,7 @@ class TestMatchingReachesTheNumerator:
         정상 흐름이다(경우 B).
         """
         _upload(client, _excel(tmp_path / "a.xlsx", ROWS_A))
-        PolicyRepository(db_path).update_target_rate("SMALL_BUSINESS", Decimal("30"))
+        _register_target(db_path, Decimal("30"))
         before = next(
             p for p in _summary(client)["policies"] if p["policy_code"] == "SMALL_BUSINESS"
         )
@@ -364,7 +378,7 @@ class TestReplacementReachesTheApi:
     def replaced(self, client: TestClient, db_path: Path, tmp_path: Path) -> None:
         _upload(client, _excel(tmp_path / "a.xlsx", ROWS_A))
         _register_certified_company(db_path, "1198102316", "합성 B기업")
-        PolicyRepository(db_path).update_target_rate("SMALL_BUSINESS", Decimal("30"))
+        _register_target(db_path, Decimal("30"))
         client.post("/purchases/rematch")
         # 같은 기간을 다시 올린다 — 확인 플래그를 붙여야 교체된다.
         assert (
@@ -441,7 +455,7 @@ class TestFailedUploadKeepsTheApiNumbers:
     def seeded(self, client: TestClient, db_path: Path, tmp_path: Path) -> None:
         _upload(client, _excel(tmp_path / "a.xlsx", ROWS_A))
         _register_certified_company(db_path, "1198102316", "합성 B기업")
-        PolicyRepository(db_path).update_target_rate("SMALL_BUSINESS", Decimal("30"))
+        _register_target(db_path, Decimal("30"))
         client.post("/purchases/rematch")
 
     def test_bad_upload_is_rejected(self, seeded: None, client: TestClient, tmp_path: Path) -> None:
@@ -596,7 +610,7 @@ class TestPeriodEndToEnd:
     def uploaded(self, client: TestClient, db_path: Path, tmp_path: Path) -> None:
         _upload(client, _excel(tmp_path / "b.xlsx", ROWS_B))
         _register_certified_company(db_path, "1198102316", "합성 E기업")
-        PolicyRepository(db_path).update_target_rate("SMALL_BUSINESS", Decimal("30"))
+        _register_target(db_path, Decimal("30"))
         client.post("/purchases/rematch")
 
     @pytest.mark.parametrize(
@@ -653,7 +667,7 @@ class TestScreenReceivesTheNumbers:
     def uploaded(self, client: TestClient, db_path: Path, tmp_path: Path) -> None:
         _upload(client, _excel(tmp_path / "a.xlsx", ROWS_A))
         _register_certified_company(db_path, "1198102316", "합성 B기업")
-        PolicyRepository(db_path).update_target_rate("SMALL_BUSINESS", Decimal("30"))
+        _register_target(db_path, Decimal("30"))
         client.post("/purchases/rematch")
 
     def test_the_page_is_served(self, uploaded: None, client: TestClient) -> None:

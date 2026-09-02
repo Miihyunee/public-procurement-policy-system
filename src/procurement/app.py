@@ -43,6 +43,10 @@ from procurement.admin import (
     PolicyItemResponseModel,
     PolicyListResponseModel,
     PolicyNotFoundError,
+    PolicyTargetAdminService,
+    PolicyTargetItemModel,
+    PolicyTargetListResponseModel,
+    PolicyTargetUpdateRequest,
     TargetRateUpdateRequest,
     build_admin_token_guard,
 )
@@ -91,6 +95,7 @@ from procurement.database.import_batch_repository import (
 )
 from procurement.database.import_rejection_repository import ImportRejectionRepository
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.database.review_repository import ReviewRepository, ReviewValidationError
 from procurement.importers.batch_import_service import BatchImportService
@@ -306,7 +311,11 @@ def build_dashboard_api(db_path: str | Path | None = None) -> DashboardApiServic
     policy_repo = PolicyRepository(path)
     calculator = ProcurementAchievementCalculator(purchase_repo, certification_repo, policy_repo)
     data_service = DashboardDataService(
-        calculator, policy_repository=policy_repo, purchase_repository=purchase_repo
+        calculator,
+        policy_repository=policy_repo,
+        purchase_repository=purchase_repo,
+        # 목표비율의 정본은 **연도별** 값이다(DECISIONS §0.20).
+        policy_target_repository=PolicyTargetRepository(path),
     )
     return DashboardApiService(data_service)
 
@@ -328,6 +337,25 @@ def build_policy_admin(db_path: str | Path | None = None) -> PolicyAdminService:
     """
     path: str | Path = db_path if db_path is not None else settings.db_file
     return PolicyAdminService(PolicyRepository(path))
+
+
+def build_policy_target_admin(db_path: str | Path | None = None) -> PolicyTargetAdminService:
+    """연도별 목표비율 관리 서비스를 조립합니다(composition root).
+
+    설정 경로는 계산 경로와 분리되어 있습니다 — 목표비율을 바꾸는 일이 계산
+    코드를 건드리지 않습니다::
+
+        PolicyTargetAdminService → PolicyTargetRepository → SQLite
+                                 → PolicyRepository (정책 목록)
+
+    Args:
+        db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        조립된 :class:`PolicyTargetAdminService`.
+    """
+    path: str | Path = db_path if db_path is not None else settings.db_file
+    return PolicyTargetAdminService(PolicyRepository(path), PolicyTargetRepository(path))
 
 
 def build_upload_service(db_path: str | Path | None = None) -> UploadService:
@@ -734,6 +762,7 @@ def create_app(
     dashboard_api = build_dashboard_api(db_path)
     upload_service = build_upload_service(db_path)
     policy_admin = build_policy_admin(db_path)
+    policy_target_admin = build_policy_target_admin(db_path)
     review_service = build_review_service(db_path)
     import_trace = build_import_trace_service(db_path)
     date_field = (
@@ -1808,6 +1837,72 @@ def create_app(
         ``NOT_SET`` 입니다.
         """
         return policy_admin.list_policies()
+
+    @app.get(
+        "/policy-targets",
+        response_model=PolicyTargetListResponseModel,
+        summary="연도별 정책 목표비율 조회",
+        tags=["policy-targets"],
+    )
+    def list_policy_targets(
+        year: int = Query(
+            ge=1900,
+            le=2999,
+            description=(
+                "대상 회계연도. **필수입니다.** 구매의 결의일자 연도와 맞춥니다 — "
+                "⛔ 다른 연도의 목표비율을 끌어와 채우지 않습니다."
+            ),
+        ),
+    ) -> PolicyTargetListResponseModel:
+        """한 연도의 정책별 목표비율을 반환합니다.
+
+        **활성 정책 전체**가 담깁니다. 목표비율이 없는 정책도 빼지 않고
+        ``target_rate: null`` · ``target_rate_status: "NOT_SET"`` 으로
+        내려갑니다 — 화면이 입력칸을 그리려면 정책 목록 자체가 필요하고,
+        "정책이 없다" 와 "목표비율이 아직 없다" 는 다른 상태이기 때문입니다.
+
+        정책 코드와 정책명을 함께 주므로 화면이 정책명을 들고 있을 필요가
+        없습니다.
+
+        ⛔ 목표비율의 축은 **연도 × 정책** 뿐입니다. 구매처별 목표비율은
+        제공하지 않습니다(DECISIONS §0.20).
+        """
+        try:
+            return policy_target_admin.list_targets(year)
+        except PolicyValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put(
+        "/policy-targets/{year}/{policy_code}",
+        response_model=PolicyTargetItemModel,
+        summary="연도별 정책 목표비율 설정·해제",
+        tags=["policy-targets"],
+        dependencies=[Depends(require_admin_token)],
+    )
+    def set_policy_target(
+        year: int, policy_code: str, payload: PolicyTargetUpdateRequest
+    ) -> PolicyTargetItemModel:
+        """한 연도 · 한 정책의 목표비율을 저장합니다.
+
+        같은 ``(연도, 정책)`` 으로 몇 번을 호출해도 결과가 같습니다(**멱등**) —
+        있으면 값을 바꾸고 없으면 만듭니다.
+
+        ``{"target_rate": null}`` 은 **해제**를 뜻하며 행을 지웁니다.
+        ⛔ 0 으로 저장하지 않습니다 — 0% 는 "미설정" 이 아닙니다.
+        ``target_rate`` 키가 아예 없으면 422 로 거부해 "변경하지 않음" 과
+        "해제" 를 구분합니다.
+
+        목표비율은 ``0`` 초과 ``100`` 이하의 **임의의 값**입니다(예: ``"37.5"``).
+        ⛔ 화면의 달성률 표시 구간(20/40/60/80/100)으로 제한하지 않습니다.
+
+        ⚠️ 이 연도의 값은 **다른 연도에 영향을 주지 않습니다.**
+        """
+        try:
+            return policy_target_admin.set_target(year, policy_code, payload.target_rate)
+        except PolicyNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PolicyValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.put(
         "/policies/{policy_code}/target-rate",

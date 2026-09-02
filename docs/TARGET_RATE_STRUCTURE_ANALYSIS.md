@@ -253,7 +253,10 @@ resolution_date.year  →  target_rate.year
 
 ---
 
-## 3. 구현 시 변경 범위 (⛔ 이번 STEP 에서 실행하지 않음)
+> ✅ **STEP 93 에서 구현 완료.** 아래 §3 의 계획은 실제로 그대로 수행되었다.
+> 실제 결과는 `POLICY_TARGET_IMPLEMENTATION.md` 를 본다.
+
+## 3. 구현 시 변경 범위 (STEP 93 에서 수행함)
 
 (가) 해석 기준의 최소 변경 범위다.
 

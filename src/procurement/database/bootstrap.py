@@ -38,6 +38,7 @@ from procurement.database.company_repository import CompanyRepository
 from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.import_rejection_repository import ImportRejectionRepository
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.database.review_repository import ReviewRepository
 from procurement.models.policy import Policy
@@ -117,6 +118,9 @@ _REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
     "company": ("company_id", "business_no", "company_name", "representative_name"),
     "policy": ("policy_id", "policy_code", "policy_name", "evaluation_basis", "target_rate"),
     "certification": ("certification_id", "company_id", "policy_id", "valid_from", "valid_to"),
+    # 연도별·정책별 목표비율(DECISIONS §0.20). 이 테이블이 없으면 목표비율을
+    # 저장할 곳이 없어 달성률이 영영 계산되지 않으므로 필수 스키마로 본다.
+    "policy_target": ("policy_target_id", "year", "policy_id", "target_rate"),
     "purchase": (
         "purchase_id",
         "business_no",
@@ -247,6 +251,10 @@ def init_db(db_path: str | Path | None = None) -> None:
     ImportRejectionRepository(path).create_table()
     # DB-2 (검토·분류) — 신규 테이블만 추가한다. 기존 테이블은 건드리지 않는다.
     ReviewRepository(path).create_table()
+    # 연도별·정책별 목표비율(DECISIONS §0.20) — **신규 테이블만** 추가한다.
+    # ⛔ 기존 policy 테이블과 그 target_rate 컬럼은 건드리지 않는다. 기존 DB 에
+    #    이 호출이 더해져도 잃는 데이터가 없다.
+    PolicyTargetRepository(path).create_table()
     migrate_schema(path)
     # 확정 규칙이 바뀌어 풀린 제약을 기존 DB 에도 반영한다(멱등).
     relax_purchase_date_constraints(path)

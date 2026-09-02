@@ -500,6 +500,46 @@
     </section>
   </div>
 
+  <!--
+    2-B. 목표비율 관리 — 연도 × 정책.
+
+    「정책별 달성률」 바로 아래에 둔다. 목표비율이 없어 달성률이 안 나온다는
+    사실을 보는 그 자리에서 바로 입력할 수 있어야 하기 때문이다.
+
+    ⛔ 기업(구매처)을 고르는 칸이 없다. 목표비율의 축은 **연도 × 정책** 뿐이다
+       (DECISIONS §0.20). 거래처 단위로 목표를 나누지 않는다.
+    ⛔ 정책 목록을 화면이 들고 있지 않는다. 서버(/policy-targets)가 준다.
+    ⛔ 목표비율을 20/40/60/80/100 으로 제한하지 않는다 — 그것은 달성률 **표시
+       구간**이지 입력값 제한이 아니다.
+  -->
+  <div class="row" style="margin-top:16px">
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">목표비율 관리</h2>
+          <p class="card-sub">
+            연도별로 정책마다 목표비율을 정합니다. 기관 전체 지출 중 그 정책의
+            인증기업에 지출해야 하는 비율입니다
+          </p>
+        </div>
+        <span class="control">
+          <span class="control-label">연도</span>
+          <select id="pt-year" class="control-input"
+                  aria-label="목표비율 대상 연도"></select>
+        </span>
+        <button id="pt-save" class="control" type="button">저장</button>
+      </div>
+
+      <div id="pt-notice" class="notice" hidden></div>
+      <div id="pt-error" class="error" hidden></div>
+      <table class="kv"><tbody id="pt-rows"></tbody></table>
+      <p class="foot-note">
+        비워 두면 <b>미설정</b>입니다 — 0% 가 아니며 그 정책의 달성률은
+        계산하지 않습니다. 연도마다 따로 관리되어 다른 연도 값은 바뀌지 않습니다.
+      </p>
+    </section>
+  </div>
+
   <!-- 3. 매칭률 게이지 + 정책 카드 -->
   <div class="row row-bottom">
     <section class="card">
@@ -2499,6 +2539,175 @@
     });
   }
 
+  // ------------------------------------------------- 목표비율 관리 (연도 × 정책)
+  //
+  // ⛔ 기업(구매처)을 고르지 않는다. 축은 **연도 × 정책** 뿐이다(DECISIONS §0.20).
+  // ⛔ 정책 목록·정책명을 화면이 들고 있지 않는다. 서버가 준다.
+  // ⛔ 빈칸은 "미설정" 이지 0% 가 아니다. 빈칸을 0 으로 바꿔 보내지 않는다.
+  // ⛔ 달성률 표시 구간(20/40/60/80/100)으로 입력값을 제한하지 않는다.
+
+  var ptItems = [];   // 마지막으로 서버에서 받은 정책별 목표비율
+
+  function ptNotice(message) {
+    var box = el("pt-notice");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  function ptError(message) {
+    var box = el("pt-error");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  /**
+   * 저장 실패 사유. 목표비율 저장은 **설정 변경 권한**이 필요하므로, 권한 쪽
+   * 실패를 "다시 시도" 로 안내하면 담당자가 헛수고를 한다.
+   *
+   * ⛔ 자동 재시도를 하지 않는다 — 다시 보낼지는 사람이 정한다.
+   */
+  function ptFailureMessage(error) {
+    var status = error && error.status;
+    if (status === 503) {
+      return "설정 변경 기능이 꺼져 있습니다. 관리자에게 문의해 주세요.";
+    }
+    if (status === 401 || status === 403) {
+      return "설정을 변경할 권한이 없습니다. 관리자에게 문의해 주세요.";
+    }
+    if (status === 422) {
+      return "목표비율은 0 보다 크고 100 이하인 숫자여야 합니다. 비워 두면 미설정입니다.";
+    }
+    return failureMessage(error, "목표비율을 저장하지 못했습니다");
+  }
+
+  /** 목표비율 입력칸 한 줄. 값이 없으면 **비워 둔다**(0 을 넣지 않는다). */
+  function ptRow(item) {
+    var tr = document.createElement("tr");
+    var th = make("th", null, item.policy_name);
+    var td = document.createElement("td");
+
+    var input = document.createElement("input");
+    input.className = "control-input";
+    input.type = "text";
+    input.inputMode = "decimal";
+    input.id = "pt-input-" + item.policy_code;
+    input.value = item.target_rate === null ? "" : item.target_rate;
+    input.placeholder = "미설정";
+    input.setAttribute("aria-label", item.policy_name + " 목표비율(%)");
+    input.style.width = "7em";
+
+    td.appendChild(input);
+    td.appendChild(document.createTextNode(" %"));
+    tr.appendChild(th);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function renderPolicyTargets(body) {
+    ptItems = body.items || [];
+    var rows = el("pt-rows");
+    clear(rows);
+    if (ptItems.length === 0) {
+      var tr = document.createElement("tr");
+      var td = make("td", null, "활성 정책이 없습니다.");
+      td.colSpan = 2;
+      tr.appendChild(td);
+      rows.appendChild(tr);
+      return;
+    }
+    ptItems.forEach(function (item) { rows.appendChild(ptRow(item)); });
+  }
+
+  /** 선택한 연도의 목표비율을 **서버에서 다시** 읽는다. */
+  function loadPolicyTargets() {
+    ptError("");
+    var year = el("pt-year").value;
+    return fetch("/policy-targets?year=" + encodeURIComponent(year),
+                 { headers: { "Accept": "application/json" } })
+      .then(function (res) {
+        if (!res.ok) { throw httpError(res); }
+        return res.json();
+      })
+      .then(renderPolicyTargets)
+      .catch(function (err) {
+        ptError(failureMessage(err, "목표비율을 불러오지 못했습니다"));
+      });
+  }
+
+  /**
+   * 바뀐 값만 저장한다.
+   *
+   * ⛔ 빈칸은 0 이 아니라 **해제**(null)로 보낸다.
+   * ⛔ 손대지 않은 정책은 요청 자체를 보내지 않는다 — 다른 연도는 물론이고
+   *    이 연도의 다른 정책도 건드리지 않는다.
+   */
+  function savePolicyTargets() {
+    ptError("");
+    var year = el("pt-year").value;
+    var button = el("pt-save");
+    var changed = [];
+
+    ptItems.forEach(function (item) {
+      var input = el("pt-input-" + item.policy_code);
+      if (!input) { return; }
+      var typed = input.value.trim();
+      var before = item.target_rate === null ? "" : String(item.target_rate);
+      if (typed === before) { return; }
+      changed.push({ code: item.policy_code, value: typed === "" ? null : typed });
+    });
+
+    if (changed.length === 0) {
+      ptNotice("바뀐 값이 없습니다.");
+      return;
+    }
+
+    button.disabled = true;
+    ptNotice("저장 중입니다...");
+
+    var requests = changed.map(function (change) {
+      return fetch("/policy-targets/" + encodeURIComponent(year) + "/"
+                   + encodeURIComponent(change.code), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ target_rate: change.value })
+      }).then(function (res) {
+        if (!res.ok) { throw httpError(res); }
+        return res.json();
+      });
+    });
+
+    Promise.all(requests)
+      .then(function () {
+        ptNotice(year + "년 목표비율을 저장했습니다.");
+        // 저장 결과를 서버에서 다시 읽고, 달성률도 다시 그린다.
+        return loadPolicyTargets().then(load);
+      })
+      .catch(function (err) {
+        ptNotice("");
+        ptError(ptFailureMessage(err));
+      })
+      .finally(function () { button.disabled = false; });
+  }
+
+  function initPolicyTargets() {
+    var select = el("pt-year");
+    var current = new Date().getFullYear();
+    for (var y = current + 1; y >= current - 3; y--) {
+      var opt = document.createElement("option");
+      opt.value = String(y);
+      opt.textContent = y + "년";
+      if (y === current) { opt.selected = true; }
+      select.appendChild(opt);
+    }
+    // 연도를 바꾸면 **그 연도 값을 다시 읽는다.** ⛔ 화면에 남은 값을 재사용하지 않는다.
+    select.addEventListener("change", function () {
+      ptNotice("");
+      loadPolicyTargets();
+    });
+    el("pt-save").addEventListener("click", savePolicyTargets);
+    loadPolicyTargets();
+  }
+
   // ------------------------------------------------- 기업정보 확인 방식
   //
   // 사용자가 **파일 업로드 / 조회** 중 하나를 고른다.
@@ -4116,6 +4325,7 @@
   initTheme();
   buildYearOptions();
   initMissingResolutionFold();
+  initPolicyTargets();
   initUpload();
   initCompanySource();
   initReview();

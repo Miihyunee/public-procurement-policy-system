@@ -40,6 +40,7 @@ from procurement.database.bootstrap import init_db
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.importers import PurchaseImporter
 from procurement.models import Certification, Company, Policy
@@ -91,7 +92,13 @@ def _register_company(db_path: Path, business_no: str = BUSINESS_NO) -> int:
 
 
 def _register_policy(db_path: Path, fixture: PolicyFixture) -> int:
-    """정책과 목표율을 등록합니다."""
+    """정책과 목표율을 등록합니다.
+
+    ⚠️ STEP 93 — 목표비율의 정본은 **연도별** 값이다(DECISIONS §0.20).
+    ``Policy.target_rate`` 는 하위호환으로 남아 있을 뿐 계산에 쓰이지 않으므로,
+    이 시험들이 조회하는 연도(2026)에 같은 값을 함께 등록한다.
+    ⛔ 기대값은 바뀌지 않았다 — 값을 **어디에 두는지**만 바뀌었다.
+    """
     saved = PolicyRepository(db_path).insert(
         Policy(
             policy_code=fixture.policy_code,
@@ -101,6 +108,8 @@ def _register_policy(db_path: Path, fixture: PolicyFixture) -> int:
         )
     )
     assert saved.policy_id is not None
+    if fixture.target_rate is not None:
+        PolicyTargetRepository(db_path).upsert(2026, saved.policy_id, fixture.target_rate)
     return saved.policy_id
 
 

@@ -19,6 +19,7 @@ from procurement.app import build_dashboard_api, create_app
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Certification, Company, Policy, Purchase
 
@@ -30,6 +31,11 @@ def db_path(tmp_path: Path) -> Path:
     PolicyRepository(path).create_table()
     CertificationRepository(path).create_table()
     PurchaseRepository(path).create_table()
+    # ⚠️ STEP 93 — 목표비율 테이블(DECISIONS §0.20). 이 fixture 는 init_db 를
+    #    쓰지 않고 테이블을 직접 만들므로 새 테이블도 여기에 더한다.
+    #    ⛔ 저장소가 테이블 없음을 조용히 넘기게 만들지 않았다 — 초기화되지
+    #    않은 DB 는 크게 실패하는 편이 낫다.
+    PolicyTargetRepository(path).create_table()
     return path
 
 
@@ -51,6 +57,12 @@ def _seed(db_path: Path, target_rate: Decimal | None) -> None:
         Policy(policy_code="SMALL_BUSINESS", policy_name="중소기업", target_rate=target_rate)
     )
     assert policy.policy_id is not None
+    # ⚠️ STEP 93 — 목표비율의 정본은 **연도별** 값이다(DECISIONS §0.20). 위
+    #    Policy.target_rate 는 하위호환으로 남아 있을 뿐 계산에 쓰이지 않으므로,
+    #    이 시험들이 조회하는 연도(2026)에 같은 값을 등록한다.
+    #    ⛔ 기대값은 바뀌지 않았다 — 값을 **어디에 두는지**만 바뀌었다.
+    if target_rate is not None:
+        PolicyTargetRepository(db_path).upsert(2026, policy.policy_id, target_rate)
     cert_repo.insert(
         Certification(
             company_id=company.company_id,

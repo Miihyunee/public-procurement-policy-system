@@ -41,6 +41,7 @@ from procurement.database.bootstrap import init_db
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.matchers import CompanyMatcher
 from procurement.models import Certification, Company, Policy, Purchase
@@ -112,6 +113,14 @@ def _seed_minimal_dataset(path: Path) -> None:
     )
     assert small_business.policy_id is not None
     assert startup.policy_id is not None
+
+    # ⚠️ STEP 93 — 목표비율의 정본은 **연도별** 값이다(DECISIONS §0.20). 위
+    #    Policy.target_rate 는 하위호환으로 남아 있을 뿐 계산에 쓰이지 않으므로,
+    #    이 시험이 조회하는 연도(2026)에 같은 값을 등록한다.
+    #    ⛔ 기대값은 바뀌지 않았다 — 값을 **어디에 두는지**만 바뀌었다.
+    targets = PolicyTargetRepository(path)
+    targets.upsert(2026, small_business.policy_id, Decimal("50"))
+    targets.upsert(2026, startup.policy_id, Decimal("20"))
 
     cert_repo.insert(
         Certification(
