@@ -35,6 +35,7 @@ from procurement.database.bootstrap import MVP_POLICY_SEEDS
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DOC = _ROOT / "docs" / "CERTIFICATION_SOURCE_ANALYSIS.md"
+_QUESTIONS = _ROOT / "docs" / "CUSTOMER_DATA_QUESTIONS.md"
 _SRC = _ROOT / "src" / "procurement"
 
 #: ⛔ 조사 문서가 **확정처럼 적으면 안 되는** 문구.
@@ -51,9 +52,59 @@ FORBIDDEN_CLAIMS = (
 CONFIRMED_ANSWERS = ("§0.12.1", "§0.6.2", "§0.12.6")
 
 
+#: ⛔ 고객이 읽는 문장에 나오면 안 되는 내부 용어.
+INTERNAL_TERMS = (
+    "API",
+    "DB",
+    "repository",
+    "Repository",
+    "importer",
+    "sync_one",
+    "company_id",
+    "certification",
+    "배선",
+    "적재",
+    "마이그레이션",
+    "스키마",
+    "설정값",
+)
+
+#: 🟢 이미 확정된 것 — ⛔ 요청서에서 **다시 물으면 안 된다**.
+SETTLED_QUESTIONS = (
+    "어떤 날짜를 기준으로",
+    "연도를 어떻게 나눌",
+    "직접생산확인증명을 어떻게",
+    "지출결의서 단위로 묶어",
+)
+
+
 @pytest.fixture(scope="module")
 def doc() -> str:
     return _DOC.read_text(encoding="utf-8")
+
+
+def _section(text: str, heading: str) -> str:
+    """``heading`` 으로 시작하는 절의 본문. 없으면 빈 문자열."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith(heading):
+            level = len(line) - len(line.lstrip("#"))
+            rest = lines[index + 1 :]
+            for offset, following in enumerate(rest):
+                stripped = following.lstrip("#")
+                if following.startswith("#") and len(following) - len(stripped) <= level:
+                    return "\n".join(rest[:offset])
+            return "\n".join(rest)
+    return ""
+
+
+@pytest.fixture(scope="module")
+def request_sheet() -> str:
+    """고객이 실제로 받아 보는 장(요청서 ②)."""
+    text = _QUESTIONS.read_text(encoding="utf-8")
+    section = _section(text, "# 📨 확인 요청서 ② — 기업·인증 자료")
+    assert section, "확인 요청서 ② 를 찾지 못했습니다"
+    return section
 
 
 class TestTheDocumentExists:
@@ -211,3 +262,132 @@ class TestNoNewPolicyWasRegistered:
         assert all(seed.policy_code for seed in MVP_POLICY_SEEDS)
         source = (_SRC / "database" / "bootstrap.py").read_text(encoding="utf-8")
         assert "target_rate=None" in source
+
+
+# ======================================================================
+# STEP 89 — 고객 확인 요청서 ②
+# ======================================================================
+class TestTheRequestSheetIsComplete:
+    """지시서 §3 이 요구한 7문항이 모두 있는가."""
+
+    def test_there_are_exactly_seven_questions(self, request_sheet: str) -> None:
+        """⛔ 질문을 늘리지도, 빠뜨리지도 않았다."""
+        headings = [line for line in request_sheet.splitlines() if line.startswith("## ")]
+        numbered = [
+            h
+            for h in headings
+            if h.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤", "## ⑥", "## ⑦"))
+        ]
+        assert len(numbered) == 7, headings
+
+    def test_every_question_is_open(self, request_sheet: str) -> None:
+        """요청서의 질문은 전부 🔴 이어야 한다 — 답을 받으려고 보내는 것이다."""
+        numbered = [
+            line
+            for line in request_sheet.splitlines()
+            if line.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤", "## ⑥", "## ⑦"))
+        ]
+        assert all("🔴" in line for line in numbered), numbered
+
+    @pytest.mark.parametrize(
+        "topic",
+        [
+            "작업」 시트를 기업·인증 자료로",
+            "중소기업으로 봅니까",
+            "다를 때 어느 쪽",
+            "#N/A",
+            "끝나는 날짜가 없는",
+            "없는 80개 업체",
+            "집계해야 합니까",
+        ],
+    )
+    def test_the_topic_is_covered(self, request_sheet: str, topic: str) -> None:
+        assert topic in request_sheet, topic
+
+    def test_the_target_rate_is_asked_for(self, request_sheet: str) -> None:
+        """📎 목표 비율이 없으면 달성률이 나오지 않는다 — 함께 요청했는가."""
+        assert "목표 비율" in request_sheet
+        assert "임의로 넣지 않았습니다" in request_sheet
+
+
+class TestTheRequestSheetIsPlain:
+    """⛔ 고객이 읽는 문장에 내부 용어가 새어 나가지 않았는가."""
+
+    @pytest.mark.parametrize("term", INTERNAL_TERMS)
+    def test_no_internal_term(self, request_sheet: str, term: str) -> None:
+        assert term not in request_sheet, term
+
+    def test_no_snake_case_identifier_leaked(self, request_sheet: str) -> None:
+        assert re.search(r"[a-z]+_[a-z_]+\(", request_sheet) is None
+
+    def test_it_does_not_sound_like_our_judgement(self, request_sheet: str) -> None:
+        """지시서 §4 가 정해 준 표현을 그대로 썼는가.
+
+        줄바꿈·강조 표시는 무시하고 **문장 자체**를 봅니다.
+        """
+        plain = request_sheet.replace("*", "").replace("\n", " ")
+        assert "일부 항목은 업무 판단이 필요한 상태입니다" in plain
+        assert "정확한 달성률 산정을 위해 아래 항목만 확인 부탁드립니다" in plain
+
+
+class TestTheRequestSheetDoesNotReAsk:
+    """⛔ 이미 답해 주신 것을 다시 묻지 않았는가(지시서 §1)."""
+
+    @pytest.mark.parametrize("settled", SETTLED_QUESTIONS)
+    def test_the_settled_item_is_not_re_asked(self, request_sheet: str, settled: str) -> None:
+        assert settled not in request_sheet, settled
+
+    def test_it_says_what_is_already_settled(self, request_sheet: str) -> None:
+        assert "이미 답해 주신 것은 다시 여쭙지 않습니다" in request_sheet
+
+    def test_nothing_was_decided_for_the_customer(self, request_sheet: str) -> None:
+        assert "임의로 정하지 않았습니다" in request_sheet
+        assert "지금 상태 그대로 두겠습니다" in request_sheet
+
+    def test_the_question_does_not_lead_the_answer(self, request_sheet: str) -> None:
+        """⛔ 특정 답을 유도하지 않는다."""
+        for leading in (
+            "사용해도 되겠지요",
+            "중소기업으로 보겠습니다",
+            "인증 없음으로 처리하겠습니다",
+            "집계하겠습니다",
+        ):
+            assert leading not in request_sheet, leading
+
+    def test_no_business_number_leaked(self, request_sheet: str) -> None:
+        assert re.search(r"\b\d{3}-\d{2}-\d{5}\b", request_sheet) is None
+        assert re.findall(r"(?<![\d,.-])\d{10}(?![\d,.-])", request_sheet) == []
+
+
+class TestThePlanIsRecorded:
+    """답변이 오면 무엇을 할지 **미리** 적어 두었는가(지시서 §6)."""
+
+    @pytest.mark.parametrize(
+        "heading",
+        [
+            "## 10. 고객 확인 요청안",
+            "## 11. 답변이 오면 손댈 자리",
+            "## 12. 답변 이후 구현 순서",
+            "## 13. 이번 STEP(89)에서 한 일",
+        ],
+    )
+    def test_the_section_exists(self, doc: str, heading: str) -> None:
+        assert heading in doc
+
+    def test_the_company_list_comes_first(self, doc: str) -> None:
+        """⭐ 기업 명단이 인증보다 먼저다 — 순서를 틀리면 전부 건너뛰어진다."""
+        order = _section(doc, "## 12. 답변 이후 구현 순서")
+        assert order.index("기업 명단을 채운다") < order.index("인증을 채운다")
+
+    def test_the_plan_is_not_an_approval(self, doc: str) -> None:
+        assert "답변 전에는 어느 것도 만들지 않는다" in doc
+        assert "계획이지 승인이 아니다" in doc
+
+    def test_the_judgement_rules_are_marked_unchanged(self, doc: str) -> None:
+        """⛔ 어느 답변도 판정 규칙을 바꾸지 않는다."""
+        assert "판정 규칙(`ResolutionDateRule` 등)은 어느 답변에도 바뀌지 않는다" in doc
+
+    def test_step_89_changed_no_source(self, doc: str) -> None:
+        section = _section(doc, "## 13. 이번 STEP(89)에서 한 일")
+        assert "변경 없음" in section
+        assert "산출하지 않았다" in section
