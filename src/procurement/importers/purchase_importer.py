@@ -181,7 +181,9 @@ class PurchaseImporter:
         각 행은 다음 키를 가질 수 있습니다.
 
         - ``business_no`` (필수), ``amount`` (필수)
-        - ``contract_date`` (필수), ``payment_date`` (필수)
+        - ``contract_date`` · ``payment_date`` (**선택**) — 🟢 2026-09-02 PM
+          확정(STEP 87). 실적 산정 기준일이 아니므로 없어도 적재합니다.
+          ⛔ 없는 값을 다른 날짜로 채우지 않습니다.
         - ``resolution_date`` (**선택**) — 결의일자. 표준 업로드 양식에서
           들어옵니다. 없으면 ``None`` 으로 저장하며, 기존 동작과 동일합니다.
         - ``issue_date`` (**선택**) — 세금계산서 발행일자(``신고기준일``).
@@ -238,13 +240,23 @@ class PurchaseImporter:
         business_no = normalized.value
         assert business_no is not None  # is_valid 가 보장
 
-        contract_date, error = _parse_date(row.get("contract_date"), "계약일")
-        if error is not None:
-            return self._failed(row_number, [*messages, error], business_no)
+        # 계약일·지급일은 **선택 항목**이다(🟢 2026-09-02 PM 확정 · STEP 87).
+        # 실적 산정 기준일은 결의일자이며, 원본에 없는 이 두 날짜 때문에
+        # 정상 거래를 미적재시키지 않는다. 값이 있는데 형식이 틀리면 조용히
+        # 버리지 않고 실패로 처리한다. ⛔ 없는 값을 다른 날짜로 채우지 않는다.
+        raw_contract_date = row.get("contract_date")
+        contract_date: date | None = None
+        if isinstance(raw_contract_date, date) or _clean_text(raw_contract_date):
+            contract_date, error = _parse_date(raw_contract_date, "계약일")
+            if error is not None:
+                return self._failed(row_number, [*messages, error], business_no)
 
-        payment_date, error = _parse_date(row.get("payment_date"), "지급일")
-        if error is not None:
-            return self._failed(row_number, [*messages, error], business_no)
+        raw_payment_date = row.get("payment_date")
+        payment_date: date | None = None
+        if isinstance(raw_payment_date, date) or _clean_text(raw_payment_date):
+            payment_date, error = _parse_date(raw_payment_date, "지급일")
+            if error is not None:
+                return self._failed(row_number, [*messages, error], business_no)
 
         # 결의일자는 선택 항목이다. 값이 없으면 None 으로 두고, 있는데 형식이
         # 틀리면 조용히 버리지 않고 실패로 처리한다.
@@ -273,10 +285,11 @@ class PurchaseImporter:
         if error is not None:
             return self._failed(row_number, [*messages, error], business_no)
 
-        assert contract_date is not None and payment_date is not None and amount is not None
+        assert amount is not None
 
         # 선지급·정산으로 실제 역전이 발생할 수 있어 거부하지 않고 경고만 남긴다.
-        if contract_date > payment_date:
+        # 두 날짜가 **모두 있을 때만** 비교한다 — 없는 값을 대신 넣지 않는다.
+        if contract_date is not None and payment_date is not None and contract_date > payment_date:
             messages.append(
                 f"계약일({contract_date})이 지급일({payment_date})보다 늦습니다. 확인이 필요합니다."
             )

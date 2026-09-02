@@ -34,6 +34,8 @@ def _sample(business_no: str = "1234567890", amount: str = "1000000") -> Purchas
         company_name="테스트기업",
         contract_date=date(2026, 3, 1),
         payment_date=date(2026, 3, 15),
+        # 결의일자 — 🟢 실적 산정 기준일(DECISIONS §0.15).
+        resolution_date=date(2026, 3, 5),
         amount=Decimal(amount),
     )
 
@@ -56,17 +58,30 @@ class TestCreateTable:
         assert cols["purchase_id"]["pk"] == 1
 
     def test_not_null_columns(self, repo: PurchaseRepository) -> None:
+        """⛔ 없으면 그 행이 무엇인지 알 수 없는 값만 ``NOT NULL`` 이다.
+
+        .. note::
+            **목록이 바뀐 이유** — ``contract_date`` · ``payment_date`` 가
+            빠졌습니다. 🟢 2026-09-02 PM 확정(STEP 87)으로 두 날짜는 실적
+            산정 기준일이 아니며, 고객 원본에 컬럼 자체가 없어 ``NOT NULL``
+            을 두면 정상 거래가 전부 미적재됩니다.
+            ⛔ 나머지 제약은 하나도 풀지 않았습니다.
+        """
         cols = {row["name"]: row for row in repo.execute("PRAGMA table_info(purchase)")}
         for name in (
             "business_no",
             "company_name",
-            "contract_date",
-            "payment_date",
             "amount",
             "created_at",
             "updated_at",
         ):
             assert cols[name]["notnull"] == 1, f"{name} 은 NOT NULL 이어야 합니다."
+
+    def test_the_optional_dates_allow_null(self, repo: PurchaseRepository) -> None:
+        """🟢 실적 산정 기준일이 아닌 날짜는 NULL 을 허용한다(STEP 87)."""
+        cols = {row["name"]: row for row in repo.execute("PRAGMA table_info(purchase)")}
+        for name in ("contract_date", "payment_date", "resolution_date", "issue_date"):
+            assert cols[name]["notnull"] == 0, f"{name} 은 NULL 을 허용해야 합니다."
 
     def test_company_id_allows_null(self, repo: PurchaseRepository) -> None:
         """company_id 는 매칭 후 저장되므로 NULL 을 허용합니다."""
@@ -322,17 +337,56 @@ class TestRequiredValidation:
         with pytest.raises(PurchaseValidationError):
             repo.insert(p)
 
-    def test_none_contract_date(self, repo: PurchaseRepository) -> None:
-        p = _sample()
-        p.contract_date = None  # type: ignore[assignment]
-        with pytest.raises(PurchaseValidationError):
-            repo.insert(p)
+    def test_none_contract_date_is_stored_as_null(self, repo: PurchaseRepository) -> None:
+        """계약일자가 없어도 저장된다 — 🟢 2026-09-02 PM 확정(STEP 87).
 
-    def test_none_payment_date(self, repo: PurchaseRepository) -> None:
+        .. note::
+            **기대값이 바뀐 이유** — 이 시험은 ``None`` 이면
+            :class:`PurchaseValidationError` 가 나는 것을 잠그고 있었습니다.
+            PM 이 *"원본에 존재하지 않는 날짜 때문에 결의일자가 정상적으로
+            존재하는 거래까지 미적재시키지 않는다"* 로 확정했으므로,
+            이제는 **NULL 로 저장되는지**를 잠급니다.
+            ⛔ 값을 다른 날짜로 채우지 않는다는 것도 함께 확인합니다.
+        """
         p = _sample()
-        p.payment_date = None  # type: ignore[assignment]
-        with pytest.raises(PurchaseValidationError):
-            repo.insert(p)
+        p.contract_date = None
+        saved = repo.insert(p)
+
+        assert saved.purchase_id is not None
+        reloaded = repo.find_by_id(saved.purchase_id)
+        assert reloaded is not None
+        assert reloaded.contract_date is None  # ⛔ 다른 날짜로 채우지 않는다
+        assert reloaded.payment_date == p.payment_date
+        assert reloaded.amount == p.amount
+
+    def test_none_payment_date_is_stored_as_null(self, repo: PurchaseRepository) -> None:
+        """지급일이 없어도 저장된다 — 🟢 2026-09-02 PM 확정(STEP 87).
+
+        사유는 :meth:`test_none_contract_date_is_stored_as_null` 과 같습니다.
+        """
+        p = _sample()
+        p.payment_date = None
+        saved = repo.insert(p)
+
+        assert saved.purchase_id is not None
+        reloaded = repo.find_by_id(saved.purchase_id)
+        assert reloaded is not None
+        assert reloaded.payment_date is None  # ⛔ 다른 날짜로 채우지 않는다
+        assert reloaded.contract_date == p.contract_date
+
+    def test_both_dates_none_is_still_stored(self, repo: PurchaseRepository) -> None:
+        """⭐ 고객 원본과 같은 모습 — 두 날짜가 모두 없고 결의일자만 있다."""
+        p = _sample()
+        p.contract_date = None
+        p.payment_date = None
+        saved = repo.insert(p)
+
+        assert saved.purchase_id is not None
+        reloaded = repo.find_by_id(saved.purchase_id)
+        assert reloaded is not None
+        assert reloaded.contract_date is None
+        assert reloaded.payment_date is None
+        assert reloaded.resolution_date == p.resolution_date
 
     def test_none_amount(self, repo: PurchaseRepository) -> None:
         p = _sample()

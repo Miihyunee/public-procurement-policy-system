@@ -146,12 +146,58 @@ class TestImportFailures:
         assert any("101811629" in message for message in report.rows[0].messages)
 
     def test_missing_required_column(self, importer: PurchaseImporter) -> None:
-        """필수 키가 아예 없으면 실패합니다."""
+        """필수 키가 아예 없으면 실패합니다 — 사업자등록번호."""
+        row = _row()
+        del row["business_no"]
+        report = importer.import_rows([row])
+        assert report.failed_count == 1
+        assert any("사업자등록번호" in message for message in report.rows[0].messages)
+
+    def test_a_missing_payment_date_no_longer_fails(self, importer: PurchaseImporter) -> None:
+        """지급일 키가 없어도 **적재된다** — 🟢 2026-09-02 PM 확정(STEP 87).
+
+        .. note::
+            **기대값이 바뀐 이유** — 이 시험은 ``payment_date`` 키를 지우면
+            실패하는 것을 잠그고 있었습니다. PM 이 *"실적 산정 및 연도 귀속
+            기준은 결의일자"* 이며 *"원본에 존재하지 않는 날짜 때문에 정상
+            거래를 미적재시키지 않는다"* 로 확정했으므로, 이제는 **적재되는지**
+            를 잠급니다. ⛔ 필수 키 검사 자체를 지운 것이 아니라 위 시험이
+            사업자등록번호로 그대로 남아 있습니다.
+        """
         row = _row()
         del row["payment_date"]
         report = importer.import_rows([row])
-        assert report.failed_count == 1
-        assert any("지급일" in message for message in report.rows[0].messages)
+
+        assert report.failed_count == 0
+        assert report.stored_count == 1
+
+    def test_a_missing_contract_date_no_longer_fails(self, importer: PurchaseImporter) -> None:
+        """계약일자도 마찬가지다(사유는 위와 같음)."""
+        row = _row()
+        del row["contract_date"]
+        report = importer.import_rows([row])
+
+        assert report.failed_count == 0
+        assert report.stored_count == 1
+
+    def test_a_row_with_neither_date_is_stored(
+        self, importer: PurchaseImporter, db_path: Path
+    ) -> None:
+        """⭐ 고객 원본과 같은 모습 — 두 날짜가 모두 없고 결의일자만 있다.
+
+        ⛔ 없는 날짜를 다른 날짜로 채우지 않는다는 것까지 확인한다.
+        """
+        row = _row()
+        del row["payment_date"]
+        del row["contract_date"]
+        row["resolution_date"] = "2026-03-05"
+        report = importer.import_rows([row])
+
+        assert report.stored_count == 1
+        stored = PurchaseRepository(db_path).find_all()[0]
+        assert stored.contract_date is None
+        assert stored.payment_date is None
+        assert stored.resolution_date == date(2026, 3, 5)
 
     def test_invalid_date(self, importer: PurchaseImporter) -> None:
         report = importer.import_rows([_row(contract_date="2026년 3월 1일")])

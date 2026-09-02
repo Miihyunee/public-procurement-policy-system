@@ -70,8 +70,11 @@ class DateBasisRule(ABC):
     """
 
     @abstractmethod
-    def basis_date(self, purchase: Purchase) -> date:
-        """구매에서 판정 기준으로 사용할 날짜를 반환합니다."""
+    def basis_date(self, purchase: Purchase) -> date | None:
+        """구매에서 판정 기준으로 사용할 날짜를 반환합니다.
+
+        값이 없으면 ``None`` 입니다. ⛔ 다른 날짜로 대체하지 않습니다.
+        """
         raise NotImplementedError
 
     def matches(self, context: RuleContext) -> bool:
@@ -79,8 +82,16 @@ class DateBasisRule(ABC):
 
         기존 계산기의 ``_is_within_any`` 판정과 동일하게, ``valid_from <=
         기준일 <= valid_to`` 를 만족하는 구간이 하나라도 있으면 인정합니다.
+
+        .. warning::
+            **기준일이 없으면 ``False``** 입니다(🟢 2026-09-02 PM 확정 ·
+            STEP 87 로 계약일·지급일이 선택 항목이 되었습니다). ⛔ 없는
+            날짜를 다른 날짜로 대신하지 않습니다 — 그렇게 하면 담당자가
+            확인하지 않은 판정이 실적 숫자가 됩니다.
         """
         basis = self.basis_date(context.purchase)
+        if basis is None:
+            return False
         return any(
             valid_from <= basis <= valid_to for valid_from, valid_to in context.validity_ranges
         )
@@ -89,16 +100,16 @@ class DateBasisRule(ABC):
 class PaymentDateRule(DateBasisRule):
     """대금 지급일(``payment_date``)을 기준으로 판정하는 규칙."""
 
-    def basis_date(self, purchase: Purchase) -> date:
-        """대금 지급일을 기준일로 반환합니다."""
+    def basis_date(self, purchase: Purchase) -> date | None:
+        """대금 지급일을 기준일로 반환합니다. 값이 없으면 ``None``."""
         return purchase.payment_date
 
 
 class ContractDateRule(DateBasisRule):
     """계약일(``contract_date``)을 기준으로 판정하는 규칙."""
 
-    def basis_date(self, purchase: Purchase) -> date:
-        """계약일을 기준일로 반환합니다."""
+    def basis_date(self, purchase: Purchase) -> date | None:
+        """계약일을 기준일로 반환합니다. 값이 없으면 ``None``."""
         return purchase.contract_date
 
 
@@ -175,12 +186,21 @@ class ResolutionOrContractDateRule:
     def matches(self, context: RuleContext) -> bool:
         """두 날짜 중 하나라도 유효기간(경계 포함)에 들면 ``True``.
 
-        ``resolution_date`` 가 없는 행은 그 날짜를 판정에서 제외합니다.
+        **값이 있는 날짜만** 봅니다 — 없는 날짜는 판정에서 빠질 뿐,
+        다른 날짜로 대체되지 않습니다. 둘 다 없으면 ``False`` 입니다.
+
+        .. note::
+            🟢 2026-09-02 PM 확정(STEP 87)으로 계약일자가 선택 항목이
+            되었습니다. 고객 원본에 계약일자 컬럼이 없는 경우, 이 규칙은
+            **결의일자만으로** 판정합니다. ⛔ 업무규칙(결의일자 OR
+            계약일자)은 바뀌지 않았습니다 — 없는 쪽이 빠질 뿐입니다.
         """
         purchase = context.purchase
-        bases = [purchase.contract_date]
-        if purchase.resolution_date is not None:
-            bases.append(purchase.resolution_date)
+        bases = [
+            basis
+            for basis in (purchase.resolution_date, purchase.contract_date)
+            if basis is not None
+        ]
         return any(
             valid_from <= basis <= valid_to
             for basis in bases

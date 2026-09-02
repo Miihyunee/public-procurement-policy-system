@@ -233,14 +233,27 @@ class TestTheDocumentMatchesTheCode:
         """STEP 84 구현을 되돌리지 않았다."""
         assert build_default_registry().get("RESOLUTION_DATE") is not None
 
-    def test_the_contract_and_payment_dates_are_still_required(self) -> None:
-        """⭐ §10.1 — 두 컬럼을 **선택 항목으로 바꾸지 않았다.**
+    def test_the_contract_and_payment_dates_became_optional(self) -> None:
+        """§10.1 이 올린 문제를 **PM 이 판단해서** 풀었다(STEP 87).
 
-        ⛔ 창업기업 판정이 계약일자를 쓰므로, 확인 없이 완화하면 실적이
-        조용히 달라진다.
+        .. note::
+            **기대값이 바뀐 이유** — STEP 85 시점에는 두 컬럼을 *"확인 없이
+            완화하면 실적이 조용히 달라진다"* 는 이유로 **필수 그대로** 두는
+            것을 잠그고 있었습니다. 그 확인을 PM 이 했습니다 — 🟢 2026-09-02
+            *"원본에 존재하지 않는 날짜 때문에 결의일자가 정상적으로 존재하는
+            거래까지 미적재시키지 않는다."*
+
+            ⛔ 우리가 임의로 푼 것이 아니라 **PM 확정에 따라** 푼 것입니다.
         """
         from procurement.uploads.format import STANDARD_COLUMNS
 
+        optional = {c.header for c in STANDARD_COLUMNS if not c.required}
+        assert "계약일자" in optional
+        assert "지급일" in optional
+
+    def test_the_resolution_date_is_still_required(self) -> None:
+        """⛔ 완화가 **기준일까지 번지지 않았다** — 결의일자는 필수 그대로."""
+        from procurement.uploads.format import STANDARD_COLUMNS
+
         required = {c.header for c in STANDARD_COLUMNS if c.required}
-        assert "계약일자" in required
-        assert "지급일" in required
+        assert "결의일자" in required

@@ -69,17 +69,25 @@ STANDARD_COLUMNS: Final[tuple[StandardColumn, ...]] = (
     StandardColumn(
         key="contract_date",
         header="계약일자",
-        required=True,
-        description="창업기업 판정에 함께 사용합니다.",
+        # ⛔ 값이 없어도 막지 않는다 — 🟢 2026-09-02 PM 확정(STEP 87).
+        #    실적 산정 기준일은 결의일자이며, 고객 원본에는 이 컬럼이 아예
+        #    없다(실측 2,292행). 필수로 두면 정상 거래가 전부 미적재된다.
+        required=False,
+        description=(
+            "창업기업 판정에 결의일자와 함께 사용합니다(있으면 사용). "
+            "**실적 산정 기준일이 아닙니다.** 비어 있어도 됩니다."
+        ),
         example="2026-02-20",
     ),
     StandardColumn(
         key="payment_date",
         header="지급일",
-        required=True,
+        # ⛔ 값이 없어도 막지 않는다 — 🟢 2026-09-02 PM 확정(STEP 87).
+        required=False,
         description=(
-            "대금 지급일(지출완료일)입니다. **결의일자와 다른 날짜**이며, "
-            "중소기업·여성기업·장애인기업 인증 유효기간 판정에 사용합니다."
+            "대금 지급일(지출완료일)입니다. **결의일자와 다른 날짜**이며 "
+            "**실적 산정 기준일이 아닙니다**(기준일은 결의일자). "
+            "비어 있어도 됩니다."
         ),
         example="2026-04-01",
     ),

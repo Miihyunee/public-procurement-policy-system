@@ -41,8 +41,11 @@ CREATE TABLE IF NOT EXISTS purchase (
     business_no TEXT NOT NULL,
     company_id INTEGER,
     company_name TEXT NOT NULL,
-    contract_date DATE NOT NULL,
-    payment_date DATE NOT NULL,
+    -- 🟢 2026-09-02 PM 확정(STEP 87) — 실적 산정 기준일이 아니므로 NULL 을
+    -- 허용한다. 고객 원본에 이 두 컬럼이 없어도 결의일자가 있는 거래는
+    -- 적재되어야 한다. ⛔ 없는 값을 다른 날짜로 채우지 않는다.
+    contract_date DATE,
+    payment_date DATE,
     resolution_date DATE,
     issue_date DATE,
     description TEXT,
@@ -171,8 +174,8 @@ class PurchaseRepository(BaseRepository):
             purchase.business_no,
             purchase.company_id,
             purchase.company_name,
-            _to_db_date(purchase.contract_date),
-            _to_db_date(purchase.payment_date),
+            _to_db_date(purchase.contract_date) if purchase.contract_date else None,
+            _to_db_date(purchase.payment_date) if purchase.payment_date else None,
             _to_db_date(purchase.resolution_date) if purchase.resolution_date else None,
             _to_db_date(purchase.issue_date) if purchase.issue_date else None,
             purchase.description,
@@ -554,11 +557,10 @@ class PurchaseRepository(BaseRepository):
             if value is None or not str(value).strip():
                 raise PurchaseValidationError(f"필수값이 누락되었습니다: {field}")
 
-        if purchase.contract_date is None:
-            raise PurchaseValidationError("필수값이 누락되었습니다: contract_date")
-
-        if purchase.payment_date is None:
-            raise PurchaseValidationError("필수값이 누락되었습니다: payment_date")
+        # ⛔ contract_date · payment_date 는 **필수가 아니다**(🟢 2026-09-02 PM
+        #    확정 · STEP 87). 실적 산정 기준일은 resolution_date 이며, 원본에
+        #    없는 날짜 때문에 정상 거래를 미적재시키지 않는다. 값이 없으면
+        #    NULL 로 저장하고, 다른 날짜로 채우지 않는다.
 
         if purchase.amount is None:
             raise PurchaseValidationError("필수값이 누락되었습니다: amount")
@@ -576,8 +578,8 @@ class PurchaseRepository(BaseRepository):
             business_no=row["business_no"],
             company_id=row["company_id"],
             company_name=row["company_name"],
-            contract_date=_from_db_date(row["contract_date"]),
-            payment_date=_from_db_date(row["payment_date"]),
+            contract_date=(_from_db_date(row["contract_date"]) if row["contract_date"] else None),
+            payment_date=_from_db_date(row["payment_date"]) if row["payment_date"] else None,
             resolution_date=(
                 _from_db_date(row["resolution_date"]) if row["resolution_date"] else None
             ),

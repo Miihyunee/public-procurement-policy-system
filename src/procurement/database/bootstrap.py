@@ -248,7 +248,9 @@ def init_db(db_path: str | Path | None = None) -> None:
     # DB-2 (검토·분류) — 신규 테이블만 추가한다. 기존 테이블은 건드리지 않는다.
     ReviewRepository(path).create_table()
     migrate_schema(path)
-    # 인덱스는 컬럼 보완 이후에 만든다(구 스키마 DB 대응).
+    # 확정 규칙이 바뀌어 풀린 제약을 기존 DB 에도 반영한다(멱등).
+    relax_purchase_date_constraints(path)
+    # 인덱스는 컬럼 보완·제약 완화 이후에 만든다(구 스키마 DB 대응).
     PurchaseRepository(path).ensure_indexes()
 
 
@@ -327,6 +329,94 @@ _UPDATED_EVALUATION_BASIS: tuple[tuple[str, str, str], ...] = (
     ("WOMAN", "PAYMENT_DATE", "RESOLUTION_DATE"),
     ("DISABLED", "PAYMENT_DATE", "RESOLUTION_DATE"),
 )
+
+
+#: NULL 을 허용해야 하는 컬럼 — 확정 규칙이 바뀌어 제약이 풀린 것들.
+#:
+#: 🟢 2026-09-02 PM 확정(STEP 87) — 실적 산정 기준일은 **결의일자**이며
+#: 계약일자·지급일자는 기준일이 아니다. 고객 원본에 두 컬럼이 아예 없으므로,
+#: ``NOT NULL`` 을 그대로 두면 정상 거래가 전부 미적재된다.
+_RELAXED_NOT_NULL: tuple[tuple[str, str], ...] = (
+    ("purchase", "contract_date"),
+    ("purchase", "payment_date"),
+)
+
+
+def relax_purchase_date_constraints(db_path: str | Path | None = None) -> list[str]:
+    """기존 DB 의 ``NOT NULL`` 제약을 푼다(멱등).
+
+    SQLite 는 ``ALTER TABLE ... ALTER COLUMN`` 이 없어 제약을 바꾸려면 테이블을
+    다시 만들어야 합니다. 그래서 **새 테이블을 만들고 → 행을 그대로 옮기고 →
+    바꿔치기** 하는 표준 절차를 씁니다.
+
+    .. warning::
+        ⛔ **행을 지우거나 값을 바꾸지 않습니다.** 컬럼 목록을 그대로 옮기며,
+        옮긴 행 수가 원래 행 수와 다르면 예외를 냅니다(자동 롤백).
+
+    Args:
+        db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        이번 호출에서 실제로 제약을 푼 컬럼 목록(``"테이블.컬럼"``). 이미 풀려
+        있으면 빈 목록입니다.
+    """
+    path = resolve_db_path(db_path)
+    if not path.exists():
+        return []
+
+    relaxed: list[str] = []
+    with sqlite3.connect(str(path)) as conn:
+        conn.row_factory = sqlite3.Row
+        tables = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        for table, column in _RELAXED_NOT_NULL:
+            if table not in tables:
+                continue
+            info = list(conn.execute(f"PRAGMA table_info({table})"))
+            target = next((row for row in info if row["name"] == column), None)
+            if target is None or not target["notnull"]:
+                continue  # 이미 풀려 있거나 컬럼이 없다
+            _rebuild_without_not_null(conn, table, column, info)
+            relaxed.append(f"{table}.{column}")
+    return relaxed
+
+
+def _rebuild_without_not_null(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    info: list[sqlite3.Row],
+) -> None:
+    """``table.column`` 의 ``NOT NULL`` 만 뺀 채 테이블을 다시 만듭니다.
+
+    ⛔ 다른 컬럼의 정의는 손대지 않습니다. 행은 전부 그대로 옮깁니다.
+    """
+    columns = [row["name"] for row in info]
+    before = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+
+    definitions = []
+    for row in info:
+        parts = [row["name"], row["type"] or ""]
+        if row["pk"]:
+            parts.append("PRIMARY KEY")
+        elif row["notnull"] and row["name"] != column:
+            parts.append("NOT NULL")
+        if row["dflt_value"] is not None:
+            parts.append(f"DEFAULT {row['dflt_value']}")
+        definitions.append(" ".join(part for part in parts if part))
+
+    joined = ", ".join(columns)
+    conn.execute(f"CREATE TABLE {table}__relaxed ({', '.join(definitions)})")
+    conn.execute(f"INSERT INTO {table}__relaxed ({joined}) SELECT {joined} FROM {table}")
+
+    after = int(conn.execute(f"SELECT COUNT(*) FROM {table}__relaxed").fetchone()[0])
+    if after != before:  # pragma: no cover - 방어적 확인
+        raise RuntimeError(f"{table} 행이 옮겨지지 않았습니다: {before} → {after}")
+
+    conn.execute(f"DROP TABLE {table}")
+    conn.execute(f"ALTER TABLE {table}__relaxed RENAME TO {table}")
 
 
 def migrate_policy_evaluation_basis(db_path: str | Path | None = None) -> list[str]:

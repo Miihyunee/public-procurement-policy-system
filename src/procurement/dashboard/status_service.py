@@ -119,8 +119,12 @@ class DataStatusService:
         matched = 0
         for purchase in purchases:
             total_amount += purchase.amount
-            payment_dates.append(purchase.payment_date)
-            contract_dates.append(purchase.contract_date)
+            # 🟢 STEP 87 — 두 날짜는 선택 항목이다. 값이 있는 것만 모은다.
+            # ⛔ 없는 날짜를 다른 날짜로 채우지 않는다(범위가 거짓이 된다).
+            if purchase.payment_date is not None:
+                payment_dates.append(purchase.payment_date)
+            if purchase.contract_date is not None:
+                contract_dates.append(purchase.contract_date)
             if purchase.company_id is not None:
                 matched += 1
 

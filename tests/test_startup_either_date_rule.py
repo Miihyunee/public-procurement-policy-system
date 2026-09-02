@@ -98,6 +98,7 @@ class TestPaymentDateIsNotUsed:
         지급일을 결의일자처럼 쓰던 이전 동작이라면 이 사례가 인정되었을 것이다.
         """
         purchase = _purchase(resolution=date(2027, 1, 5), contract=date(2027, 1, 10))
+        assert purchase.payment_date is not None  # 이 합성 데이터는 지급일을 채운다
         assert VALID[0][0] <= purchase.payment_date <= VALID[0][1]  # 지급일은 기간 안
         context = RuleContext(purchase=purchase, validity_ranges=VALID)
 

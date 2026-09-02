@@ -28,13 +28,28 @@ class Purchase:
     Attributes:
         business_no: 사업자등록번호 (필수). 중복될 수 있습니다.
         company_name: 공급업체명 (필수).
-        contract_date: 계약일 (필수). 창업기업 판정에 함께 사용합니다.
-        payment_date: 대금 지급일(지출완료) (필수).
+        contract_date: 계약일. **``None`` 을 허용합니다.** 창업기업 판정에
+            결의일자와 함께 쓰이지만(🟢 §0.6.2), 실적 산정 기준일은 아니며
+            고객 원본에 이 컬럼이 없는 경우가 있습니다.
+
+            .. note::
+                **2026-09-02 PM 확정(STEP 87)** 으로 필수에서 풀렸습니다.
+                *"원본에 존재하지 않는 날짜 때문에 결의일자가 정상적으로
+                존재하는 거래까지 미적재시키지 않는다."*
+
+                ⛔ 값이 없다고 해서 결의일자·신고기준일로 **채우지 않습니다.**
+                없으면 없는 채로 두고, 창업기업 판정은 결의일자만으로 합니다.
+
+        payment_date: 대금 지급일(지출완료). **``None`` 을 허용합니다.**
 
             .. note::
                 **구매실적 산정 기준일이 아닙니다.** 산정 기준일은
                 ``resolution_date`` (결의일자)입니다. 두 날짜는 업무 의미가
                 다르므로 분리해 둡니다(2026-08-15 PM 결정).
+
+                2026-09-02 PM 확정(STEP 87)으로 필수에서 풀렸습니다 —
+                실적 산정 기준이 아닌 값 때문에 정상 거래가 미적재되지
+                않게 하기 위해서입니다. ⛔ 다른 날짜로 채우지 않습니다.
 
         resolution_date: **결의일자.** 구매실적의 연도 귀속·산정 기준일입니다
             (2026-08-14 고객 확정). 표준 업로드 양식의 ``결의일자`` 컬럼이
@@ -66,9 +81,9 @@ class Purchase:
 
     business_no: str
     company_name: str
-    contract_date: date
-    payment_date: date
     amount: Decimal
+    contract_date: date | None = None
+    payment_date: date | None = None
     resolution_date: date | None = None
     issue_date: date | None = None
     description: str | None = None

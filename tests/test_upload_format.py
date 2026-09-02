@@ -88,18 +88,29 @@ class TestStandardColumns:
         """머리글은 **전부** 있어야 한다 — 9컬럼 모두."""
         assert REQUIRED_HEADERS == header_row()
 
-    def test_only_note_and_budget_account_allow_blank_values(self) -> None:
-        """⛔ 적요 · 예산과목만 **값**이 비어 있어도 된다.
+    def test_which_columns_allow_blank_values(self) -> None:
+        """⛔ 값이 비어 있어도 되는 컬럼은 **정확히 이 넷**이다.
 
         (−) 세금계산서는 실제 지출이 발생하지 않아 예산과목이 공란인 경우가
         많습니다(실측: 음수 129건 중 128건). 값을 필수로 걸면 상계 대상 자체를
         받을 수 없습니다. 적요도 실측 2,292행 중 1행이 공란이었습니다.
+
+        .. note::
+            **목록이 바뀐 이유** — 계약일자 · 지급일이 더해졌습니다.
+            🟢 2026-09-02 PM 확정(STEP 87): *"실적 산정 및 연도 귀속 기준은
+            결의일자"* 이고 *"원본에 존재하지 않는 날짜 때문에 정상 거래를
+            미적재시키지 않는다."* 고객 원본에는 두 컬럼이 아예 없어,
+            필수로 두면 실측 2,292행 전부가 미적재됩니다.
+
+            ⛔ **결의일자는 필수 그대로**입니다 — 실적 산정 기준일이기
+            때문입니다. 다른 컬럼의 필수 조건도 풀지 않았습니다.
         """
         optional = {c.header for c in STANDARD_COLUMNS if not c.required}
-        assert optional == {"적요", "예산과목"}
-        assert REQUIRED_VALUE_HEADERS == tuple(
-            h for h in header_row() if h not in optional
-        )
+        assert optional == {"적요", "예산과목", "계약일자", "지급일"}
+        # ⛔ 기준일과 식별값은 여전히 필수다.
+        required = {c.header for c in STANDARD_COLUMNS if c.required}
+        assert required == {"결의일자", "기업명", "사업자등록번호", "계", "신고기준일"}
+        assert REQUIRED_VALUE_HEADERS == tuple(h for h in header_row() if h not in optional)
 
     @pytest.mark.parametrize("header", ["구매유형", "대표자명", "거래구분"])
     def test_unconfirmed_columns_are_not_in_the_form(self, header: str) -> None:
