@@ -37,7 +37,6 @@ from decimal import Decimal, InvalidOperation
 
 from procurement.matchers.business_no import normalize_business_no
 from procurement.uploads.format import (
-    REQUIRED_HEADERS,
     STANDARD_COLUMNS,
     StandardColumn,
 )
@@ -154,17 +153,29 @@ class ValidationReport:
         return tuple(lines)
 
 
-def validate_headers(headers: Sequence[str]) -> list[str]:
+def validate_headers(
+    headers: Sequence[str],
+    *,
+    columns: Sequence[StandardColumn] = STANDARD_COLUMNS,
+) -> list[str]:
     """머리글 행을 검증합니다.
 
     Args:
         headers: 엑셀 1행의 값.
+        columns: 검사 기준이 되는 양식 정의. 기본은 **구매 표준 양식**입니다.
+            기업정보 양식처럼 다른 양식을 검사할 때만 넘깁니다.
+
+            .. note::
+                양식마다 검증기를 따로 만들면 사업자등록번호·날짜 규칙이 두 벌이
+                되어 한쪽만 고치는 일이 생깁니다. **규칙은 하나**로 두고 컬럼
+                정의만 갈아 끼웁니다.
 
     Returns:
         파일 단위 오류 메시지 목록. 정상이면 빈 목록.
     """
+    required = tuple(column.header for column in columns)
     present = {str(header).strip() for header in headers if str(header).strip()}
-    missing = [header for header in REQUIRED_HEADERS if header not in present]
+    missing = [header for header in required if header not in present]
 
     errors: list[str] = []
     if missing:
@@ -179,12 +190,14 @@ def validate_rows(
     rows: Iterable[Mapping[str, object]],
     *,
     first_row_number: int = 2,
+    columns: Sequence[StandardColumn] = STANDARD_COLUMNS,
 ) -> ValidationReport:
     """행 목록을 검증합니다.
 
     Args:
         rows: 머리글 → 값 매핑의 목록. 엑셀에서 읽어 온 그대로를 넣습니다.
         first_row_number: 첫 행의 엑셀 행 번호. 머리글이 1행이므로 기본 2입니다.
+        columns: 검사 기준이 되는 양식 정의. 기본은 **구매 표준 양식**입니다.
 
     Returns:
         :class:`ValidationReport`.
@@ -196,7 +209,7 @@ def validate_rows(
     for offset, row in enumerate(rows):
         row_number = first_row_number + offset
         total += 1
-        values, row_issues = _validate_row(row, row_number)
+        values, row_issues = _validate_row(row, row_number, columns)
         issues.extend(row_issues)
         if any(issue.severity == "error" for issue in row_issues):
             continue
@@ -212,13 +225,15 @@ def validate_rows(
 
 
 def _validate_row(
-    row: Mapping[str, object], row_number: int
+    row: Mapping[str, object],
+    row_number: int,
+    columns: Sequence[StandardColumn] = STANDARD_COLUMNS,
 ) -> tuple[dict[str, object], list[RowIssue]]:
     """행 하나를 검증하고 정규화합니다."""
     values: dict[str, object] = {}
     issues: list[RowIssue] = []
 
-    for column in STANDARD_COLUMNS:
+    for column in columns:
         raw = row.get(column.header)
         if _is_blank(raw):
             if column.required:
@@ -241,7 +256,15 @@ def _parse_value(
     column: StandardColumn, raw: object, row_number: int
 ) -> tuple[object, RowIssue | None]:
     """컬럼 종류에 맞게 값을 해석합니다."""
-    if column.key in ("resolution_date", "contract_date", "payment_date", "issue_date"):
+    if column.key in (
+        "resolution_date",
+        "contract_date",
+        "payment_date",
+        "issue_date",
+        # 기업정보 양식의 인증 유효기간 — **같은 날짜 규칙**을 씁니다.
+        "valid_from",
+        "valid_to",
+    ):
         parsed_date = _parse_date(raw)
         if parsed_date is None:
             return None, RowIssue(

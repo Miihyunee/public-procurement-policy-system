@@ -671,6 +671,79 @@
     </section>
 
     <!--
+      기업정보 확인 방식 — 파일 업로드 / 조회 두 가지를 **사용자가 고른다.**
+
+      ⛔ 화면은 "어디서 가져올지" 만 고르게 한다. 가져온 뒤의 기업 매칭 ·
+         인증 판정 · 실적 계산은 **방식과 무관하게 하나**이며 화면이 관여하지
+         않는다.
+      ⛔ 화면이 기본값을 정해 두고 자동으로 실행하지 않는다.
+    -->
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">기업정보 확인 방식</h2>
+          <p class="card-sub">
+            기업정보를 <b>파일로 올릴지</b>, <b>조회로 가져올지</b> 고릅니다.
+            어느 쪽을 고르든 저장되는 자리와 판정 방식은 같습니다
+          </p>
+        </div>
+      </div>
+
+      <div class="upload-actions" role="radiogroup" aria-label="기업정보 확인 방식">
+        <label class="control">
+          <input type="radio" name="company-source" id="company-source-file"
+                 value="FILE" checked />
+          <span class="control-label">파일 업로드</span>
+        </label>
+        <label class="control">
+          <input type="radio" name="company-source" id="company-source-api"
+                 value="API" />
+          <span class="control-label">조회</span>
+        </label>
+      </div>
+
+      <div id="company-file-panel">
+        <div class="upload-actions">
+          <button id="company-pick" class="control" type="button">파일 선택</button>
+          <button id="company-run" class="control" type="button" disabled>검증만</button>
+          <button id="company-save" class="control" type="button" disabled>검증 후 저장</button>
+        </div>
+        <div id="company-file" class="upload-file">선택된 파일이 없습니다.</div>
+      </div>
+
+      <!--
+        조회 방식. ⛔ 기준일자에 기본값을 넣지 않는다 — 어느 날짜로 조회할지는
+        업무 판단이며 화면이 오늘 날짜 등을 임의로 채우지 않는다.
+      -->
+      <div id="company-api-panel" hidden>
+        <div class="upload-actions">
+          <span class="control">
+            <span class="control-label">조회 출처</span>
+            <select id="company-api-source" class="control-input"
+                    aria-label="기업정보 조회 출처"></select>
+          </span>
+          <span class="control">
+            <span class="control-label">기준일자</span>
+            <input id="company-api-date" class="control-input" type="date"
+                   aria-label="기업정보 조회 기준일자" />
+          </span>
+          <button id="company-sync" class="control" type="button">조회 후 저장</button>
+        </div>
+        <span class="control" style="display:block">
+          <span class="control-label">사업자등록번호</span>
+          <input id="company-api-numbers" class="control-input" type="text"
+                 placeholder="쉼표 또는 줄바꿈으로 구분"
+                 aria-label="조회할 사업자등록번호 목록" />
+        </span>
+      </div>
+
+      <div id="company-notice" class="notice" hidden></div>
+      <div id="company-error" class="error" hidden></div>
+      <div id="company-summary" class="upload-summary" hidden></div>
+      <div id="company-issues" class="upload-issues" hidden></div>
+    </section>
+
+    <!--
       업로드 이력 — 매월 파일을 올리는 운영을 전제로, 어느 달이 언제 올라왔고
       지금 무엇이 쓰이는지 보여 준다. ⛔ 삭제·복구 기능은 만들지 않는다.
     -->
@@ -2426,6 +2499,195 @@
     });
   }
 
+  // ------------------------------------------------- 기업정보 확인 방식
+  //
+  // 사용자가 **파일 업로드 / 조회** 중 하나를 고른다.
+  //
+  // ⛔ 화면은 "어디서 가져올지" 만 고르게 한다. 가져온 뒤 저장되는 자리와
+  //    기업 매칭 · 인증 판정 · 실적 계산은 **두 방식이 완전히 같다.**
+  // ⛔ 화면이 조회 출처 목록을 들고 있지 않다. 서버(/companies/sources)가 준다.
+  // ⛔ 조회 기준일자에 오늘 날짜 등을 임의로 채우지 않는다.
+
+  var companyPath = null;
+
+  function companyNotice(message) {
+    var box = el("company-notice");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  function companyError(message) {
+    var box = el("company-error");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  /** 고른 확인 방식 — "FILE" 또는 "API". */
+  function companySource() {
+    return el("company-source-api").checked ? "API" : "FILE";
+  }
+
+  function renderCompanyResult(body) {
+    companyNotice("");
+    companyError("");
+
+    var summary = el("company-summary");
+    clear(summary);
+    summary.hidden = false;
+    summary.appendChild(uploadStat("건 처리", numberFormat(body.total)));
+    if (body.stored) {
+      summary.appendChild(uploadStat("건 신규 등록", numberFormat(body.created)));
+      summary.appendChild(uploadStat("건 이미 등록됨", numberFormat(body.already_exists)));
+      summary.appendChild(uploadStat("건 미등록", numberFormat(body.failed)));
+      summary.appendChild(uploadStat("건 인증 저장", numberFormat(body.certifications)));
+    } else {
+      // ⛔ "일부만 저장" 이 없다. 오류가 하나라도 있으면 아무것도 저장하지 않는다.
+      summary.appendChild(uploadStat("저장 안 함", "검증"));
+    }
+
+    var issues = el("company-issues");
+    clear(issues);
+    var lines = (body.file_errors || []).concat(body.issues || []);
+    (body.rows || []).forEach(function (row) {
+      (row.messages || []).forEach(function (message) {
+        lines.push(row.source_row + "행: " + message);
+      });
+    });
+    issues.hidden = lines.length === 0;
+    lines.forEach(function (line) {
+      issues.appendChild(make("div", "upload-file", line));
+    });
+
+    if (body.stored && body.created > 0) {
+      // 저장했으면 대시보드를 다시 그린다. 구매와의 연결은 기존
+      // POST /purchases/rematch 로 한다 — ⛔ 새 매칭을 만들지 않았다.
+      load();
+    }
+  }
+
+  function sendCompany(url, payload, buttons) {
+    buttons.forEach(function (button) { button.disabled = true; });
+    companyError("");
+    companyNotice("처리 중입니다...");
+
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (res) {
+        return res.json().then(function (body) {
+          if (!res.ok) {
+            var message = body.detail;
+            if (message && typeof message === "object") { message = message.message; }
+            throw new Error(message || ("HTTP " + res.status));
+          }
+          return body;
+        });
+      })
+      .then(renderCompanyResult)
+      .catch(function (err) {
+        companyNotice("");
+        companyError("처리에 실패했습니다: " + err.message);
+      })
+      .finally(function () {
+        buttons.forEach(function (button) { button.disabled = false; });
+      });
+  }
+
+  function loadCompanySources() {
+    return fetch("/companies/sources", { headers: { "Accept": "application/json" } })
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        var select = el("company-api-source");
+        clear(select);
+        (body.api_sources || []).forEach(function (item) {
+          var option = document.createElement("option");
+          option.value = item.source;
+          // 정책 이름은 등록된 값만 쓴다. 없으면 식별자를 그대로 보여준다.
+          option.textContent = item.policy_name
+            ? item.policy_name + " (" + item.source + ")"
+            : item.source;
+          select.appendChild(option);
+        });
+      })
+      .catch(function () {
+        companyError("조회 출처 목록을 불러오지 못했습니다.");
+      });
+  }
+
+  function initCompanySource() {
+    var filePanel = el("company-file-panel");
+    var apiPanel = el("company-api-panel");
+    var pick = el("company-pick");
+    var run = el("company-run");
+    var save = el("company-save");
+    var sync = el("company-sync");
+
+    function applyMethod() {
+      var api = companySource() === "API";
+      filePanel.hidden = api;
+      apiPanel.hidden = !api;
+    }
+
+    ["company-source-file", "company-source-api"].forEach(function (id) {
+      el(id).addEventListener("change", applyMethod);
+    });
+    applyMethod();
+    loadCompanySources();
+
+    sync.addEventListener("click", function () {
+      var stdrDate = el("company-api-date").value;
+      if (!stdrDate) {
+        // ⛔ 기준일자를 화면이 대신 정하지 않는다.
+        companyError("조회 기준일자를 입력해 주세요.");
+        return;
+      }
+      var numbers = el("company-api-numbers").value
+        .split(/[\s,]+/)
+        .filter(function (value) { return value !== ""; });
+      if (numbers.length === 0) {
+        companyError("조회할 사업자등록번호를 입력해 주세요.");
+        return;
+      }
+      sendCompany(
+        "/companies/sync",
+        {
+          source: el("company-api-source").value,
+          business_numbers: numbers,
+          stdr_date: stdrDate
+        },
+        [sync]
+      );
+    });
+
+    if (!desktop()) {
+      pick.disabled = true;
+      return;
+    }
+
+    pick.addEventListener("click", function () {
+      companyError("");
+      window.procurementApp.selectUploadFile().then(function (res) {
+        if (!res.selected) { return; }
+        companyPath = res.path;
+        text(el("company-file"), "선택한 파일: " + res.name);
+        run.disabled = false;
+        save.disabled = false;
+      });
+    });
+
+    run.addEventListener("click", function () {
+      if (!companyPath) { return; }
+      sendCompany("/companies/upload/validate", { file_path: companyPath }, [run, save]);
+    });
+
+    save.addEventListener("click", function () {
+      if (!companyPath) { return; }
+      sendCompany("/companies/upload", { file_path: companyPath }, [run, save]);
+    });
+  }
+
   // ------------------------------------------------- 구매유형 검토 (DB-2)
   //
   // ⛔ 이 화면은 업무 판정을 하지 않는다.
@@ -3855,6 +4117,7 @@
   buildYearOptions();
   initMissingResolutionFold();
   initUpload();
+  initCompanySource();
   initReview();
   initUnmatched();
   load();

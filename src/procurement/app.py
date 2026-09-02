@@ -36,7 +36,7 @@ from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from procurement.admin import (
     PolicyAdminService,
@@ -57,6 +57,7 @@ from procurement.api.status_response import DataStatusResponseModel
 from procurement.api.unmatched_response import UnmatchedPageResponseModel
 from procurement.calculators import ProcurementAchievementCalculator
 from procurement.calculators.procurement_achievement import CalculatorValidationError
+from procurement.collectors.client import SOURCE_POLICY_CODES
 from procurement.core.config import settings
 from procurement.core.performance_exclusion import ExclusionReasonError
 from procurement.core.period import PeriodFilter
@@ -93,6 +94,11 @@ from procurement.database.policy_repository import PolicyRepository, PolicyValid
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.database.review_repository import ReviewRepository, ReviewValidationError
 from procurement.importers.batch_import_service import BatchImportService
+from procurement.importers.company_importer import (
+    COMPANY_SOURCES,
+    CompanyImporter,
+    CompanyImportReport,
+)
 from procurement.importers.purchase_importer import PurchaseImporter
 from procurement.importers.rejection_export import export_lines as rejection_export_lines
 from procurement.importers.rejection_query import (
@@ -159,9 +165,14 @@ from procurement.reviews.review_service import (
     ReviewService,
     ReviewStateError,
 )
+from procurement.uploads.company_source_service import (
+    CompanyApiClient,
+    CompanySourceService,
+)
 from procurement.uploads.template import TEMPLATE_FILE_NAME, build_template_bytes
 from procurement.uploads.upload_response import UploadResponseModel, build_upload_response
 from procurement.uploads.upload_service import ExistingPeriodBatchError, UploadService
+from procurement.uploads.validation import ValidationReport
 from procurement.web import (
     AchievementLevelsResponseModel,
     PolicyDisplayResponseModel,
@@ -522,6 +533,180 @@ class UploadImportRequestModel(UploadRequestModel):
     )
 
 
+class CompanyUploadRequestModel(BaseModel):
+    """기업정보 파일 업로드 요청.
+
+    Attributes:
+        file_path: 읽을 ``.xlsx`` 파일의 **로컬 경로**. 구매 업로드와 같은
+            방식입니다.
+    """
+
+    file_path: str = Field(
+        min_length=1,
+        description="기업정보 .xlsx 파일의 로컬 경로",
+    )
+
+
+class CompanySyncRequestModel(BaseModel):
+    """기업정보 조회 요청.
+
+    ⛔ **새 조회 기능이 아닙니다.** 기존 조회를 그대로 호출합니다.
+
+    Attributes:
+        source: 조회 출처 식별자(기존 값).
+        business_numbers: 조회할 사업자등록번호 목록.
+        stdr_date: 조회 기준일자. **필수입니다** — 코드가 오늘 날짜 등을
+            임의로 채우지 않습니다.
+    """
+
+    source: str = Field(min_length=1, description="조회 출처 식별자")
+    business_numbers: list[str] = Field(min_length=1, description="조회할 사업자등록번호 목록")
+    stdr_date: date = Field(description="조회 기준일자(필수)")
+
+
+class CompanySourceOptionModel(BaseModel):
+    """조회 방식에서 고를 수 있는 **조회 출처** 하나.
+
+    Attributes:
+        source: 조회 출처 식별자(:mod:`procurement.collectors.client` 의 기존 값).
+        policy_code: 그 출처가 확인해 주는 정책 코드.
+        policy_name: 등록된 정책 이름. 등록되어 있지 않으면 ``None`` 입니다 —
+            ⛔ 이름을 임의로 지어내지 않습니다.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    source: str
+    policy_code: str
+    policy_name: str | None = None
+
+
+class CompanySourceListModel(BaseModel):
+    """기업정보를 확인하는 **방법** 과 조회 출처 목록.
+
+    Attributes:
+        methods: 고를 수 있는 방법 — ``FILE`` · ``API``. 둘 다 같은 자리에
+            저장되며 이후 판정은 동일합니다.
+        api_sources: 조회 방식을 골랐을 때 사용할 수 있는 출처.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    methods: list[str]
+    api_sources: list[CompanySourceOptionModel]
+
+
+class CompanyRowResultModel(BaseModel):
+    """기업정보 한 건의 처리 결과."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source_row: int
+    status: str
+    business_no: str | None
+    company_id: int | None
+    certification_saved: bool
+    messages: list[str]
+
+
+class CompanyImportResponseModel(BaseModel):
+    """기업정보 적재 결과.
+
+    Attributes:
+        source: 어디서 가져왔는지 — ``FILE`` 또는 ``API``. **표시용**이며
+            판정에 쓰이지 않습니다.
+        stored: 실제로 저장했는가. 검증 오류로 저장하지 않았으면 ``false``.
+        total: 처리한 건수.
+        created: 새로 등록한 기업 수.
+        already_exists: 이미 있어서 그대로 둔 기업 수.
+        failed: 넣지 못한 건수.
+        certifications: 새로 저장한 인증 수.
+        file_errors: 파일 단위 오류(머리글 누락 등).
+        issues: 행 단위 검증 문제.
+        rows: 행별 결과.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    source: str
+    stored: bool
+    total: int
+    created: int = 0
+    already_exists: int = 0
+    failed: int = 0
+    certifications: int = 0
+    file_errors: list[str] = []
+    issues: list[str] = []
+    rows: list[CompanyRowResultModel] = []
+
+
+def _company_import_response(
+    source: str,
+    report: CompanyImportReport | None,
+    validation: ValidationReport | None = None,
+) -> CompanyImportResponseModel:
+    """기업정보 처리 결과를 응답 모델로 만듭니다."""
+    if report is None:
+        assert validation is not None
+        return CompanyImportResponseModel(
+            source=source,
+            stored=False,
+            total=validation.total_rows,
+            file_errors=list(validation.file_errors),
+            issues=list(validation.issue_lines()),
+        )
+    return CompanyImportResponseModel(
+        source=report.source,
+        stored=True,
+        total=report.total_count,
+        created=report.created_count,
+        already_exists=report.existing_count,
+        failed=report.failed_count,
+        certifications=report.certification_count,
+        issues=list(validation.issue_lines()) if validation is not None else [],
+        rows=[
+            CompanyRowResultModel(
+                source_row=row.source_row,
+                status=row.status.value,
+                business_no=row.business_no,
+                company_id=row.company_id,
+                certification_saved=row.certification_saved,
+                messages=row.messages,
+            )
+            for row in report.rows
+        ],
+    )
+
+
+def build_company_source_service(
+    db_path: str | Path | None = None,
+    api_client: CompanyApiClient | None = None,
+) -> CompanySourceService:
+    """기업정보 확보 서비스를 조립합니다(composition root).
+
+    파일과 조회 **두 방법이 같은 저장 계층**으로 모입니다::
+
+        CompanySourceService → CompanyImporter → Company / Certification
+
+    Args:
+        db_path: 사용할 SQLite DB 경로. ``None`` 이면 설정값을 사용합니다.
+        api_client: 조회에 사용할 기존 클라이언트. ``None`` 이면 파일 방식만
+            사용할 수 있습니다.
+
+    Returns:
+        조립된 :class:`CompanySourceService`.
+    """
+    path: str | Path = db_path if db_path is not None else settings.db_file
+    return CompanySourceService(
+        CompanyImporter(
+            CompanyRepository(path),
+            CertificationRepository(path),
+            PolicyRepository(path),
+        ),
+        api_client,
+    )
+
+
 def create_app(
     db_path: str | Path | None = None,
     admin_token: str | None = None,
@@ -557,6 +742,11 @@ def create_app(
     data_status_api = build_data_status_api(db_path, data_mode, date_field)
     unmatched_service = build_unmatched_service(db_path)
     rematch_service = build_rematch_service(db_path)
+    # 기업정보 확보 — 파일·조회 **두 방법이 같은 저장 계층**으로 모인다.
+    company_source_service = build_company_source_service(db_path)
+    company_policy_repository = PolicyRepository(
+        db_path if db_path is not None else settings.db_file
+    )
     thresholds = parse_thresholds(settings.DASHBOARD_ACHIEVEMENT_DISPLAY_THRESHOLDS)
     token = admin_token if admin_token is not None else settings.ADMIN_API_TOKEN
     require_admin_token = build_admin_token_guard(token)
@@ -858,6 +1048,99 @@ def create_app(
             media_type=XLSX_MEDIA_TYPE,
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
         )
+
+    @app.get(
+        "/companies/sources",
+        response_model=CompanySourceListModel,
+        summary="기업정보 확인 방식과 조회 출처 목록",
+        tags=["companies"],
+    )
+    def list_company_sources() -> CompanySourceListModel:
+        """기업정보를 확인하는 **방법**과 조회 출처를 반환합니다.
+
+        ⛔ 화면이 목록을 들고 있지 않습니다. 어떤 출처가 있는지는 코드에 이미
+        정의된 값이며, 화면은 받아서 보여 줄 뿐입니다.
+
+        ⛔ 어느 방법을 기본으로 삼을지 여기서 정하지 않습니다 — 사용자가
+        고릅니다.
+        """
+        policy_repository = company_policy_repository
+        return CompanySourceListModel(
+            methods=list(COMPANY_SOURCES),
+            api_sources=[
+                CompanySourceOptionModel(
+                    source=source,
+                    policy_code=policy_code,
+                    policy_name=(
+                        policy.policy_name
+                        if (policy := policy_repository.find_by_policy_code(policy_code))
+                        is not None
+                        else None
+                    ),
+                )
+                for source, policy_code in SOURCE_POLICY_CODES.items()
+            ],
+        )
+
+    @app.post(
+        "/companies/upload/validate",
+        response_model=CompanyImportResponseModel,
+        summary="기업정보 파일 검증 (저장하지 않음)",
+        tags=["companies"],
+    )
+    def validate_company_upload(
+        payload: CompanyUploadRequestModel,
+    ) -> CompanyImportResponseModel:
+        """기업정보 파일을 읽어 **모든 행을 검증**하고 결과를 반환합니다.
+
+        ⛔ **저장하지 않습니다.** 구매 업로드와 같은 방식으로, 무엇을 고쳐야
+        하는지 먼저 보여 줍니다.
+        """
+        return _company_import_response(
+            "FILE", None, company_source_service.validate_file(payload.file_path)
+        )
+
+    @app.post(
+        "/companies/upload",
+        response_model=CompanyImportResponseModel,
+        summary="기업정보 파일 검증 후 저장",
+        tags=["companies"],
+    )
+    def import_company_upload(
+        payload: CompanyUploadRequestModel,
+    ) -> CompanyImportResponseModel:
+        """기업정보 파일을 검증하고, **오류가 하나도 없을 때만** 저장합니다.
+
+        구매 업로드와 같은 **"전부 검증 → 전부 저장"** 원칙입니다.
+
+        저장한 뒤 구매와 연결하려면 기존 ``POST /purchases/rematch`` 를
+        호출합니다 — ⛔ 새 매칭 기능을 만들지 않았습니다.
+        """
+        validation, report = company_source_service.import_file(payload.file_path)
+        return _company_import_response("FILE", report, validation)
+
+    @app.post(
+        "/companies/sync",
+        response_model=CompanyImportResponseModel,
+        summary="기업정보 조회 후 저장",
+        tags=["companies"],
+    )
+    def sync_companies(payload: CompanySyncRequestModel) -> CompanyImportResponseModel:
+        """**기존 조회 기능**으로 기업정보를 확보해 저장합니다.
+
+        ⛔ 새 외부 조회를 만들지 않았습니다. 파일 방식과 **같은 저장 계층**을
+        쓰므로, 이후 매칭·인증 판정·계산은 두 방법이 완전히 같습니다.
+
+        ⚠️ 조회 결과가 기업명·대표자명을 주지 않는 경우가 있습니다. 그때는 그
+        건을 **넣지 않고** 사유를 그대로 돌려줍니다 — ⛔ 없는 값을 임의로
+        채우지 않습니다.
+        """
+        report = company_source_service.import_from_api(
+            payload.source,
+            payload.business_numbers,
+            stdr_date=payload.stdr_date,
+        )
+        return _company_import_response("API", report)
 
     @app.post(
         "/uploads/purchases/validate",

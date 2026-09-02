@@ -182,6 +182,10 @@ preload 가 노출하는 것은 **네 가지뿐**이다.
 | `selectUploadFile()` | 업로드할 파일을 고르고 **경로만** 반환 |
 | `versions` | 진단용 버전 정보 |
 
+⭐ **기업정보 파일 업로드도 `selectUploadFile()` 을 그대로 쓴다.** 고르는 것은
+어느 쪽이든 `.xlsx` 하나이고, 어느 양식인지는 **어느 엔드포인트로 보내느냐**로
+갈린다. ⛔ 그래서 preload 채널을 새로 열지 않았다 — 노출면이 늘지 않는다.
+
 ⛔ `ipcRenderer` 자체를 노출하지 않는다(임의 채널 호출 방지). 파일 시스템·프로세스를
 여는 것이 아니라 **미리 정해진 동작만** 요청할 수 있다. 파일 **내용**은 렌더러로
 넘어가지 않으며, 엑셀 해석·검증은 전부 Python 이 한다.
@@ -197,6 +201,23 @@ preload 가 노출하는 것은 **네 가지뿐**이다.
                                                           ↓
                         Python: excel_adapter → validation → 결과 JSON
 ```
+
+## 4.1.2 기업정보 경로 — **같은 창구, 다른 엔드포인트**
+
+기업정보를 확인하는 방법은 두 가지이고, **사용자가 고른다**.
+
+```text
+① 파일  렌더러 [파일 선택] → preload.selectUploadFile() → 경로 문자열
+                            → POST /companies/upload{,/validate} {file_path}
+
+② 조회  렌더러 [조회 후 저장] → POST /companies/sync {source, 사업자번호[], stdr_date}
+                                            ↓
+        두 경로 모두 → Python: CompanyImporter → Company / Certification
+```
+
+⭐ **갈라지는 곳은 입구뿐이다.** 저장 구조 · 기업 매칭 · 인증 판정 · 실적
+계산은 두 방법이 완전히 같다. ⛔ 조회 기준일자는 화면이 채우지 않고 사용자가
+입력한다.
 
 파일 본문을 네트워크로 다시 실어 보내지 않는다. 백엔드가 같은 PC 의
 `127.0.0.1` 전용 자식 프로세스이기 때문이다(선택 근거: `UPLOAD_PIPELINE_DESIGN.md`

@@ -25,6 +25,24 @@ procurement.collectors.sync_service
 스키마를 바꿔 해결할지(``representative_name`` nullable 전환) 여부는 PM 결정
 사항이며 이번 작업 범위 밖입니다.
 
+기업을 **만들어야** 할 때
+------------------------
+
+기업 자체를 등록하는 일은 이 모듈이 하지 않습니다.
+:class:`~procurement.uploads.company_source_service.CompanySourceService` 가
+파일·조회 **두 방법 모두**에 대해
+:class:`~procurement.importers.company_importer.CompanyImporter` 로 보냅니다.
+
+::
+
+    기업 등록 → CompanySourceService → CompanyImporter → Company
+    인증 연결 → CertificationSyncService(이 모듈) → Certification
+
+⛔ **기업 생성 규칙을 두 곳에 두지 않습니다.** 조회 결과가 기업명·대표자명을
+주면 ``CompanySourceService.import_from_api`` 가 기업을 만들고, 주지 않으면
+만들지 않고 사유를 돌려줍니다. 이 모듈은 그 뒤 **이미 있는 기업에 인증을
+연결**하는 역할 그대로입니다 — 그래서 여기에는 변경이 없습니다.
+
 .. note::
     같은 인증을 두 번 저장하지 않습니다. ``(정책, 유효기간 시작일, 종료일)`` 이
     같은 인증이 이미 있으면 건너뜁니다. 이는 업무 규칙이 아니라 **재실행 안전성**

@@ -189,11 +189,40 @@ class TestTheDocumentSettlesNothing:
 class TestTheCodeDoesNotReadTheSheet:
     """⛔ 「작업」 시트가 코드로 새어 들어오지 않았는가."""
 
-    @pytest.mark.parametrize("term", ["작업 시트", "작업시트", "업체규모", "중소기업 기간"])
+    @pytest.mark.parametrize("term", ["작업 시트", "작업시트", "중소기업 기간"])
     def test_the_term_appears_nowhere_in_the_source(self, term: str) -> None:
         """⭐ 낱말이 없으면 실수로도 읽을 수 없다."""
         hits = [path for path in _SRC.rglob("*.py") if term in path.read_text(encoding="utf-8")]
         assert hits == [], hits
+
+    def test_company_size_appears_only_as_an_exclusion(self) -> None:
+        """「업체규모」는 **쓰지 않는다는 기록** 으로만 나타난다.
+
+        ⚠️ **규칙 변경(2026-09-02 · STEP 91 · PM 지시).** 이 낱말은 원래 소스
+        어디에도 없어야 했다. 그런데 PM 이 "중소기업 데이터에서 인증유효일자가
+        빈값이 아니면 중소기업" 이라고 확정하면서(DECISIONS §0.19), 기업정보
+        표준 양식에 **업체규모 컬럼을 넣지 않는다는 사실**을 코드에 남기게
+        되었다.
+
+        그래서 기대값을 "어디에도 없다" 에서 **"제외 목록에만 있다"** 로
+        바꾼다. ⛔ 느슨해진 것이 아니다 — 판정에 쓰는 코드가 없다는 것을 더
+        구체적으로 못 박는다.
+        """
+        from procurement.uploads.company_format import (
+            COMPANY_PENDING_COLUMNS,
+            COMPANY_REQUIRED_HEADERS,
+        )
+
+        hits = {
+            path.name
+            for path in _SRC.rglob("*.py")
+            if "업체규모" in path.read_text(encoding="utf-8")
+        }
+        assert hits == {"company_format.py"}, hits
+
+        # ⛔ 양식 컬럼이 아니라 **제외 목록**에 있다.
+        assert "업체규모" not in COMPANY_REQUIRED_HEADERS
+        assert COMPANY_PENDING_COLUMNS["업체규모"] == "중소기업 여부를 규모로 판정하는 규칙이 없다"
 
     def test_nothing_reads_an_excel_sheet_by_name(self) -> None:
         """⛔ 시트 이름으로 워크북을 여는 코드가 없다."""
@@ -215,15 +244,27 @@ class TestNoAutomaticCertificationPath:
         assert settings.SMPP_API_KEY is None
         assert settings.STARTUP_API_KEY is None
 
-    def test_no_company_importer_was_added(self) -> None:
-        """§2.1 이 적은 사실 — 기업 적재 경로가 여전히 없다.
+    def test_the_company_importer_never_invents_values(self) -> None:
+        """기업 적재 경로가 **생겼다** — 그리고 없는 값을 지어내지 않는다.
 
-        ⛔ 원천이 정해지지 않았으므로 만들지 않았습니다. 이 시험은 그 사실을
-        기록하며, 원천이 확정되어 적재 경로가 생기면 **깨지는 것이 정상**
-        입니다(그때 기대값을 바꾸고 사유를 적습니다).
+        ⚠️ **규칙 변경(2026-09-02 · STEP 91).** 이 시험은 원래 "기업 적재
+        경로가 없다" 를 기록했고, 그 docstring 에 *"원천이 확정되어 적재
+        경로가 생기면 깨지는 것이 정상"* 이라고 적어 두었다. 고객이 확인
+        방식을 **FILE·API 두 가지 모두**로 확정했으므로(DECISIONS §0.18)
+        경로가 생겼고, 예고한 대로 기대값을 바꾼다.
+
+        ⛔ 대신 **원래 지키려던 것**을 그대로 지킨다 — 근거 없는 기업 정보가
+        자동으로 채워지지 않는다.
         """
         importers = {path.name for path in (_SRC / "importers").glob("*.py")}
-        assert "company_importer.py" not in importers
+        assert "company_importer.py" in importers
+
+        source = (_SRC / "importers" / "company_importer.py").read_text(encoding="utf-8")
+        # 값이 없으면 그 행을 실패로 돌려보낸다 — 다른 값으로 채우지 않는다.
+        assert '"기업명이 없습니다."' in source
+        assert '"대표자명이 없습니다."' in source
+        # 이미 있는 기업을 덮어쓰지 않는다.
+        assert "ALREADY_EXISTS" in source
 
 
 class TestTheJudgementStructureIsReady:
@@ -268,24 +309,37 @@ class TestNoNewPolicyWasRegistered:
 # STEP 89 — 고객 확인 요청서 ②
 # ======================================================================
 class TestTheRequestSheetIsComplete:
-    """지시서 §3 이 요구한 7문항이 모두 있는가."""
+    """요청서에 물어야 할 것만 남아 있는가.
 
-    def test_there_are_exactly_seven_questions(self, request_sheet: str) -> None:
-        """⛔ 질문을 늘리지도, 빠뜨리지도 않았다."""
+    ⚠️ **규칙 변경(2026-09-02 · PM 지시).** 원래 7문항이었다. 담당자가
+    *"중소기업 자료에서 인증 유효일자가 비어 있지 않으면 중소기업"* 이라고
+    확정하면서(DECISIONS §0.19) 「업체규모」 관련 두 문항이 **불필요해졌고**,
+    ⛔ 이미 답을 받은 것을 다시 여쭙지 않는다는 원칙에 따라 뺐다.
+    나머지 5문항은 문구도 순서도 그대로다.
+    """
+
+    def test_there_are_exactly_five_questions(self, request_sheet: str) -> None:
+        """⛔ 질문을 늘리지도, 남은 것을 빠뜨리지도 않았다."""
         headings = [line for line in request_sheet.splitlines() if line.startswith("## ")]
-        numbered = [
-            h
-            for h in headings
-            if h.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤", "## ⑥", "## ⑦"))
-        ]
-        assert len(numbered) == 7, headings
+        numbered = [h for h in headings if h.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤"))]
+        assert len(numbered) == 5, headings
+
+    def test_the_dropped_questions_are_gone(self, request_sheet: str) -> None:
+        """⛔ 「업체규모」 두 문항은 **다시 묻지 않는다.**"""
+        assert "중소기업으로 봅니까" not in request_sheet
+        assert "다를 때 어느 쪽" not in request_sheet
+
+    def test_why_they_were_dropped_is_written_down(self, request_sheet: str) -> None:
+        """왜 뺐는지가 요청서에 남아 있다 — 조용히 사라지지 않는다."""
+        assert "여쭙지 않기로 했습니다" in request_sheet
+        assert "인증 유효일자가 비어 있지 않으면" in request_sheet
 
     def test_every_question_is_open(self, request_sheet: str) -> None:
         """요청서의 질문은 전부 🔴 이어야 한다 — 답을 받으려고 보내는 것이다."""
         numbered = [
             line
             for line in request_sheet.splitlines()
-            if line.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤", "## ⑥", "## ⑦"))
+            if line.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤"))
         ]
         assert all("🔴" in line for line in numbered), numbered
 
@@ -293,8 +347,6 @@ class TestTheRequestSheetIsComplete:
         "topic",
         [
             "작업」 시트를 기업·인증 자료로",
-            "중소기업으로 봅니까",
-            "다를 때 어느 쪽",
             "#N/A",
             "끝나는 날짜가 없는",
             "없는 80개 업체",
