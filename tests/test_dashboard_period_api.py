@@ -77,8 +77,18 @@ def _purchase(amount: str, contract: date, payment: date, company_id: int | None
 
 
 @pytest.fixture
-def client_without_date_field(db_path: Path) -> TestClient:
-    """연도 귀속 기준일이 설정되지 않은 앱(현재 기본 상태)."""
+def client_without_date_field(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """연도 귀속 기준일 설정을 **명시적으로 비운** 앱.
+
+    .. note::
+        **바뀐 이유** — 🟢 2026-09-02 PM 확정(STEP 86)으로 연도 귀속 기준일이
+        **결의일자**로 고정되어 설정 기본값이 생겼습니다. 그래서 "설정이 비어
+        있는 상태" 는 이제 기본값을 **명시적으로 비워야** 만들어집니다.
+        ⛔ 시험을 지우지 않고, 그 상태를 만들어 **같은 것을 그대로 확인**합니다.
+    """
+    from procurement.core.config import settings
+
+    monkeypatch.setattr(settings, "PURCHASE_PERIOD_DATE_FIELD", None)
     return TestClient(create_app(db_path, period_date_field=None))
 
 
@@ -134,10 +144,22 @@ class TestYearWithoutDateField:
     def test_returns_503(self, client_without_date_field: TestClient) -> None:
         assert client_without_date_field.get("/dashboard/summary?year=2026").status_code == 503
 
-    def test_message_mentions_decision(self, client_without_date_field: TestClient) -> None:
+    def test_message_names_the_setting_and_the_confirmed_basis(
+        self, client_without_date_field: TestClient
+    ) -> None:
+        """안내가 **무엇을 설정해야 하는지**와 **확정 기준일**을 말하는가.
+
+        .. note::
+            **바뀐 이유** — 예전 문구는 *"기준일이 확정되지 않았습니다
+            (D-24 · W-1)"* 였습니다. 🟢 2026-09-02 PM 확정(STEP 86)으로
+            기준일은 **결의일자로 확정**되었으므로, 503 은 이제 미확정이
+            아니라 **설정이 비어 있다**는 뜻입니다.
+        """
         detail = client_without_date_field.get("/dashboard/summary?year=2026").json()["detail"]
-        assert "D-24" in detail
-        assert "W-1" in detail
+        assert "PURCHASE_PERIOD_DATE_FIELD" in detail
+        assert "결의일자" in detail
+        # ⛔ 비어 있어도 임의의 날짜로 계산하지 않는다는 원칙은 그대로.
+        assert "임의의 날짜로 계산하지 않습니다" in detail
 
     def test_data_status_reports_unavailable(self, client_without_date_field: TestClient) -> None:
         body = client_without_date_field.get("/dashboard/data-status").json()
@@ -202,10 +224,25 @@ class TestDateFieldChangesResult:
         )
 
 
-class TestNoDefaultDateField:
-    """설정에 기본값이 없다는 사실을 고정한다."""
+class TestTheDefaultDateFieldIsTheResolutionDate:
+    """🟢 설정 기본값이 **결의일자**라는 사실을 고정한다.
 
-    def test_settings_default_is_none(self) -> None:
-        from procurement.core.config import settings
+    .. note::
+        **바뀐 이유** — 이 클래스는 STEP 85 까지 ``TestNoDefaultDateField`` 로
+        *"기본값이 없다"* 를 잠그고 있었습니다. 기본값을 두지 않은 것은 어느
+        날짜로 연도를 나눌지가 **미확정**이었기 때문입니다(D-24). 2026-09-02
+        PM 이 *"실적 산정 및 연도 귀속의 기준일은 원본파일의 결의일자"* 라고
+        확정했으므로, 이제는 **확정된 값이 붙어 있는지**를 잠급니다.
+        ⛔ 시험을 지우지 않고 기대값을 확정 규칙으로 바꿨습니다.
+    """
 
-        assert settings.PURCHASE_PERIOD_DATE_FIELD is None
+    def test_the_settings_default_is_the_resolution_date(self) -> None:
+        from procurement.core.config.settings import Settings
+
+        assert Settings().PURCHASE_PERIOD_DATE_FIELD == "resolution_date"
+
+    def test_the_issue_date_is_not_selectable(self) -> None:
+        """⛔ 신고기준일은 기간 축에 **넣지 않았다.**"""
+        from procurement.core.period import ALLOWED_DATE_FIELDS
+
+        assert "issue_date" not in ALLOWED_DATE_FIELDS

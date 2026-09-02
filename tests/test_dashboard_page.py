@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from procurement.api.status_response import PERIOD_NOTICE_UNAVAILABLE
+from procurement.api.status_response import PERIOD_NOTICE_AVAILABLE, PERIOD_NOTICE_UNAVAILABLE
 from procurement.app import create_app
 from procurement.database.bootstrap import init_db, seed_policies
 from procurement.database.purchase_repository import PurchaseRepository
@@ -119,9 +119,30 @@ class TestDataStatusEndpoint:
         body = client.get("/dashboard/data-status?year=2026").json()
         assert body["period_filter_applied"] is False
 
-    def test_notice_says_unavailable_when_date_field_unset(self, client: TestClient) -> None:
-        """기간 판정 기준일(D-24)이 미설정이면 사용 불가로 안내한다."""
+    def test_the_default_basis_is_the_resolution_date(self, client: TestClient) -> None:
+        """🟢 기본 설정에서는 **결의일자 기준**으로 기간 조회가 가능하다.
+
+        .. note::
+            **바뀐 이유** — 이 시험은 STEP 85 까지
+            ``test_notice_says_unavailable_when_date_field_unset`` 이라는
+            이름으로 *"기준일이 미설정이라 사용 불가"* 를 확인하고 있었습니다.
+            2026-09-02 PM 확정(STEP 86)으로 연도 귀속 기준일이 **결의일자**로
+            고정되어 기본값이 생겼으므로, 기본 상태의 기대값이 뒤집혔습니다.
+            ⛔ "사용 불가" 확인은 지우지 않고 아래 시험으로 남겼습니다.
+        """
         body = client.get("/dashboard/data-status").json()
+        assert body["period_filter_available"] is True
+        assert body["period_date_field"] == "resolution_date"
+        assert body["period_notice"] == PERIOD_NOTICE_AVAILABLE
+
+    def test_notice_says_unavailable_when_date_field_unset(
+        self, db_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """설정을 **명시적으로 비우면** 사용 불가로 안내한다(원래 확인 그대로)."""
+        from procurement.core.config import settings
+
+        monkeypatch.setattr(settings, "PURCHASE_PERIOD_DATE_FIELD", None)
+        body = TestClient(create_app(db_path)).get("/dashboard/data-status").json()
         assert body["period_filter_available"] is False
         assert body["period_date_field"] is None
         assert body["period_notice"] == PERIOD_NOTICE_UNAVAILABLE

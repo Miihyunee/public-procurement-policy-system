@@ -186,8 +186,18 @@ class TestTheDocumentMatchesTheCode:
         """⛔ §4 — 기간 축에 ``issue_date`` 를 넣지 않았다."""
         assert "issue_date" not in ALLOWED_DATE_FIELDS
 
-    def test_the_year_axis_still_has_no_default(self) -> None:
-        assert Settings().PURCHASE_PERIOD_DATE_FIELD is None
+    def test_the_year_axis_is_fixed_to_the_resolution_date(self) -> None:
+        """🟢 연도 귀속 기준일 = 결의일자 (PM 확정 · STEP 86).
+
+        .. note::
+            **기대값이 바뀐 이유** — STEP 85 시점에는 기준일이 아직
+            🔴 미확정이라 **기본값이 없다**는 사실을 잠그고 있었습니다.
+            2026-09-02 PM 이 결의일자로 확정했습니다. ⛔ §4 가 적은
+            *"어느 쪽도 채택하지 않았다"* 는 STEP 85 당시의 기록이며,
+            그 뒤 PM 이 결정한 것입니다 — 문서를 고쳐 흔적을 지우지
+            않았습니다.
+        """
+        assert Settings().PURCHASE_PERIOD_DATE_FIELD == "resolution_date"
 
     def test_the_offsetting_module_is_still_unwired(self) -> None:
         """⛔ §5 — 상계 모듈이 계산에 연결되지 않았다."""

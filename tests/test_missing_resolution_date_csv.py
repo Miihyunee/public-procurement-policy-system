@@ -383,8 +383,12 @@ class TestCsvApi:
         """연도를 생략하면 400 — 목록·요약과 **같은 규칙**(D-27)."""
         assert client.get("/dashboard/missing-resolution-date.csv").status_code == 400
 
-    def test_503_without_date_field(self, db_path: Path) -> None:
+    def test_503_without_date_field(self, db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """기준일 미설정은 503 — ⛔ 빈 CSV 를 성공으로 돌려주지 않는다."""
+        # 🟢 STEP 86 — 기본값이 결의일자이므로 '비어 있는 상태' 를 명시적으로 만든다.
+        from procurement.core.config import settings
+
+        monkeypatch.setattr(settings, "PURCHASE_PERIOD_DATE_FIELD", None)
         client = TestClient(create_app(db_path, period_date_field=None))
         response = client.get(CSV_URL)
         assert response.status_code == 503

@@ -98,14 +98,14 @@ class Settings(BaseSettings):
     PURCHASE_PERIOD_DATE_FIELD: (
         Literal["payment_date", "contract_date", "resolution_date"] | None
     ) = Field(
-        default=None,
+        default="resolution_date",
         description=(
-            "연도(기간) 귀속 판정에 사용할 날짜 컬럼. **기본값을 두지 않는다.** "
-            "2026-08-14 고객 확정에 따르면 일반 정책은 결의일자(resolution_date) "
-            "기준이나, 기존 데이터에는 그 값이 없을 수 있어 운영자가 명시한다. "
-            "어느 날짜로 연도를 나눌지는 D-24(미확정)이며 고객 확인 항목 W-1 에 "
-            "종속된다. 미설정 상태에서 기간 조회를 요청하면 숫자를 내지 않고 "
-            "오류로 응답한다."
+            "연도(기간) 귀속 판정에 사용할 날짜 컬럼. 기본값은 결의일자"
+            "(resolution_date)다. 🟢 2026-09-02 PM 확정(STEP 86) — "
+            "'실적 산정 및 연도 귀속의 기준일은 원본파일의 결의일자다.' "
+            "⛔ 신고기준일(issue_date)은 기간 축에 넣지 않는다. "
+            "운영자가 다른 값으로 바꿀 수는 있으나, 바꾸면 확정 규칙과 달라진다. "
+            "명시적으로 비우면 기간 조회는 숫자를 내지 않고 오류로 응답한다."
         ),
     )
 

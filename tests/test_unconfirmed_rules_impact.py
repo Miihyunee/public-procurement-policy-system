@@ -36,6 +36,7 @@ from procurement.calculators.rules.date_rules import (
 )
 from procurement.core.config.settings import Settings
 from procurement.core.performance_exclusion import is_excluded_budget_account
+from procurement.core.period import ALLOWED_DATE_FIELDS
 from procurement.database.bootstrap import MVP_POLICY_SEEDS
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
@@ -201,9 +202,20 @@ class TestTheDocumentMatchesTheCode:
         basis = {seed.policy_code: seed.evaluation_basis for seed in MVP_POLICY_SEEDS}
         assert basis["STARTUP"] == RESOLUTION_OR_CONTRACT_DATE
 
-    def test_the_period_date_field_has_no_default(self) -> None:
-        """⛔ 기본값을 두면 그것이 곧 확정이 된다."""
-        assert Settings().PURCHASE_PERIOD_DATE_FIELD is None
+    def test_the_year_axis_is_fixed_to_the_resolution_date(self) -> None:
+        """🟢 연도 귀속 기준일 = 결의일자 (PM 확정 · STEP 86).
+
+        .. note::
+            **기대값이 바뀐 이유** — 이 시험은 *"기본값을 두면 그것이 곧
+            확정이 된다"* 는 이유로 **기본값이 없음**을 잠그고 있었습니다.
+            🟢 2026-09-02 PM 확정(STEP 86) — *"실적 산정 및 연도 귀속의
+            기준일은 원본파일의 결의일자"* 로 확정되었으므로, 이제는
+            **확정된 값이 붙어 있는지**를 잠급니다. ⛔ 시험을 지우지 않고
+            기대값을 확정 규칙으로 바꿨습니다.
+        """
+        assert Settings().PURCHASE_PERIOD_DATE_FIELD == "resolution_date"
+        # ⛔ 신고기준일은 기간 축에 넣지 않았다.
+        assert "issue_date" not in ALLOWED_DATE_FIELDS
 
     def test_a_blank_budget_account_is_not_excluded(self) -> None:
         """Q5-9 — 공란은 실적 제외 규칙에 걸리지 않는다."""

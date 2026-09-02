@@ -23,7 +23,8 @@ FastAPI 애플리케이션과 **의존성 조립(composition root)** 을 정의�
     ``GET /dashboard/summary`` 는 **대상 연도(``year``)가 필수**입니다(**D-27**).
     연도를 생략하면 400 으로 거부하며, 전 기간을 임의로 합산한 값을 돌려주지
     않습니다. 어느 날짜로 연도를 나눌지(**D-24**)는 아직 확정되지 않았으므로,
-    설정값 ``PURCHASE_PERIOD_DATE_FIELD`` 가 없으면 503 으로 거부합니다.
+    설정값 ``PURCHASE_PERIOD_DATE_FIELD`` 를 비우면 503 으로 거부합니다
+    (기본값은 결의일자 — 🟢 2026-09-02 PM 확정).
 """
 
 from __future__ import annotations
@@ -447,8 +448,13 @@ def _require_period(year: int | None, date_field: str | None) -> PeriodFilter:
 
     Raises:
         HTTPException: ``year`` 미지정 시 **400**(D-27 — 전 기간 합산 금지).
-            ``year`` 를 지정했으나 ``date_field`` 가 설정되지 않은 경우 **503**
-            (D-24 미확정 — 임의의 기준일로 계산하지 않음).
+            ``year`` 를 지정했으나 ``date_field`` 가 비어 있는 경우 **503**.
+
+    .. note::
+        🟢 **2026-09-02 PM 확정(STEP 86)** — 연도 귀속 기준일은 **결의일자**이며
+        설정 기본값이 그렇게 잡혀 있습니다. 그래서 503 은 이제 "확정되지
+        않았다" 가 아니라 **"운영자가 설정을 비웠다"** 는 뜻입니다. 그 상태에서
+        임의의 날짜로 계산하지 않는다는 원칙은 그대로입니다.
     """
     if year is None:
         raise HTTPException(
@@ -462,9 +468,10 @@ def _require_period(year: int | None, date_field: str | None) -> PeriodFilter:
         raise HTTPException(
             status_code=503,
             detail=(
-                "연도별 조회를 사용할 수 없습니다. 연도 귀속 기준일이 확정되지 "
-                "않았습니다(D-24 · 고객 확인 항목 W-1). 확정 후 설정값 "
-                "PURCHASE_PERIOD_DATE_FIELD 를 지정하면 활성화됩니다."
+                "연도별 조회를 사용할 수 없습니다. 연도 귀속 기준일 설정"
+                "(PURCHASE_PERIOD_DATE_FIELD)이 비어 있습니다. 확정된 기준일은 "
+                "결의일자(resolution_date)이며 기본값도 그것입니다 — 설정을 "
+                "비운 상태에서는 임의의 날짜로 계산하지 않습니다."
             ),
         )
     return PeriodFilter.for_year(year, date_field)
