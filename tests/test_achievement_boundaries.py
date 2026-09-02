@@ -26,14 +26,14 @@ STEP 67 — 달성률 계산의 **경계조건**을 잠급니다.
     는 그것들이 **없다는 사실**을 확인할 뿐이며, 고객이 답하면 그 시험이
     바뀌는 것이 정상입니다.
 
-.. warning::
-    ⚠️ **일반 정책(중소·여성·장애인)의 인증 판정 기준일은 현재 ``payment_date``
-    입니다.** 이는 **고객이 확정한 규칙이 아니라 현행 동작**이며, W-1-2(Q-A)가
-    🔴 미확정으로 남아 있습니다. 그래서 이 파일은 그것을 "**현재 동작**" 으로만
-    적고 "확정 규칙" 으로 적지 않습니다. 고객이 결의일자 기준으로 답하면 이
-    시험은 **바뀌어야 합니다.**
+.. note::
+    **일반 정책(중소·여성·장애인)의 인증 판정 기준일은 결의일자**
+    (``resolution_date``)입니다 — 2026-08-31 고객 최종 회신으로 W-1-2(Q-A)가
+    확정되었고(``DECISIONS.md`` §0.12.1) STEP 84 에서 구현했습니다. 그전까지
+    이 파일은 당시 동작(``payment_date``)을 **구분 B** 로 적어 두고 있었으며,
+    고객이 답했으므로 **구분 A** 로 옮겨 다시 적었습니다.
 
-    확정된 것은 **창업기업**뿐입니다 — 결의일자 **또는** 계약일자(§0.6.2).
+    **창업기업**은 그대로입니다 — 결의일자 **또는** 계약일자(§0.6.2).
 
 .. note::
     합성 데이터만 씁니다. 실제 고객 데이터를 만들거나 커밋하지 않습니다.
@@ -279,10 +279,12 @@ class TestPeriodBoundary:
 class TestCertificationValidity:
     """인증 유효기간은 **양 끝을 포함**한다(현행 동작 · 구분 B).
 
-    .. warning::
-        ⚠️ 여기서 쓰는 기준일이 ``payment_date`` 인 것은 **현행 동작**이며,
-        고객이 확정한 규칙이 아닙니다(W-1-2 · Q-A 🔴 미확정). 이 시험은
-        "지금 이렇게 동작한다" 를 기록할 뿐, "이것이 옳다" 고 말하지 않습니다.
+    .. note::
+        여기서 쓰는 기준일은 **결의일자**(``resolution_date``)입니다 —
+        2026-08-31 고객 최종 회신(W-1-2 · Q-A → ``DECISIONS.md`` §0.12.1)으로
+        중소기업·여성기업·장애인기업의 인증 유효기간 판정 기준일이 확정되었고,
+        STEP 84 에서 구현했습니다. 그 전까지 이 시험은 ``payment_date`` 를
+        옮겨 가며 **당시 현행 동작**을 기록하고 있었습니다.
     """
 
     @pytest.mark.parametrize(
@@ -302,7 +304,9 @@ class TestCertificationValidity:
         expected: str,
     ) -> None:
         company_id = _certified_company(db)
-        _add(db, "1000", company_id=company_id, payment=day)
+        # ⛔ 결의일자만 옮긴다 — 지급일·계약일은 유효기간 안에 그대로 둔다.
+        #    그래야 "결의일자로 판정한다" 가 실제로 시험된다.
+        _add(db, "1000", company_id=company_id, resolution=day)
         assert calculator.calculate_policy_purchase(_policy_id(db, "SMALL_BUSINESS")) == Decimal(
             expected
         )
@@ -403,33 +407,36 @@ class TestStartupOrRule:
         assert calculator.calculate_policy_purchase(_policy_id(db, "STARTUP")) == Decimal("1000")
 
 
-class TestGeneralPolicyBasisIsCurrentBehaviour:
-    """⚠️ 일반 정책의 기준일 — **현행 동작**이며 확정 규칙이 아니다(구분 B).
+class TestGeneralPolicyBasisIsTheResolutionDate:
+    """일반 3개 정책의 인증 유효기간 판정 기준일 — **결의일자**(🟢 고객 확정).
 
-    W-1-2(Q-A)가 🔴 미확정입니다. 고객이 *"결의일자 기준"* 이 인증 유효기간
-    판정까지 포함한다고 답하면 **이 시험이 바뀌어야 합니다.** 그때 이 클래스가
-    깨지는 것이 정상이며, 그것이 곧 "무엇이 달라지는가" 의 알림입니다.
+    2026-08-31 고객 최종 회신(W-1-2 · Q-A → ``DECISIONS.md`` §0.12.1):
+
+        중소기업 — 결의일자 / 여성기업 — 결의일자 / 장애인기업 — 결의일자
+
+    .. note::
+        이 클래스는 STEP 84 이전까지 ``TestGeneralPolicyBasisIsCurrentBehaviour``
+        라는 이름으로 **당시 현행 동작(지급일 기준)** 을 기록하고 있었습니다.
+        고객이 답하면 깨지도록 둔 시험이며, 실제로 답이 와서 바뀌었습니다.
+        ⛔ 시험을 지운 것이 아니라 **확정된 규칙으로 다시 적었습니다.**
     """
 
     @pytest.mark.parametrize("code", ["SMALL_BUSINESS", "WOMAN", "DISABLED"])
-    def test_general_policies_use_payment_date_today(self, db: Path, code: str) -> None:
+    def test_general_policies_use_the_resolution_date(self, db: Path, code: str) -> None:
         policy = PolicyRepository(db).find_by_policy_code(code)
         assert policy is not None
-        assert policy.evaluation_basis == "PAYMENT_DATE"
+        assert policy.evaluation_basis == "RESOLUTION_DATE"
 
     def test_startup_uses_the_confirmed_or_rule(self, db: Path) -> None:
+        """⛔ 창업기업은 **바뀌지 않는다** — 결의일자 OR 계약일자 그대로."""
         policy = PolicyRepository(db).find_by_policy_code("STARTUP")
         assert policy is not None
         assert policy.evaluation_basis == "RESOLUTION_OR_CONTRACT_DATE"
 
-    def test_resolution_date_does_not_decide_general_policies_yet(
+    def test_the_resolution_date_alone_decides_general_policies(
         self, db: Path, calculator: ProcurementAchievementCalculator
     ) -> None:
-        """결의일자만 유효기간 안이면 **현재는 인정되지 않는다.**
-
-        ⛔ 이것을 "옳다" 고 말하는 시험이 아니다. W-1-2 가 확정되기 전의
-        **현재 상태**를 적어 두어, 바뀔 때 조용히 지나가지 않게 한다.
-        """
+        """결의일자만 유효기간 안이면 **인정된다** — 지급일이 밖이어도."""
         company_id = _certified_company(db, "SMALL_BUSINESS")
         _add(
             db,
@@ -439,8 +446,47 @@ class TestGeneralPolicyBasisIsCurrentBehaviour:
             payment=date(2026, 9, 9),  # 유효기간 밖
         )
         assert calculator.calculate_policy_purchase(_policy_id(db, "SMALL_BUSINESS")) == Decimal(
+            "1000"
+        )
+
+    def test_the_payment_date_alone_no_longer_decides(
+        self, db: Path, calculator: ProcurementAchievementCalculator
+    ) -> None:
+        """뒤집힌 경우 — 지급일만 유효기간 안이면 **인정되지 않는다.**"""
+        company_id = _certified_company(db, "SMALL_BUSINESS")
+        _add(
+            db,
+            "1000",
+            company_id=company_id,
+            resolution=date(2026, 9, 9),  # 유효기간 밖
+            payment=_VALID_FROM,  # 유효기간 안
+        )
+        assert calculator.calculate_policy_purchase(_policy_id(db, "SMALL_BUSINESS")) == Decimal(
             "0"
         )
+
+    def test_a_missing_resolution_date_is_not_counted(
+        self, db: Path, calculator: ProcurementAchievementCalculator
+    ) -> None:
+        """⭐ 결의일자가 없으면 **다른 날짜로 대신하지 않는다** (🟢 W-15).
+
+        원본은 그대로 두고 인정하지 않을 뿐입니다. 담당자는 별도 확인 목록
+        (``find_missing_resolution_date``)에서 이 건을 봅니다.
+        """
+        company_id = _certified_company(db, "SMALL_BUSINESS")
+        _add(
+            db,
+            "1000",
+            company_id=company_id,
+            resolution=None,  # 공란
+            payment=_VALID_FROM,  # 유효기간 안 — ⛔ 대체하지 않는다
+            contract=_VALID_FROM,  # 〃
+        )
+        assert calculator.calculate_policy_purchase(_policy_id(db, "SMALL_BUSINESS")) == Decimal(
+            "0"
+        )
+        # ⛔ 원본은 지워지지 않는다 — 분모에는 그대로 들어간다.
+        assert calculator.calculate_total_purchase() == Decimal("1000")
 
 
 # ======================================================================

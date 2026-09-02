@@ -67,6 +67,10 @@ def _purchase(amount: str, contract: date, payment: date, company_id: int | None
         company_name="테스트업체",
         contract_date=contract,
         payment_date=payment,
+        # 결의일자를 계약일과 같은 날로 채운다 — 일반 정책의 인증 유효기간
+        # 판정 기준일이 결의일자이기 때문이다(🟢 DECISIONS §0.12.1 · STEP 84).
+        # ⛔ 합성 데이터에 빠져 있던 필드를 채운 것이며 계산을 바꾸지 않았다.
+        resolution_date=contract,
         amount=Decimal(amount),
         company_id=company_id,
     )

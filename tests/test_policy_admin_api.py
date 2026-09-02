@@ -279,6 +279,10 @@ class TestDashboardIntegration:
                 company_name="가기업",
                 contract_date=date(2026, 3, 1),
                 payment_date=date(2026, 3, 15),
+                # 결의일자 — 일반 정책의 인증 유효기간 판정 기준일이다
+                # (🟢 DECISIONS §0.12.1 · STEP 84). ⛔ 계산을 바꾼 것이 아니라
+                # 합성 데이터에 빠져 있던 필드를 채운 것이다.
+                resolution_date=date(2026, 3, 1),
                 amount=Decimal("1000000"),
                 company_id=company.company_id,
             )

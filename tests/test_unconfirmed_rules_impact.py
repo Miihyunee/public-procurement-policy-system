@@ -29,7 +29,11 @@ from pathlib import Path
 
 import pytest
 
-from procurement.calculators.rules.date_rules import PAYMENT_DATE, RESOLUTION_OR_CONTRACT_DATE
+from procurement.calculators.rules.date_rules import (
+    PAYMENT_DATE,
+    RESOLUTION_DATE,
+    RESOLUTION_OR_CONTRACT_DATE,
+)
 from procurement.core.config.settings import Settings
 from procurement.core.performance_exclusion import is_excluded_budget_account
 from procurement.database.bootstrap import MVP_POLICY_SEEDS
@@ -176,10 +180,21 @@ class TestNothingWasSettled:
 class TestTheDocumentMatchesTheCode:
     """⛔ 영향도 문서가 코드와 어긋나면 그다음 판단이 전부 어긋난다."""
 
-    def test_the_general_policies_still_use_the_payment_date(self) -> None:
+    def test_the_general_policies_use_the_resolution_date(self) -> None:
+        """일반 3개 정책의 판정 기준일 — 🟢 결의일자.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-31 고객 최종 회신
+            (``DECISIONS.md`` §0.12.1). 이 시험은 W-1-2 가 🔴 이던 동안
+            ``PAYMENT_DATE`` 라는 **당시 동작**을 적고 있었고, 답이 오면
+            깨지도록 둔 파수꾼이었습니다. STEP 84 에서 실제로 깨졌고
+            확정 규칙으로 다시 적었습니다. ⛔ 지우지 않았습니다.
+        """
         basis = {seed.policy_code: seed.evaluation_basis for seed in MVP_POLICY_SEEDS}
         for code in ("SMALL_BUSINESS", "WOMAN", "DISABLED"):
-            assert basis[code] == PAYMENT_DATE
+            assert basis[code] == RESOLUTION_DATE
+        # ⛔ 지급일 기준은 더 이상 일반 정책에 붙어 있지 않다.
+        assert PAYMENT_DATE not in {basis[c] for c in ("SMALL_BUSINESS", "WOMAN", "DISABLED")}
 
     def test_the_startup_rule_is_the_confirmed_one(self) -> None:
         """🟢 창업기업의 OR 규칙은 고객 확정이며 W-1-2 와 무관하게 유지된다."""

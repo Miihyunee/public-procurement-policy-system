@@ -100,33 +100,43 @@ class TestSeedPolicies:
             assert policy.target_rate is None
 
     def test_evaluation_basis_matches_policy_definition(self, db_path: Path) -> None:
-        """창업기업만 두 날짜 OR 기준, 나머지는 지급일 기준입니다.
+        """정책별 인증 유효기간 판정 기준일이 확정 규칙과 같은가.
 
         .. note::
-            **기대값이 바뀐 이유** — 2026-08-14 고객 확정.
+            **기대값이 바뀐 이유 ①** — 2026-08-14 고객 확정(창업기업).
 
                 창업기업은 결의일자와 계약일자가 기업 인증 유효기간에 해당할
                 경우 모두 실적으로 인정한다.
 
             이전에는 ``CONTRACT_DATE``(계약일 **단독**) 였으나, 확정 규칙은 두
             날짜에 대한 **OR 조건**이므로 계약일 단독으로는 표현할 수 없습니다.
-            (계약일이 기간 밖이고 다른 날짜만 안에 있는 구매를 놓칩니다.)
 
-            테스트를 통과시키려고 바꾼 것이 아니라, **업무규칙 자체가 바뀌어**
-            기대값이 달라진 경우입니다. 근거: ``DECISIONS.md`` §0.6.
+            **기대값이 바뀐 이유 ②** — 2026-08-31 고객 최종 회신
+            (``DECISIONS.md`` §0.12.1 · STEP 84).
 
-            나머지 정책의 기준은 **변경되지 않았습니다.**
+                중소기업 — 결의일자 / 여성기업 — 결의일자 / 장애인기업 — 결의일자
+
+            일반 3개 정책이 ``PAYMENT_DATE`` 에서 ``RESOLUTION_DATE`` 로
+            바뀌었습니다. 테스트를 통과시키려고 바꾼 것이 아니라 **업무규칙이
+            바뀌어** 기대값이 달라진 경우입니다.
+
+            ⛔ 녹색제품(``GREEN``)은 이번 답변에 없으므로 **그대로 둡니다.**
         """
         init_db(db_path)
         seed_policies(db_path)
         repository = PolicyRepository(db_path)
-        startup = repository.find_by_policy_code("STARTUP")
-        assert startup is not None
-        assert startup.evaluation_basis == "RESOLUTION_OR_CONTRACT_DATE"
-        for code in EXPECTED_CODES - {"STARTUP"}:
+        expected = {
+            "SMALL_BUSINESS": "RESOLUTION_DATE",
+            "WOMAN": "RESOLUTION_DATE",
+            "DISABLED": "RESOLUTION_DATE",
+            "STARTUP": "RESOLUTION_OR_CONTRACT_DATE",
+            "GREEN": "PAYMENT_DATE",
+        }
+        assert set(expected) == EXPECTED_CODES
+        for code, basis in expected.items():
             policy = repository.find_by_policy_code(code)
             assert policy is not None
-            assert policy.evaluation_basis == "PAYMENT_DATE"
+            assert policy.evaluation_basis == basis, code
 
     def test_second_run_creates_nothing(self, db_path: Path) -> None:
         """두 번째 실행은 아무것도 새로 만들지 않습니다(멱등)."""
@@ -289,15 +299,38 @@ class TestEvaluationBasisMigration:
         assert migrate_policy_evaluation_basis(db_path)
         assert migrate_policy_evaluation_basis(db_path) == []
 
-    def test_other_policies_are_untouched(self, db_path: Path) -> None:
-        """STARTUP 외 정책의 기준은 건드리지 않는다."""
+    def test_the_general_policies_are_migrated_to_the_resolution_date(self, db_path: Path) -> None:
+        """구 DB 의 일반 3개 정책이 결의일자 기준으로 갱신된다(§0.12.1 · STEP 84)."""
+        bootstrap(db_path)
+        for code in ("SMALL_BUSINESS", "WOMAN", "DISABLED"):
+            self._set_basis(db_path, code, "PAYMENT_DATE")
+
+        updated = migrate_policy_evaluation_basis(db_path)
+
+        assert sorted(updated) == [
+            "DISABLED: PAYMENT_DATE→RESOLUTION_DATE",
+            "SMALL_BUSINESS: PAYMENT_DATE→RESOLUTION_DATE",
+            "WOMAN: PAYMENT_DATE→RESOLUTION_DATE",
+        ]
+        for code in ("SMALL_BUSINESS", "WOMAN", "DISABLED"):
+            assert self._basis(db_path, code) == "RESOLUTION_DATE"
+
+    def test_the_green_policy_is_untouched(self, db_path: Path) -> None:
+        """⛔ 녹색제품은 이번 답변에 없다 — 갱신 대상이 아니다."""
         bootstrap(db_path)
         self._set_basis(db_path, "STARTUP", "CONTRACT_DATE")
 
         migrate_policy_evaluation_basis(db_path)
 
-        for code in EXPECTED_CODES - {"STARTUP"}:
-            assert self._basis(db_path, code) == "PAYMENT_DATE"
+        assert self._basis(db_path, "GREEN") == "PAYMENT_DATE"
+
+    def test_the_startup_policy_is_untouched_by_the_general_change(self, db_path: Path) -> None:
+        """⛔ 창업기업은 결의일자 OR 계약일자 그대로다."""
+        bootstrap(db_path)
+
+        migrate_policy_evaluation_basis(db_path)
+
+        assert self._basis(db_path, "STARTUP") == "RESOLUTION_OR_CONTRACT_DATE"
 
     def test_unexpected_value_is_not_overwritten(self, db_path: Path) -> None:
         """이전 값과 다르면 건드리지 않는다(운영자 설정 보호)."""

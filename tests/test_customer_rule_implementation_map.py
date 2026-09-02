@@ -164,18 +164,33 @@ class TestNothingWasSettled:
     def test_no_settled_claim_in_the_request_sheet(self, request_sheet: str, claim: str) -> None:
         assert claim not in request_sheet
 
-    @pytest.mark.parametrize("item", ["W-1-2", "Q5-8", "Q5-9"])
-    def test_the_open_rules_are_marked_red(self, rule_map: str, item: str) -> None:
+    @pytest.mark.parametrize("item", ["Q5-8", "Q71-D"])
+    def test_the_still_open_rules_stay_open(self, rule_map: str, item: str) -> None:
+        """⛔ 아직 답이 없는 것은 **여전히 금지**로 남아 있는가.
+
+        .. note::
+            **대상이 줄어든 이유** — 2026-08-31 고객 최종 회신
+            (``DECISIONS.md`` §0.12). 이 시험은 답이 오기 전 상태를 잠그고
+            있었고, 답이 온 항목은 §5 · §6 이 확정 상태를 따로 잠급니다.
+            ⛔ 시험을 지운 것이 아니라 **아직 열려 있는 것만** 남겼습니다.
+
+            - **Q5-8**(0원·음수) — 답변에 없다(§0.12.16).
+            - **Q71-D**(결의서 묶음) — 기능이 필요하다는 답일 뿐, **묶는
+              기준**은 답하지 않았다(§0.12.11).
+        """
         row = next(line for line in rule_map.splitlines() if line.startswith(f"| **{item}**"))
-        assert "🔴 미회신" in row
+        assert "🟢 **확정**" not in row
         assert "**금지**" in row
 
-    @pytest.mark.parametrize("item", ["Q71-A", "Q71-B", "Q71-C", "Q71-D"])
-    def test_the_design_judgements_are_marked_yellow(self, rule_map: str, item: str) -> None:
+    @pytest.mark.parametrize("item", ["W-1-2", "Q5-9", "Q71-A", "Q71-B", "Q71-C"])
+    def test_the_answered_rules_are_marked_green(self, rule_map: str, item: str) -> None:
+        """🟢 답이 온 것은 근거 절 번호와 함께 적혀 있는가.
+
+        ⛔ "🟢" 만 적고 근거를 빼면 **누가 언제 확정했는지**가 사라진다.
+        """
         row = next(line for line in rule_map.splitlines() if line.startswith(f"| **{item}**"))
-        assert "🟡" in row
-        assert "🟢" not in row
-        assert "**금지**" in row
+        assert "🟢 **확정**" in row
+        assert "§0.12." in row
 
     def test_being_in_the_code_is_not_confirmation(self, rule_map: str) -> None:
         """⭐ 이 문서가 존재하는 이유 자체다."""
@@ -196,10 +211,24 @@ class TestNothingWasSettled:
         for leading in ("결의일자가 맞으시죠", "지급일자로 확정하겠습니다", "변경하겠습니다"):
             assert leading not in request_sheet
 
-    def test_the_amount_remark_is_not_a_feature_request(self, rule_map: str) -> None:
+    def test_the_amount_search_is_now_an_answered_request(self, rule_map: str) -> None:
+        """🟢 금액 검색은 **고객이 직접 요청**했다(§0.12.5).
+
+        .. note::
+            **기대값이 바뀐 이유** — 이 시험은 STEP 83 까지 *"금액 비교는
+            업무 방식이며 기능 요구로 해석하지 않는다"* 를 잠그고 있었습니다.
+            2026-08-31 고객이 *"검토화면에서 금액, 사업자등록번호, 적요
+            정도는 검색기능이 있으면 좋겠어"* 라고 **직접 요청**했으므로,
+            지금 지켜야 할 것은 **그 셋을 넘지 않았는가**입니다.
+        """
         section = _section(rule_map, "### 2.6")
         assert section
+        # 옛 판단이 왜 뒤집혔는지 문서에 남아 있어야 한다.
         assert "기능 요구로 해석하지 않는다" in section
+        assert "**2026-08-31 고객이 직접 요청했다**" in section
+        # ⛔ 고객이 말한 셋을 넘지 않았다.
+        assert "새 검색 조건" in section
+        assert "범위·근사 없음" in section
 
     def test_the_grouping_remark_is_not_a_request(self, rule_map: str) -> None:
         section = _section(rule_map, "### 2.7")

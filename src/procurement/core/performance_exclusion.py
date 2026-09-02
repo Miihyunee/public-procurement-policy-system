@@ -156,6 +156,52 @@ def is_excluded_budget_account(value: str | None) -> bool:
     return normalize_budget_account(value) in EXCLUDED_BUDGET_ACCOUNTS
 
 
+def needs_budget_account_check(value: str | None) -> bool:
+    """예산과목이 비어 있어 **사람이 확인해야 하는** 건인가.
+
+    2026-08-31 고객 최종 회신(``DECISIONS.md`` §0.12.10 · Q5-9):
+
+        G20 회계프로그램 내 지출결의서를 열어 어떤 예산과목으로 처리했었는지
+        확인 후 작성 필요. 실적에서 제외할지 포함시킬지는 예산과목 작성 후
+        판단할 사항임.
+
+    확정된 것은 **순서**입니다 — 사람이 예산과목을 채우고, 그 다음에
+    :data:`EXCLUDED_BUDGET_ACCOUNTS` 6종 규칙으로 판단합니다.
+
+    .. warning::
+        ⛔ **공란 자체는 제외 사유가 아닙니다.** 이 함수가 ``True`` 라고 해서
+        실적에서 빠지지 않습니다 — :func:`is_excluded_budget_account` 는 여전히
+        ``False`` 이고, 그 건은 실적에 **포함된 채로** 남습니다.
+
+        ⛔ **자동으로 포함을 확정하지도 않습니다.** 시스템이 하는 일은
+        *"이 건은 예산과목 확인이 필요하다"* 를 알리는 것까지입니다.
+
+        ⛔ 시스템이 예산과목을 **추정해 채우지 않습니다.** ⛔ G20 자동 연계는
+        고객 답변에 없습니다.
+
+    Examples:
+        >>> needs_budget_account_check(None)
+        True
+        >>> needs_budget_account_check("   ")
+        True
+        >>> needs_budget_account_check("일반운영비")
+        False
+        >>> needs_budget_account_check("교육훈련비")
+        False
+    """
+    return normalize_budget_account(value) == ""
+
+
+#: 예산과목이 비어 있을 때 담당자에게 보여 주는 안내.
+#:
+#: ⛔ **자동 판정 기준이 아닙니다.** 화면이 사람에게 보여 주는 문구일 뿐이며,
+#: 코드가 이 문장으로 무엇을 결정하지 않습니다.
+BUDGET_ACCOUNT_CHECK_NOTICE: Final = (
+    "예산과목이 비어 있습니다. G20 회계프로그램의 지출결의서에서 어떤 예산과목으로 "
+    "처리했는지 확인해 채운 뒤, 채워진 예산과목으로 실적 포함 여부를 판단합니다."
+)
+
+
 def validate_exclusion_reason(reason: str) -> str:
     """담당자가 고를 수 있는 사유인지 확인합니다.
 

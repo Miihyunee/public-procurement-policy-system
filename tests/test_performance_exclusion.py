@@ -737,13 +737,21 @@ class TestFindingTransactionsWithoutADocumentNumber:
 # 다른 미확정 사항은 건드리지 않았다
 # ======================================================================
 class TestOtherUnconfirmedRulesUntouched:
-    """⛔ W-1-2 와 Q5-8 은 이번에 손대지 않았다."""
+    """⛔ Q5-8(0원·음수)은 이번에 손대지 않았다.
+
+    .. note::
+        W-1-2(인증 판정 기준일)는 2026-08-31 고객 최종 회신으로 **확정되어
+        STEP 84 에서 구현**되었습니다(``DECISIONS.md`` §0.12.1). 그래서 이
+        클래스의 W-1-2 항목은 "미확정이라 손대지 않았다" 가 아니라 **"확정된
+        값이 붙어 있다"** 를 확인하는 시험으로 바뀌었습니다. ⛔ 시험을 지우지
+        않았습니다.
+    """
 
     @pytest.mark.parametrize("code", ["SMALL_BUSINESS", "WOMAN", "DISABLED"])
-    def test_w1_2_general_policies_still_use_payment_date(self, db: Path, code: str) -> None:
+    def test_w1_2_general_policies_use_the_resolution_date(self, db: Path, code: str) -> None:
         policy = PolicyRepository(db).find_by_policy_code(code)
         assert policy is not None
-        assert policy.evaluation_basis == "PAYMENT_DATE"
+        assert policy.evaluation_basis == "RESOLUTION_DATE"
 
     def test_startup_rule_is_unchanged(self, db: Path) -> None:
         policy = PolicyRepository(db).find_by_policy_code("STARTUP")

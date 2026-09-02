@@ -54,10 +54,15 @@ _REQUIRED_FIELDS = ("policy_code", "policy_name")
 # 결의일자(resolution_date) 또는 계약일자 중 하나라도 인증 유효기간에 해당하면
 # 인정한다는 뜻이다.
 #
+# RESOLUTION_DATE 는 2026-08-31 고객 최종 회신(DECISIONS §0.12.1)이며,
+# 중소기업·여성기업·장애인기업의 인증 유효기간 판정 기준일이 결의일자라는 뜻이다.
+#
 # 구 값 PAYMENT_OR_CONTRACT_DATE 는 결의일자가 별도 필드로 확정되기 전에 쓰던
 # 이름이며, migrate_policy_evaluation_basis() 가 갱신한다. 갱신 전 DB 도 읽을 수
-# 있어야 하므로 허용 목록에는 남겨 둔다(신규 등록에 쓰지 않는다).
+# 있어야 하므로 허용 목록에는 남겨 둔다(신규 등록에 쓰지 않는다). PAYMENT_DATE 도
+# 같은 이유로 남겨 둔다 — 2026-08-31 이전 DB 의 일반 3개 정책이 이 값을 들고 있다.
 ALLOWED_EVALUATION_BASIS = (
+    "RESOLUTION_DATE",
     "PAYMENT_DATE",
     "CONTRACT_DATE",
     "RESOLUTION_OR_CONTRACT_DATE",

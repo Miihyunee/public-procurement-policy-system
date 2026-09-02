@@ -33,6 +33,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
+from procurement.core.amount_search import amount_search_key
 from procurement.core.description_classifier import DescriptionClassifier
 from procurement.core.description_key import normalize_description
 from procurement.core.period import PeriodFilter
@@ -213,9 +214,14 @@ def _keeps(target: ReviewTarget, query: ReviewQuery) -> bool:
 
     if query.search:
         # 고객은 결의번호가 없어 **적요 + 업체명 또는 사업자등록번호 + 금액**을
-        # 맞대어 지출결의서를 찾는다고 답했습니다(2026-08-31 · Q5-3). 세 가지
-        # 식별값을 한 칸에서 함께 찾습니다 — 담당자가 어느 칸에 넣을지 고르지
-        # 않아도 되게. ⛔ 금액은 화면에 그대로 보이고 정렬로 맞춥니다.
+        # 맞대어 지출결의서를 찾는다고 답했습니다(2026-08-31 · Q5-3). 식별값을
+        # 한 칸에서 함께 찾습니다 — 담당자가 어느 칸에 넣을지 고르지 않아도 되게.
+        #
+        # 🟢 2026-08-31 고객 최종 회신(DECISIONS §0.12.5 · Q71-C):
+        #     "검토화면에서 금액, 사업자등록번호, 적요 정도는 검색기능이
+        #      있으면 좋겠어."
+        # 셋 중 **금액만 없었으므로** 금액을 같은 칸에 더했습니다.
+        # ⛔ 고객이 말한 셋뿐입니다 — 다른 검색 조건을 함께 만들지 않았습니다.
         needle = normalize_description(query.search)
         haystacks = (
             target.purchase.description,
@@ -227,8 +233,13 @@ def _keeps(target: ReviewTarget, query: ReviewQuery) -> bool:
         # 그대로 옮겨 적으면 0건이 나온다 — 그리고 0건은 "그런 거래가 없다"
         # 로 읽힌다(STEP 73 검수에서 발견).
         number = business_no_search_key(query.search)
-        matched = any(needle in normalize_description(value) for value in haystacks) or (
-            bool(number) and number in business_no_search_key(target.purchase.business_no)
+        # 금액도 같은 이유로 **보이는 그대로**(`1,000,000원`) 받는다.
+        # ⛔ 정확히 같은 금액만 찾는다 — 범위·근사 기준을 만들지 않는다.
+        money = amount_search_key(query.search)
+        matched = (
+            any(needle in normalize_description(value) for value in haystacks)
+            or (bool(number) and number in business_no_search_key(target.purchase.business_no))
+            or (money is not None and money == target.purchase.amount)
         )
         if needle and not matched:
             return False

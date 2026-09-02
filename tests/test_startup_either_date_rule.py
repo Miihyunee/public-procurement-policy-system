@@ -175,11 +175,27 @@ class TestWiring:
         startup = next(s for s in MVP_POLICY_SEEDS if s.policy_code == "STARTUP")
         assert startup.evaluation_basis == RESOLUTION_OR_CONTRACT_DATE
 
-    def test_other_policies_keep_payment_date(self) -> None:
-        """다른 정책의 판정 기준은 바뀌지 않았다."""
+    def test_the_or_rule_stays_only_on_startup(self) -> None:
+        """⛔ OR 규칙은 **창업기업에만** 붙는다 — 다른 정책으로 번지지 않았다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-31 고객 최종 회신
+            (``DECISIONS.md`` §0.12.1 · STEP 84). 일반 3개 정책이
+            ``PAYMENT_DATE`` 에서 ``RESOLUTION_DATE`` 로 바뀌었으므로,
+            "나머지는 전부 지급일" 이라는 형태로는 더 이상 적을 수 없습니다.
+            이 시험이 지키려던 것 — **창업기업 규칙이 다른 정책으로 번지지
+            않는다** — 은 그대로 두고, 기준값만 실제 확정 규칙으로 적습니다.
+        """
+        expected = {
+            "SMALL_BUSINESS": "RESOLUTION_DATE",
+            "WOMAN": "RESOLUTION_DATE",
+            "DISABLED": "RESOLUTION_DATE",
+            "GREEN": PAYMENT_DATE,
+        }
         for seed in MVP_POLICY_SEEDS:
             if seed.policy_code != "STARTUP":
-                assert seed.evaluation_basis == PAYMENT_DATE
+                assert seed.evaluation_basis != RESOLUTION_OR_CONTRACT_DATE
+                assert seed.evaluation_basis == expected[seed.policy_code]
 
     def test_new_basis_is_allowed_by_repository(self) -> None:
         assert RESOLUTION_OR_CONTRACT_DATE in ALLOWED_EVALUATION_BASIS

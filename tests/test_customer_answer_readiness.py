@@ -128,8 +128,18 @@ class TestOneAnswerSettlesOneThing:
 class TestTheMapMatchesTheCode:
     """⛔ 대응표가 틀리면 답변이 왔을 때 엉뚱한 곳을 고친다."""
 
-    def test_there_is_no_resolution_only_rule(self, rule_map: str) -> None:
-        """⭐ **없다는 사실**을 잠근다 — 있다고 착각하면 답변 반영이 어긋난다."""
+    def test_the_resolution_only_rule_now_exists(self, rule_map: str) -> None:
+        """⭐ 결의일자만 보는 규칙이 **생겼다** — 대응표도 그렇게 적혀 있는가.
+
+        .. note::
+            **기대값이 바뀐 이유** — 이 시험은 STEP 83 까지
+            ``test_there_is_no_resolution_only_rule`` 이라는 이름으로
+            *"``ResolutionDateRule`` 이 없다"* 는 **사실**을 잠그고 있었습니다.
+            2026-08-31 고객 최종 회신(``DECISIONS.md`` §0.12.1)으로 일반 3개
+            정책의 판정 기준일이 결의일자로 확정되어 STEP 84 에서 규칙을
+            신설했으므로, **없다는 사실**이 **있다는 사실**로 바뀌었습니다.
+            ⛔ 시험을 지우지 않고 기대값을 뒤집어 그대로 잠급니다.
+        """
         rules = {
             name
             for name, value in vars(date_rules).items()
@@ -138,12 +148,17 @@ class TestTheMapMatchesTheCode:
         assert "PaymentDateRule" in rules
         assert "ContractDateRule" in rules
         assert "ResolutionOrContractDateRule" in rules
-        assert "ResolutionDateRule" not in rules
-        assert "결의일자만 보는 규칙이 없다" in rule_map
+        assert "ResolutionDateRule" in rules
+        assert "STEP 84 구현 완료" in rule_map
 
-    def test_the_registry_offers_the_same_three(self) -> None:
+    def test_the_registry_offers_every_basis(self) -> None:
         registry = build_default_registry()
-        for basis in ("PAYMENT_DATE", "CONTRACT_DATE", "RESOLUTION_OR_CONTRACT_DATE"):
+        for basis in (
+            "PAYMENT_DATE",
+            "CONTRACT_DATE",
+            "RESOLUTION_DATE",
+            "RESOLUTION_OR_CONTRACT_DATE",
+        ):
             assert registry.get(basis) is not None
 
     def test_the_year_axis_allows_the_resolution_date(self) -> None:
@@ -161,6 +176,8 @@ class TestTheMapMatchesTheCode:
         assert section
         assert "결의일자 단독 판정 규칙" in section
         assert "축 ① 은 설정, 축 ② 는 코드다" in section
+        # STEP 84 에서 실제로 만들었다 — 문서가 "없음" 에 머물러 있으면 안 된다.
+        assert "`ResolutionDateRule`" in section
 
     def test_every_source_path_in_the_map_exists(self, rule_map: str) -> None:
         import re

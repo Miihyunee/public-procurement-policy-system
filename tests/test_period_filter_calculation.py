@@ -88,11 +88,24 @@ def _purchase(
     payment: date,
     company_id: int | None,
 ) -> Purchase:
+    """합성 구매 1건.
+
+    .. note::
+        ``resolution_date`` 를 **계약일과 같은 날**로 채웁니다. 2026-08-31 고객
+        확정(``DECISIONS.md`` §0.12.1)으로 일반 정책의 인증 유효기간 판정
+        기준일이 결의일자가 되었기 때문입니다 — 비워 두면 이 파일이 검증하려는
+        **기간 축(축 ①)** 이 아니라 결의일자 공란 때문에 0 이 나옵니다.
+
+        ⛔ 계산을 바꾼 것이 아니라 **합성 데이터에 빠져 있던 필드를 채운
+        것**입니다. 기간 조건은 그대로 ``payment_date`` · ``contract_date`` 로
+        시험합니다.
+    """
     return Purchase(
         business_no=business_no,
         company_name="테스트업체",
         contract_date=contract,
         payment_date=payment,
+        resolution_date=contract,
         amount=Decimal(amount),
         company_id=company_id,
     )

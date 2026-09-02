@@ -70,19 +70,25 @@ MVP_POLICY_SEEDS: tuple[PolicySeed, ...] = (
     PolicySeed(
         policy_code="SMALL_BUSINESS",
         policy_name="중소기업",
-        evaluation_basis="PAYMENT_DATE",
+        # 2026-08-31 고객 최종 회신(DECISIONS §0.12.1) — 인증 유효기간 판정
+        # 기준일은 결의일자다. ⛔ 연도 귀속 기준일과는 다른 축이다.
+        evaluation_basis="RESOLUTION_DATE",
         description="중소기업제품 우선구매",
     ),
     PolicySeed(
         policy_code="WOMAN",
         policy_name="여성기업",
-        evaluation_basis="PAYMENT_DATE",
+        # 2026-08-31 고객 최종 회신(DECISIONS §0.12.1) — 인증 유효기간 판정
+        # 기준일은 결의일자다. ⛔ 연도 귀속 기준일과는 다른 축이다.
+        evaluation_basis="RESOLUTION_DATE",
         description="여성기업제품 우선구매",
     ),
     PolicySeed(
         policy_code="DISABLED",
         policy_name="장애인기업",
-        evaluation_basis="PAYMENT_DATE",
+        # 2026-08-31 고객 최종 회신(DECISIONS §0.12.1) — 인증 유효기간 판정
+        # 기준일은 결의일자다. ⛔ 연도 귀속 기준일과는 다른 축이다.
+        evaluation_basis="RESOLUTION_DATE",
         description="장애인기업제품 우선구매",
     ),
     PolicySeed(
@@ -314,6 +320,12 @@ _UPDATED_EVALUATION_BASIS: tuple[tuple[str, str, str], ...] = (
     # 2026-08-15 PM 결정 — 결의일자가 resolution_date 라는 별도 필드로 확정되어,
     # 임시로 쓰던 PAYMENT_OR_CONTRACT_DATE(=지급일 OR 계약일)를 대체한다.
     ("STARTUP", "PAYMENT_OR_CONTRACT_DATE", "RESOLUTION_OR_CONTRACT_DATE"),
+    # 2026-08-31 고객 최종 회신(DECISIONS §0.12.1) — 중소기업·여성기업·장애인기업의
+    # 인증 유효기간 판정 기준일이 지급일에서 결의일자로 바뀌었다.
+    # ⛔ 창업기업(STARTUP)은 그대로 둔다 — 결의일자 OR 계약일자 확정이 유지된다.
+    ("SMALL_BUSINESS", "PAYMENT_DATE", "RESOLUTION_DATE"),
+    ("WOMAN", "PAYMENT_DATE", "RESOLUTION_DATE"),
+    ("DISABLED", "PAYMENT_DATE", "RESOLUTION_DATE"),
 )
 
 

@@ -26,13 +26,13 @@
 
 | 질문 | 고객 답변에 따라 영향받는 영역 | 현재 상태 | 답변 전 변경 |
 |---|---|---|---|
-| **W-1-2** (Q-A) | 인증 유효기간 판정 | 🔴 미회신 | **금지** |
-| **Q5-8** | 0원·음수 적재/계산 | 🔴 미회신 | **금지** |
-| **Q5-9** | 예산과목 공란 처리 | 🔴 미회신 | **금지** |
-| **Q71-A** | 실적 제외 원본 보존 | 🟡 설계 판단 | **금지** |
-| **Q71-B** | 자동 제외 되돌리기 | 🟡 설계 판단 | **금지** |
-| **Q71-C** | 금액 검색 | 🟡 기능 판단 | **금지** |
-| **Q71-D** | 묶음 확인 | 🟡 기능 판단 | **금지** |
+| **W-1-2** (Q-A) | 인증 유효기간 판정 | 🟢 **확정** (§0.12.1) | ✅ STEP 84 구현 |
+| **Q5-8** | 0원·음수 적재/계산 | 🔴 §0.12.16 — 답변에 없음 | **금지** |
+| **Q5-9** | 예산과목 공란 처리 | 🟢 **확정** (§0.12.10) | ✅ STEP 84 구현 |
+| **Q71-A** | 실적 제외 원본 보존 | 🟢 **확정** (§0.12.3) | 변경 없음 — 현재 구현과 같다 |
+| **Q71-B** | 자동 제외 되돌리기 | 🟢 **확정** (§0.12.4) | 변경 없음 — 현재 구현과 같다 |
+| **Q71-C** | 금액 검색 | 🟢 **확정** (§0.12.5) | ✅ STEP 84 구현 |
+| **Q71-D** | 묶음 확인 | 🟡 기능 필요만 회신 (§0.12.11) | **금지** — 묶는 기준 미확정 |
 | **W-11** (Q-B) | 인증서 조회 기준일자 | 🔴 미회신 | **금지** |
 | **W-12 · W-13** (Q-C) | 직접생산확인증명 사용 | 🔴 미회신 | **금지** |
 | **W-14** (Q-D) | 시험용 사업자등록번호 | 🔴 미회신 | **금지** |
@@ -49,7 +49,7 @@ W-1-2 와 함께 정리되어야 한다 — `UNCONFIRMED_RULES_IMPACT.md` §1.1.
 ⚠️ 상세 추적은 `UNCONFIRMED_RULES_IMPACT.md` 에 있다. 여기서는 **답이 오면
 손댈 자리**만 짧게 적는다.
 
-### 2.1 W-1-2 — 인증 유효기간 판정 기준일 🔴
+### 2.1 W-1-2 — 인증 유효기간 판정 기준일 🟢 **확정 · 구현 완료**
 
 | 항목 | 위치 |
 |---|---|
@@ -59,12 +59,30 @@ W-1-2 와 함께 정리되어야 한다 — `UNCONFIRMED_RULES_IMPACT.md` §1.1.
 | 규칙 등록 | `calculators/rules/registry.py` |
 | 분자 계산 | `calculators/procurement_achievement.py` `calculate_policy_purchase()` |
 
-⚠️ **결의일자만 보는 규칙이 없다.** 지금 있는 것은 `PaymentDateRule` ·
-`ContractDateRule` · `ResolutionOrContractDateRule` 셋뿐이라, 일반 정책을
-결의일자로 바꾸려면 **규칙을 새로 만들어야 한다.**
+✅ **2026-09-02 · STEP 84 구현 완료.**
 
-⚠️ 🟢 창업기업의 `RESOLUTION_OR_CONTRACT_DATE` 는 **이미 확정**이며 이 답변과
-무관하게 유지한다.
+STEP 83 까지 이 자리에는 *"결의일자만 보는 규칙이 없다 — 일반 정책을 결의일자로
+바꾸려면 규칙을 새로 만들어야 한다"* 고 적혀 있었다. 고객 최종 회신
+(`DECISIONS.md` §0.12.1)으로 확정되어 그대로 만들었다.
+
+| 무엇 | 어디 |
+|---|---|
+| 새 판정 규칙 | `calculators/rules/date_rules.py` `ResolutionDateRule` |
+| 새 기준값 | 〃 `RESOLUTION_DATE` |
+| 규칙 등록 | `calculators/rules/registry.py` `build_default_registry()` |
+| 허용값 | `database/policy_repository.py` `ALLOWED_EVALUATION_BASIS` |
+| seed | `database/bootstrap.py` `MVP_POLICY_SEEDS` — 중소·여성·장애인 |
+| 기존 DB 갱신 | 〃 `_UPDATED_EVALUATION_BASIS` 3행 추가(멱등) |
+
+⛔ **결의일자가 없는 행은 인정하지 않는다 — 다른 날짜로 대체하지 않는다**
+(🟢 W-15 · §0.12.8). 원본은 그대로 두고 분모에는 남으며, 담당자는
+`find_missing_resolution_date()` 목록에서 그 건을 본다.
+
+⚠️ 🟢 창업기업의 `RESOLUTION_OR_CONTRACT_DATE` 는 **이미 확정**이며 이 변경과
+무관하게 그대로 유지했다.
+
+⛔ 사회적기업 · 사회적협동조합 · 장애인표준사업장은 **정책으로 등록하지
+않았다** — 고객은 기준일만 말했다(§0.12.1).
 
 ### 2.2 Q5-8 — 0원·음수 🔴
 
@@ -81,15 +99,24 @@ W-1-2 와 함께 정리되어야 한다 — `UNCONFIRMED_RULES_IMPACT.md` §1.1.
 ⚠️ 음수 상계 규칙은 🟢 확정(§0.6.3)인데 저장소가 음수를 받지 않아 **상계
 대상이 될 행이 들어오지 못한다.** 답변이 이 어긋남을 푼다.
 
-### 2.3 Q5-9 — 예산과목 공란 🔴
+### 2.3 Q5-9 — 예산과목 공란 🟢 **확정 · 구현 완료**
 
 | 항목 | 위치 |
 |---|---|
 | 공란 허용 | `uploads/format.py` (`budget_account.required = False`) |
 | 검증 | `uploads/validation.py` |
 | 제외 판정 | `core/performance_exclusion.py` `is_excluded_budget_account()` |
+| **공란 판정** | 〃 `needs_budget_account_check()` — STEP 84 신설 |
+| **화면 안내** | 〃 `BUDGET_ACCOUNT_CHECK_NOTICE` |
+| **검토 응답** | `reviews/response.py` `PerformanceResponseModel` |
 
-⚠️ 지금은 공란이 **계산에 포함**된다. 이는 현재 구현이며 🟢 확정이 아니다.
+✅ **2026-09-02 · STEP 84.** 공란인 건에 *"예산과목 확인이 필요하다"* 는 표시를
+붙였다. 담당자가 G20 지출결의서에서 확인해 채운 뒤, **채워진 값**으로 기존 6종
+규칙이 판단한다(고객이 확정한 것은 이 **순서**다 · §0.12.10).
+
+⛔ 공란은 여전히 **계산에 포함**된다 — 자동 제외하지 않는다. ⛔ 자동 포함으로
+확정하지도 않는다. ⛔ 예산과목을 추정해 채우지 않는다. ⛔ G20 자동 연계는
+답변에 없다.
 
 ### 2.4 Q71-A — 실적 제외 건의 원본 보존 🟡
 
@@ -114,15 +141,23 @@ W-1-2 와 함께 정리되어야 한다 — `UNCONFIRMED_RULES_IMPACT.md` §1.1.
 ⚠️ 🟢 **6종 자동 제외는 확정**이다. 🟡 **되돌리지 못하게 한 것은 우리
 판단**이며, 고객이 그렇게 말한 적은 없다.
 
-### 2.6 Q71-C — 금액 검색 🟡
+### 2.6 Q71-C — 금액 검색 🟢 **확정 · 구현 완료**
 
 | 항목 | 위치 |
 |---|---|
-| 검색 조건 | `reviews/review_service.py` `_matches()` (적요·거래처명·사업자등록번호) |
+| 검색 조건 | `reviews/review_service.py` `_keeps()` (적요·거래처명·사업자등록번호·**금액**) |
+| **검색어 → 금액** | `core/amount_search.py` `amount_search_key()` — STEP 84 신설 |
 | 정렬 축 | `reviews/query.py` `SORT_KEYS` (`amount` 포함) |
 
-⚠️ 고객이 *"금액을 비교하여 확인한다"* 고 한 것은 **업무 방식**이다. ⛔ 금액
-검색 **기능 요구로 해석하지 않는다.**
+⚠️ STEP 82 까지 이 자리에는 *"고객이 금액을 비교한다고 한 것은 업무 방식이며
+기능 요구로 해석하지 않는다"* 고 적혀 있었다. 그런데
+**2026-08-31 고객이 직접 요청했다**(§0.12.5) — *"검토화면에서 금액,
+사업자등록번호, 적요 정도는 검색기능이 있으면 좋겠어."*
+
+✅ **2026-09-02 · STEP 84.** 기존 검색칸 하나에 금액을 더했다.
+
+⛔ 고객이 말한 셋뿐이다 — 새 검색 조건·새 입력칸을 만들지 않았다. ⛔ 정확히
+같은 금액만 찾는다(범위·근사 없음). ⛔ DB 변경이 없다.
 
 ### 2.7 Q71-D — 지출결의서 단위 묶음 🟡
 
@@ -274,12 +309,15 @@ DECISIONS.md 에 🟢 로 기록 (🟡 였다면 이때 🟢 이 된다)
 
 ## 6. 반영 준비 상태 (2026-08-31 · STEP 78 점검)
 
+⚠️ 아래 표는 **STEP 78 시점의 점검 결과**다. 2026-08-31 고객 최종 회신과
+STEP 84 구현으로 달라진 부분은 각 줄에 덧붙였다. ⛔ 원래 기록을 지우지 않았다.
+
 | 확인 항목 | 상태 |
 |---|---|
-| 고객 확인 요청 9문항 | 🔴 전부 미회신 |
-| 미확정 항목 13개 | 🔴 전부 유지 |
+| 고객 확인 요청 9문항 | 🔴 전부 미회신 → ✅ **2026-08-31 회신 완료**(§0.12) |
+| 미확정 항목 13개 | 🔴 전부 유지 → 🟢 10건 확정 · 🔴 3건 보류(§0.12.14~16) |
 | 이 표가 가리키는 소스 파일 | **전부 실제로 존재** (30건 대조) |
-| 결의일자 단독 판정 규칙 | **없음** — 답변이 그쪽이면 새로 만들어야 한다 |
+| 결의일자 단독 판정 규칙 | **있음** — `ResolutionDateRule` (STEP 84 신설) |
 | 연도 귀속 기준 기본값 | **없음** — 기본값을 두면 그것이 곧 확정이 된다 |
 | 실제 고객 데이터 | **없음** — `database/procurement.db` 0 bytes · 테이블 0개 |
 
@@ -297,10 +335,15 @@ DECISIONS.md 에 🟢 로 기록 (🟡 였다면 이때 🟢 이 된다)
 
 | 답변 | 먼저 깨질 시험(파수꾼) | 무엇을 지키고 있었나 |
 |---|---|---|
-| **W-1-2** 축 ② 변경 | `test_achievement_boundaries.py::TestGeneralPolicyBasisIsCurrentBehaviour` | 일반 3정책이 지급일을 본다는 **현재 동작**(확정 아님) |
+| **W-1-2** 축 ② 변경 ✅ 실제로 깨짐 | `test_achievement_boundaries.py::TestGeneralPolicyBasisIsCurrentBehaviour` | 일반 3정책이 지급일을 본다는 **현재 동작**(확정 아님) |
 | 〃 | `test_achievement_boundaries.py::TestUnconfirmedRulesAreNotImplemented` | 미확정 규칙이 구현되지 않았다는 사실 |
 | 〃 | `test_unconfirmed_rules_impact.py::TestTheDocumentMatchesTheCode` | 문서가 적은 현재 동작과 코드의 일치 |
 | 〃 | `test_customer_answer_readiness.py::TestTheMapMatchesTheCode` | 결의일자 단독 규칙이 **없다**는 사실 |
+
+✅ **STEP 84 에서 위 W-1-2 파수꾼들이 실제로 깨졌고, 기대값을 확정 규칙으로
+갱신했다.** ⛔ 지우거나 `skip` 을 붙이지 않았으며, 각 시험에 **왜 바뀌었는지**를
+적었다. `TestGeneralPolicyBasisIsCurrentBehaviour` 는
+`TestGeneralPolicyBasisIsTheResolutionDate` 로 이름이 바뀌었다(구분 B → 구분 A).
 | **Q5-8** 저장 허용 | `test_performance_exclusion.py::test_q5_8_zero_and_negative_still_rejected_at_import` | 0원·음수가 적재되지 않는다는 현재 동작 |
 | 〃 | `test_import_trace.py` · `test_import_trace_export.py` | 미적재 행 수·사유·CSV 내용 |
 | 〃 | `test_end_to_end_import_calculation.py` | 원본 = 적재 + 미적재 항등식의 건수 |

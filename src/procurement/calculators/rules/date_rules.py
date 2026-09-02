@@ -3,14 +3,22 @@ procurement.calculators.rules.date_rules
 
 기준일(지급일·계약일·결의일자)이 인증 유효기간 내에 있는지로 판정하는 규칙들.
 
-- :class:`PaymentDateRule` — ``payment_date`` 기준 (일반 정책)
+- :class:`ResolutionDateRule` — ``resolution_date`` 기준
+  (중소기업 · 여성기업 · 장애인기업 — 2026-08-31 고객 확정)
+- :class:`PaymentDateRule` — ``payment_date`` 기준
 - :class:`ContractDateRule` — ``contract_date`` 기준
 - :class:`ResolutionOrContractDateRule` — **결의일자 또는 계약일자 중 하나라도**
   유효기간에 들면 인정 (창업기업 — 2026-08-14 고객 확정)
 
-앞의 두 규칙은 "기준일이 유효기간(경계 포함) 중 하나라도 만족하는가" 라는 공통
+앞의 세 규칙은 "기준일이 유효기간(경계 포함) 중 하나라도 만족하는가" 라는 공통
 판정을 :class:`DateBasisRule` 에서 공유하고, 어떤 날짜를 기준일로 삼을지만
 각자 다르게 정의합니다.
+
+.. warning::
+    이 모듈은 **인증 유효기간 판정**(축②)만 다룹니다. **연도 귀속**(축① —
+    어느 해의 실적으로 셀지)은 ``settings.PURCHASE_PERIOD_DATE_FIELD`` 와
+    :mod:`procurement.core.period` 가 담당하는 **다른 축**이며, 이 모듈의
+    어떤 값도 연도 귀속에 쓰이지 않습니다.
 """
 
 from __future__ import annotations
@@ -26,6 +34,16 @@ PAYMENT_DATE = "PAYMENT_DATE"
 
 #: 판정 기준일 유형 — 계약일 기준
 CONTRACT_DATE = "CONTRACT_DATE"
+
+#: 판정 기준일 유형 — **결의일자** 기준.
+#:
+#: 2026-08-31 고객 최종 회신(DECISIONS §0.12.1 · §0.12.2):
+#: "중소기업 — 결의일자 / 여성기업 — 결의일자 / 장애인기업 — 결의일자",
+#: "인증서에 유효기간이 적혀 있고, 그 기간 안에 결의일자가 포함되어 있으면 돼."
+#:
+#: .. warning::
+#:     이 값은 **인증 유효기간 판정 기준일**입니다. 연도 귀속 기준일이 아닙니다.
+RESOLUTION_DATE = "RESOLUTION_DATE"
 
 #: 판정 기준일 유형 — **결의일자 또는 계약일자 중 하나라도** 유효기간에 들면
 #: 인정 (창업기업).
@@ -82,6 +100,42 @@ class ContractDateRule(DateBasisRule):
     def basis_date(self, purchase: Purchase) -> date:
         """계약일을 기준일로 반환합니다."""
         return purchase.contract_date
+
+
+class ResolutionDateRule:
+    """**결의일자**(``resolution_date``)가 인증 유효기간에 들면 인정하는 규칙.
+
+    2026-08-31 고객 최종 회신(DECISIONS §0.12.1 · §0.12.2)입니다.
+
+        중소기업 — 결의일자 / 여성기업 — 결의일자 / 장애인기업 — 결의일자
+
+        인증서에 유효기간이 적혀 있고, 그 기간 안에 결의일자가 포함되어 있으면 돼.
+
+    .. warning::
+        **결의일자가 없는 행(``resolution_date is None``)은 인정하지 않습니다.**
+        다른 날짜로 대체하지 않습니다 — 🟢 W-15 고객 확정(*"원본 데이터는
+        보존하고 별도 확인 대상으로 처리"*, DECISIONS §0.12.8)에 따라 빈 값은
+        빈 값으로 두고, 담당자가 확인하는 별도 목록
+        (:meth:`~procurement.database.purchase_repository.PurchaseRepository.find_missing_resolution_date`)
+        으로 드러냅니다. ⛔ 임의의 날짜를 넣어 계산하지 않습니다.
+
+    .. note::
+        :class:`DateBasisRule` 은 기준일이 **반드시 있는** 구조라 상속하지
+        않습니다. ``resolution_date`` 는 ``None`` 일 수 있으므로 ``matches`` 를
+        직접 구현합니다.
+    """
+
+    def matches(self, context: RuleContext) -> bool:
+        """결의일자가 유효기간(경계 포함) 중 하나라도 만족하면 ``True``.
+
+        결의일자가 없으면 ``False`` 입니다 — 다른 날짜로 대체하지 않습니다.
+        """
+        basis = context.purchase.resolution_date
+        if basis is None:
+            return False
+        return any(
+            valid_from <= basis <= valid_to for valid_from, valid_to in context.validity_ranges
+        )
 
 
 class ResolutionOrContractDateRule:

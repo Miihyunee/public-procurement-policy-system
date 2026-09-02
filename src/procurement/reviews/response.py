@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, StrictStr, field_serializer
 
 from procurement.core.description_hints import DescriptionHint, find_hints
 from procurement.core.performance_exclusion import (
+    BUDGET_ACCOUNT_CHECK_NOTICE,
     EXCLUDED,
     EXCLUDED_BUDGET_ACCOUNTS,
     EXCLUSION_REASON_LABELS,
@@ -42,6 +43,7 @@ from procurement.core.performance_exclusion import (
     SHORT_TERM_VEHICLE_NOTICE,
     exclusion_reason_label,
     is_excluded_budget_account,
+    needs_budget_account_check,
 )
 from procurement.core.purchase_type import PURCHASE_TYPE_LABELS
 from procurement.models.purchase import Purchase
@@ -244,6 +246,14 @@ class PerformanceResponseModel(BaseModel):
         by_budget_account_rule: **예산과목 규칙**으로 빠졌는가.
             ``true`` 면 담당자가 되돌릴 수 없습니다 — 고객이 확정한 규칙입니다.
         can_reopen: 담당자가 실적 제외를 되돌릴 수 있는가.
+        budget_account_check_required: **예산과목이 비어 있어 확인이 필요한가**
+            (🟢 2026-08-31 · ``DECISIONS.md`` §0.12.10). ⛔ 제외 사유가
+            아닙니다 — ``status`` 는 그대로 ``INCLUDED`` 이며, 시스템은
+            *"확인이 필요하다"* 를 알릴 뿐입니다.
+
+            ⚠️ 기존 화면이 이 필드를 몰라도 동작하도록 **기본값을 둡니다**.
+        budget_account_check_notice: 위가 ``true`` 일 때 화면에 보여 줄 안내.
+            아니면 ``null``. ⛔ 판정 기준이 아니라 사람에게 하는 안내입니다.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -256,6 +266,8 @@ class PerformanceResponseModel(BaseModel):
     excluded_at: datetime | None
     by_budget_account_rule: bool
     can_reopen: bool
+    budget_account_check_required: bool = False
+    budget_account_check_notice: str | None = None
 
     @classmethod
     def from_target(cls, review: PurchaseReview, purchase: Purchase) -> PerformanceResponseModel:
@@ -278,7 +290,15 @@ class PerformanceResponseModel(BaseModel):
                 excluded_at=None,
                 by_budget_account_rule=True,
                 can_reopen=False,
+                # 6종 중 하나가 적혀 있으므로 공란일 수 없다.
+                budget_account_check_required=False,
+                budget_account_check_notice=None,
             )
+
+        # 🟢 §0.12.10 — 예산과목이 비어 있으면 **확인이 필요하다고 알린다.**
+        # ⛔ 그것뿐이다. 상태를 바꾸지 않는다(자동 제외도, 자동 포함 확정도
+        #    하지 않는다). 담당자가 G20 에서 확인해 채운 뒤 6종 규칙이 판단한다.
+        needs_check = needs_budget_account_check(purchase.budget_account)
 
         status = EXCLUDED if by_reviewer else INCLUDED
         return cls(
@@ -290,6 +310,8 @@ class PerformanceResponseModel(BaseModel):
             excluded_at=review.excluded_at if by_reviewer else None,
             by_budget_account_rule=False,
             can_reopen=by_reviewer,
+            budget_account_check_required=needs_check,
+            budget_account_check_notice=BUDGET_ACCOUNT_CHECK_NOTICE if needs_check else None,
         )
 
 
