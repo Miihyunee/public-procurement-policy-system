@@ -409,6 +409,49 @@ class TestBoundaries:
 
 
 # ======================================================================
+# STEP 104 §20  인증기간 경계가 **유형별 경로에서도** 지켜지는가
+# ======================================================================
+class TestCertificationWindowBoundaries:
+    """경계는 포함이다 — ``valid_from <= 결의일자 <= valid_to``.
+
+    이 규칙은 이미 확정되어 있고 규칙 계층에 시험이 있다. 여기서 다시 보는
+    까닭은 STEP 103 이 만든 **유형별 경로**가 그 규칙을 그대로 타는지가
+    새로 생긴 면이기 때문이다. 분모는 유형으로 좁히고 분자는 유형 + 인증기간
+    둘 다로 좁히므로, 한쪽만 어긋나도 비율이 조용히 틀린다.
+    """
+
+    @pytest.fixture
+    def bounded(self, db_path: Path) -> Path:
+        """인증 유효기간이 2026-03-01 ~ 2026-03-31 인 여성기업 하나."""
+        main(["targets", "--year", "2026", "--db", str(db_path)])
+        _certify(
+            db_path,
+            "WOMAN",
+            valid_from=date(2026, 3, 1),
+            valid_to=date(2026, 3, 31),
+        )
+        for amount, day in (
+            ("100000", date(2026, 3, 1)),  # 시작일 당일
+            ("200000", date(2026, 3, 31)),  # 종료일 당일
+            ("400000", date(2026, 4, 1)),  # 종료일 다음날
+        ):
+            _spend(db_path, _WOMAN_BNO, amount, CONSTRUCTION, resolution_date=day)
+        return db_path
+
+    def test_the_first_and_last_day_count(self, bounded: Path) -> None:
+        """시작일 10만 + 종료일 20만 = 30만. ⛔ 다음날 40만은 들어오지 않는다."""
+        assert _scoped(_woman_item(bounded))[CONSTRUCTION]["purchase_amount"] == "300000"
+
+    def test_the_denominator_keeps_every_confirmed_row(self, bounded: Path) -> None:
+        """⭐ 분모는 인증기간과 무관하다 — 공사로 확정된 3건 전부(70만).
+
+        인증기간이 분모까지 좁히면 «여성기업이 아닌 공사 구매» 가 분모에서
+        사라져 비율이 실제보다 높게 나온다.
+        """
+        assert _scoped(_woman_item(bounded))[CONSTRUCTION]["total_purchase_amount"] == "700000"
+
+
+# ======================================================================
 # §7  분모가 0 일 때
 # ======================================================================
 class TestZeroDenominator:
@@ -433,6 +476,49 @@ class TestZeroDenominator:
         _spend(db_path, _WOMAN_BNO, "1000000", SERVICE)
 
         assert _scoped(_woman_item(db_path))[SERVICE]["achievement_rate"] == "2000.00"
+
+
+# ======================================================================
+# STEP 104 §17  화면이 세 결과를 **잃지 않는가**
+# ======================================================================
+class TestTheScreenShowsAllThree:
+    """⛔ 공사 3% 가 화면에서 사라지면 안 된다.
+
+    서버가 세 결과를 내보내도 화면이 그리지 않으면 담당자에게는 없는 것과
+    같다. STEP 104 §17 에서 실제로 그 상태였고, 이 시험이 그 회귀를 막는다.
+    """
+
+    @pytest.fixture
+    def page(self, db_path: Path) -> str:
+        html: str = TestClient(create_app(db_path)).get("/").text
+        return html
+
+    def test_the_dashboard_draws_the_scoped_table(self, page: str) -> None:
+        """정책 카드가 ``scoped_achievements`` 를 그린다."""
+        assert "function scopedTable" in page
+        assert "item.scoped_achievements" in page
+        assert "구매유형별 달성률" in page
+
+    def test_the_scoped_table_shows_target_and_rate(self, page: str) -> None:
+        """유형마다 **목표와 달성률을 함께** 적는다 — 목표가 빠지면 3% 가 사라진다."""
+        table = page.split("function scopedTable")[1].split("function policyCard")[0]
+
+        assert "scoped.target_rate" in table
+        assert "scoped.achievement_rate" in table
+        assert "scoped.purchase_amount" in table
+        assert "scoped.scope_label" in table
+
+    def test_an_uncalculated_type_shows_its_status_not_zero(self, page: str) -> None:
+        """⛔ 분모를 못 구한 유형에 0% 를 적지 않는다 — 상태를 적는다."""
+        table = page.split("function scopedTable")[1].split("function policyCard")[0]
+
+        assert "scoped.achievement_rate === null" in table
+        assert "scoped.status_label" in table
+
+    def test_the_target_screen_still_shows_all_three(self, page: str) -> None:
+        """목표율 화면도 세 값을 모두 보여 준다(STEP 103 §13)."""
+        assert "ptScopedRow" in page
+        assert "item.scoped_targets" in page
 
 
 # ======================================================================

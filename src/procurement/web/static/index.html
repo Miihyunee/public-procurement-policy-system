@@ -409,6 +409,12 @@
     background: var(--chip-bg); border: 1px solid var(--line); color: var(--muted);
   }
   .chip-ready { color: var(--accent); border-color: var(--accent); }
+  /* 구매유형별 달성률 표 (여성기업) — 정책 카드 안에 들어간다. */
+  .scoped { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .scoped-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .scoped .kv th { font-weight: 500; white-space: nowrap; }
+  .scoped .kv td { text-align: right; }
+
   .policy-value { font-size: 25px; font-weight: 700; letter-spacing: -.02em; margin-top: 10px; }
   .policy-state { font-size: 12px; margin-top: 1px; }
   .st-NORMAL { color: var(--normal); }
@@ -1249,6 +1255,47 @@
     text(el("status-note"), note);
   }
 
+  /**
+   * 구매유형별 달성 결과 표 (여성기업).
+   *
+   * ⛔ 숫자를 새로 만들지 않는다 — 서버가 준 값을 그대로 적는다.
+   * 분모를 구하지 못한 유형(담당자가 그 유형으로 확정한 구매가 아직 없는
+   * 경우)은 달성률 자리에 "계산 보류" 라고 적는다. 0% 가 아니다.
+   */
+  function scopedTable(items) {
+    var wrap = make("div", "scoped");
+    wrap.appendChild(make("div", "scoped-title", "구매유형별 달성률"));
+
+    var table = document.createElement("table");
+    table.className = "kv";
+    var head = document.createElement("tr");
+    ["유형", "목표", "실적", "유형 전체", "달성률"].forEach(function (label) {
+      head.appendChild(make("th", null, label));
+    });
+    table.appendChild(head);
+
+    items.forEach(function (scoped) {
+      var tr = document.createElement("tr");
+      tr.appendChild(make("th", null, scoped.scope_label));
+      tr.appendChild(make("td", null, scoped.target_rate + "%"));
+      tr.appendChild(make("td", null, numberFormat(scoped.purchase_amount) + " 원"));
+      tr.appendChild(make("td", null, numberFormat(scoped.total_purchase_amount) + " 원"));
+
+      var rate = make("td", null,
+        scoped.achievement_rate === null
+          ? scoped.status_label
+          : scoped.achievement_rate + "%");
+      if (scoped.achievement_rate !== null) {
+        rate.style.color = levelColor(levelOf(scoped.achievement_rate));
+      }
+      tr.appendChild(rate);
+      table.appendChild(tr);
+    });
+
+    wrap.appendChild(table);
+    return wrap;
+  }
+
   // ------------------------------------------------------------ 정책 카드
   function policyCard(item, display) {
     var card = make("div", "policy");
@@ -1301,6 +1348,13 @@
       dl.appendChild(make("dd", null, pair[1]));
     });
     card.appendChild(dl);
+
+    // 달성률이 **여럿**인 정책(여성기업: 공사 3% · 용역 5% · 물품 5%)은
+    // 위의 한 줄로 표현할 수 없다. 유형마다 목표·실적·달성률을 따로 적는다.
+    // ⛔ 이걸 그리지 않으면 서버가 낸 세 결과가 화면에서 사라진다.
+    if (item.scoped_achievements && item.scoped_achievements.length > 0) {
+      card.appendChild(scopedTable(item.scoped_achievements));
+    }
 
     var reason = "";
     if (onHold) { reason = display.note; }
