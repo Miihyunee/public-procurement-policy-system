@@ -186,6 +186,7 @@ class DashboardDataService:
         }
 
         registered = self._registered_policy_ids()
+        on_hold = self._on_hold_policy_ids(period)
 
         summaries: list[PolicySummary] = []
         for policy in policies:
@@ -196,8 +197,16 @@ class DashboardDataService:
                 continue
             result = results.get(policy.policy_id)
             if result is None:
-                # 목표율 미설정 — 실적은 세고 달성률만 비운다(§13).
-                summaries.append(self._to_unset_summary(policy, total_amount, period))
+                # 목표가 저장돼 있는데 계산기에 오지 않았다면, 분모를 못 구하는
+                # 것이다 → **계산 보류**. ⛔ "목표율 미설정" 이라고 말하면 거짓이다.
+                status = (
+                    DashboardStatus.CALCULATION_ON_HOLD
+                    if policy.policy_id in on_hold
+                    else DashboardStatus.TARGET_RATE_NOT_SET
+                )
+                summaries.append(
+                    self._to_uncalculated_summary(policy, total_amount, period, status)
+                )
             else:
                 summaries.append(self._to_policy_summary(result, target_rates[policy.policy_id]))
 
@@ -371,19 +380,38 @@ class DashboardDataService:
             status=DashboardStatus.COMPANY_DATA_NOT_REGISTERED,
         )
 
-    def _to_unset_summary(
-        self, policy: Policy, total_amount: Decimal, period: PeriodFilter | None = None
+    def _on_hold_policy_ids(self, period: PeriodFilter | None) -> set[int]:
+        """목표는 저장돼 있으나 **분모를 구할 수 없는** 정책 ID(STEP 99 §1).
+
+        여성기업(구매유형별)과 자활용사촌(생산가능품목)이 여기에 해당합니다.
+        목표비율 저장소가 없거나 대상 연도를 모르면 빈 집합입니다.
+        """
+        if self._policy_target_repository is None or period is None:
+            return set()
+        return self._policy_target_repository.on_hold_policy_ids(period.start.year)
+
+    def _to_uncalculated_summary(
+        self,
+        policy: Policy,
+        total_amount: Decimal,
+        period: PeriodFilter | None,
+        status: DashboardStatus,
     ) -> PolicySummary:
-        """목표율이 없는 정책의 요약을 만듭니다.
+        """달성률을 내지 못한 정책의 요약을 만듭니다.
 
         ⚠️ **STEP 97 §13 — 실적과 구매비율은 보여 줍니다.** 기업정보가 등록되어
-        있으면 누가 해당하는지 알 수 있으므로 **실적은 셀 수 있습니다.** 목표가
-        없어서 못 내는 것은 **달성률뿐**입니다.
+        있으면 누가 해당하는지 알 수 있으므로 **실적은 셀 수 있습니다.** 못 내는
+        것은 **달성률뿐**입니다.
 
         ========================  ============================================
         기업정보 미등록(조회불가)    실적도 모른다 → 전부 ``None``
-        목표율 미설정              실적은 안다 → 금액은 채우고 달성률만 ``None``
+        목표율 미설정              목표가 없다 → 금액은 채우고 달성률만 ``None``
+        계산 보류                  목표는 있으나 **분모**를 못 구한다 → 위와 같음
         ========================  ============================================
+
+        ⭐ 뒤의 두 가지는 화면에 같은 숫자를 보여 주지만 **뜻이 다릅니다.** 하나는
+        "목표를 아직 못 받았다", 다른 하나는 "목표는 받았는데 잴 기준이 없다"
+        입니다. 그래서 상태를 호출부에서 받아 그대로 씁니다.
 
         ⛔ 달성률·부족률은 ``None`` 으로 두어 ``0`` 과 구분합니다.
         """
@@ -398,7 +426,7 @@ class DashboardDataService:
             target_rate=None,
             achievement_rate=None,
             shortage_rate=None,
-            status=DashboardStatus.TARGET_RATE_NOT_SET,
+            status=status,
         )
 
     @staticmethod

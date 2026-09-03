@@ -1,46 +1,53 @@
 """
 procurement.policy.confirmed_targets
 
-고객이 확정한 **정책별 목표비율**(2026-09-03 · STEP 98 §2)을 한곳에 적어 둡니다.
+고객이 확정한 **정책별 목표비율**(2026-09-03 · STEP 98 §2 · STEP 99 §1)을 한곳에
+적어 둡니다.
 
-이 모듈은 계산하지 않습니다. 확정된 값이 무엇이고, 그중 **어떤 것이 지금 구조로
-저장 가능한지**를 구분해 둘 뿐입니다. 값을 쓰는 곳은
+이 모듈은 계산하지 않습니다. 확정된 값이 무엇이고, 각 값을 **무엇으로 나누어
+재는지**를 적어 둘 뿐입니다. 값을 쓰는 곳은
 :mod:`procurement.database.policy_target_repository` 하나입니다.
 
-왜 나누어 적는가
-================
+목표비율은 숫자 하나가 아니다
+=============================
 목표비율은 숫자 하나로 보이지만 실제로는 **두 가지**를 담고 있습니다.
 
 1. 비율 자체 (예: 50%)
 2. 그 비율을 재는 **분모** (예: 총 구매금액)
 
-현재 저장 구조 ``PolicyTarget(year, policy_id, target_rate)`` 는 ①만 담고,
-계산기는 분모로 **언제나 기관 전체 구매금액**을 씁니다
-(:meth:`~procurement.calculators.ProcurementAchievementCalculator.calculate_total_purchase`).
+========================  ==========  ============================
+정책                      목표비율    분모(scope)
+========================  ==========  ============================
+중소기업                  50%         총 구매금액
+창업기업                  3.4%        총 구매금액
+사회적기업                3%          총 구매금액
+사회적협동조합            0.1%        총 구매금액
+장애인기업                1%          총 구매금액
+장애인표준사업장          0.8%        총 구매금액
+여성기업                  3%          **공사** 구매금액
+여성기업                  5%          **용역** 구매금액
+여성기업                  5%          **물품** 구매금액
+국가유공자자활용사촌      7%          **생산가능품목** 구매액
+========================  ==========  ============================
 
-따라서 분모가 전체 구매금액이 아닌 정책은 비율만 저장해서는 **틀린 달성률**이
-나옵니다. ⛔ 그래서 저장 가능한 것과 아닌 것을 갈라 놓았습니다. 숫자를 넣어 두고
-잘못된 달성률을 보여 주는 것보다, 넣지 않고 «계산 보류» 라고 말하는 편이 낫습니다.
+⭐ **여덟 정책의 목표를 모두 저장합니다**(STEP 99 §1·§5). 분모까지 함께 적으므로
+«여성기업 3%» 와 «중소기업 3%» 가 섞이지 않습니다.
 
-========================  ==========  ================================
-정책                      목표비율    분모
-========================  ==========  ================================
-중소기업                  50%         총 구매금액          → 저장 가능
-창업기업                  3.4%        총 구매금액          → 저장 가능
-사회적기업                3%          총 구매금액          → 저장 가능
-사회적협동조합            0.1%        총 구매금액          → 저장 가능
-장애인기업                1%          총 구매금액          → 저장 가능
-장애인표준사업장          0.8%        총 구매금액          → 저장 가능
-여성기업                  3% / 5%     **구매유형별** 금액  → ⛔ 저장 불가
-국가유공자자활용사촌      7%          **생산가능품목** 금액 → ⛔ 저장 불가
-========================  ==========  ================================
+⛔ 저장하는 것과 **달성률을 낼 수 있는 것**은 다릅니다. 계산기가 낼 수 있는 분모는
+기관 전체 구매금액 하나뿐이라, 여성기업과 자활용사촌은 **목표는 보이되 달성률은
+«계산 보류»** 입니다(:data:`~procurement.core.target_scope.CALCULABLE_SCOPES`).
+분모를 구하는 방법이 확정되면 그때 계산이 열립니다 — ⛔ 없는 분모를 전체
+구매금액으로 바꿔치기하지 않습니다.
 
 .. note::
-    **장애인표준사업장의 「1000분의 8%」 표기.** 작업지시서 §2 는 «1000분의 8%»
-    로, §3-1 예시는 «0.8» 로 적었습니다. 1000분의 8 = 0.8% 이므로 §3-1 예시와
-    같은 값인 ``0.8`` 로 읽었습니다. ⛔ 임의로 정한 것이 아니라 지시서 안의 두
-    표기가 가리키는 같은 값입니다. 만약 «0.008%» 를 뜻한 것이라면 고객 확인이
-    필요합니다(§0.24.2).
+    **여성기업의 「용역·물품 5%」.** 고객은 용역과 물품을 묶어 5% 라고 말했습니다.
+    시스템의 구매유형은 셋(공사 · 용역 · 물품)이므로 **용역 5% · 물품 5% 두 행**으로
+    적습니다. ⛔ 값을 바꾼 것이 아니라 같은 값을 두 유형에 각각 적은 것입니다.
+
+.. note::
+    **장애인표준사업장의 「1000분의 8」.** 1000분의 8 = 0.8% 로 읽었습니다
+    (STEP 98 §2 지시서의 §3-1 예시가 «0.8» 이었습니다). ⛔ STEP 99 §7 에 따라 이
+    값을 임의로 바꾸지 않고 그대로 두며, 고객 확인 요청은 열려 있습니다(§0.24.2).
 
 .. note::
     ⛔ 이 값들을 seed 에 넣지 않습니다. 목표비율의 정본은 **연도별**
@@ -55,100 +62,97 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
 
+from procurement.core.purchase_type import CONSTRUCTION, GOODS, SERVICE
+from procurement.core.target_scope import PRODUCIBLE_ITEMS, TOTAL, is_calculable
+
 
 @dataclass(frozen=True, kw_only=True)
 class ConfirmedTarget:
-    """고객이 확정한 목표비율 하나.
+    """고객이 확정한 목표비율 한 줄.
 
     Attributes:
         policy_code: 정책 코드.
-        target_rate: 확정된 목표비율(%). 저장 가능한 정책에만 있습니다.
-        denominator: 고객이 말한 분모를 **그대로** 옮긴 문장.
-        storable: 현재 구조로 저장해도 올바른 달성률이 나오는가.
-        blocked_reason: 저장할 수 없는 이유. 저장 가능하면 빈 문자열.
+        target_rate: 확정된 목표비율(%). ⛔ 반올림·보정하지 않은 값입니다.
+        scope: 이 비율을 재는 분모 기준
+            (:mod:`procurement.core.target_scope`).
+        note: 이 값을 그렇게 읽은 근거. 없으면 빈 문자열.
     """
 
     policy_code: str
-    target_rate: Decimal | None
-    denominator: str
-    storable: bool
-    blocked_reason: str = ""
+    target_rate: Decimal
+    scope: str = TOTAL
+    note: str = ""
+
+    @property
+    def calculable(self) -> bool:
+        """지금 이 목표로 달성률까지 낼 수 있는가."""
+        return is_calculable(self.scope)
 
 
-#: 총 구매금액을 분모로 쓰는 일반 정책 — 지금 구조로 그대로 저장됩니다.
-_TOTAL = "총 구매금액"
-
-#: 2026-09-03 고객 확정 목표비율 (STEP 98 §2). ⛔ 임의로 보정하지 않았습니다.
+#: 2026-09-03 고객 확정 목표비율. ⛔ 임의로 보정하지 않았습니다.
 CONFIRMED_TARGETS: Final[tuple[ConfirmedTarget, ...]] = (
+    ConfirmedTarget(policy_code="SMALL_BUSINESS", target_rate=Decimal("50")),
+    ConfirmedTarget(policy_code="STARTUP", target_rate=Decimal("3.4")),
+    ConfirmedTarget(policy_code="SOCIAL_ENTERPRISE", target_rate=Decimal("3")),
+    ConfirmedTarget(policy_code="SOCIAL_COOPERATIVE", target_rate=Decimal("0.1")),
+    ConfirmedTarget(policy_code="DISABLED", target_rate=Decimal("1")),
     ConfirmedTarget(
-        policy_code="SMALL_BUSINESS",
-        target_rate=Decimal("50"),
-        denominator=_TOTAL,
-        storable=True,
-    ),
-    ConfirmedTarget(
-        policy_code="STARTUP",
-        target_rate=Decimal("3.4"),
-        denominator=_TOTAL,
-        storable=True,
-    ),
-    ConfirmedTarget(
-        policy_code="SOCIAL_ENTERPRISE",
-        target_rate=Decimal("3"),
-        denominator=_TOTAL,
-        storable=True,
-    ),
-    ConfirmedTarget(
-        policy_code="SOCIAL_COOPERATIVE",
-        target_rate=Decimal("0.1"),
-        denominator=_TOTAL,
-        storable=True,
-    ),
-    ConfirmedTarget(
-        policy_code="DISABLED",
-        target_rate=Decimal("1"),
-        denominator=_TOTAL,
-        storable=True,
-    ),
-    ConfirmedTarget(
-        # 「1000분의 8%」 = 0.8% — 모듈 docstring 의 표기 주석 참조.
         policy_code="DISABLED_STANDARD_WORKPLACE",
         target_rate=Decimal("0.8"),
-        denominator=_TOTAL,
-        storable=True,
+        note="고객 표현 「1000분의 8」 = 0.8%. 의미 확인 요청 중(확인 요청서 ⑦).",
+    ),
+    # ── 여성기업: 목표가 구매유형별로 나뉜다. ⛔ 하나를 고르거나 평균 내지 않는다.
+    ConfirmedTarget(
+        policy_code="WOMAN",
+        target_rate=Decimal("3"),
+        scope=CONSTRUCTION,
+        note="공사 3%.",
     ),
     ConfirmedTarget(
         policy_code="WOMAN",
-        target_rate=None,
-        denominator="구매유형별 총 구매금액 (공사 3% / 용역·물품 5%)",
-        storable=False,
-        blocked_reason=(
-            "목표가 구매유형별로 **둘**이라 단일 target_rate 로 담을 수 없고, "
-            "분모도 전체 구매금액이 아니라 구매유형별 금액입니다. "
-            "⛔ 한쪽만 저장하면 나머지 유형의 달성률이 틀립니다."
-        ),
+        target_rate=Decimal("5"),
+        scope=SERVICE,
+        note="고객 표현 「용역·물품 5%」 중 용역.",
     ),
     ConfirmedTarget(
+        policy_code="WOMAN",
+        target_rate=Decimal("5"),
+        scope=GOODS,
+        note="고객 표현 「용역·물품 5%」 중 물품.",
+    ),
+    # ── 자활용사촌: 비율은 확정, 분모는 미확보. 목표만 저장하고 달성률은 보류.
+    ConfirmedTarget(
         policy_code="SELF_SUPPORT_VILLAGE",
-        target_rate=None,
-        denominator="자활용사촌 생산가능품목 총 구매액",
-        storable=False,
-        blocked_reason=(
-            "비율 7% 자체는 담을 수 있으나 분모가 「생산가능품목 총 구매액」 이라 "
-            "계산기가 쓰는 전체 구매금액과 다릅니다. 저장하면 **틀린 달성률**이 "
-            "나오므로 넣지 않습니다."
-        ),
+        target_rate=Decimal("7"),
+        scope=PRODUCIBLE_ITEMS,
+        note="생산가능품목 목록·거래별 품목 정보가 없어 분모를 낼 수 없다(확인 요청서 ⑥).",
     ),
 )
 
-#: 지금 구조로 등록 가능한 목표비율 ``{정책 코드: 비율}``.
+#: 달성률까지 낼 수 있는 목표 — 분모가 기관 전체 구매금액인 것들.
+CALCULABLE_TARGETS: Final[tuple[ConfirmedTarget, ...]] = tuple(
+    target for target in CONFIRMED_TARGETS if target.calculable
+)
+
+#: 저장은 하되 **달성률은 «계산 보류»** 인 목표.
+ON_HOLD_TARGETS: Final[tuple[ConfirmedTarget, ...]] = tuple(
+    target for target in CONFIRMED_TARGETS if not target.calculable
+)
+
+#: 달성률을 낼 수 있는 목표비율 ``{정책 코드: 비율}`` — 분모가 ``TOTAL`` 인 것뿐.
 STORABLE_TARGET_RATES: Final[dict[str, Decimal]] = {
-    target.policy_code: target.target_rate
-    for target in CONFIRMED_TARGETS
-    if target.storable and target.target_rate is not None
+    target.policy_code: target.target_rate for target in CALCULABLE_TARGETS
 }
 
-#: 확정은 받았으나 지금 구조로 등록할 수 없는 정책 ``{정책 코드: 이유}``.
-BLOCKED_TARGETS: Final[dict[str, str]] = {
-    target.policy_code: target.blocked_reason for target in CONFIRMED_TARGETS if not target.storable
+#: 달성률을 낼 수 없는 정책 ``{정책 코드: 이유}``.
+ON_HOLD_REASONS: Final[dict[str, str]] = {
+    "WOMAN": (
+        "목표가 구매유형별로 나뉘어 있고(공사 3% · 용역·물품 5%), 분모도 "
+        "구매유형별 금액입니다. 지출 원본에 구매유형이 없어 담당자 확정값이 "
+        "쌓이기 전에는 분모를 낼 수 없습니다(확인 요청서 ⑤)."
+    ),
+    "SELF_SUPPORT_VILLAGE": (
+        "분모가 「생산가능품목 총 구매액」 인데 생산가능품목 목록도, 거래별 품목 "
+        "정보도 없습니다. ⛔ 전체 구매금액으로 대신하지 않습니다(확인 요청서 ⑥)."
+    ),
 }

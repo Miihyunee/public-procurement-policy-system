@@ -7,15 +7,19 @@ procurement.policy
 from __future__ import annotations
 
 from procurement.policy.confirmed_targets import (
-    BLOCKED_TARGETS,
+    CALCULABLE_TARGETS,
     CONFIRMED_TARGETS,
+    ON_HOLD_REASONS,
+    ON_HOLD_TARGETS,
     STORABLE_TARGET_RATES,
     ConfirmedTarget,
 )
 
 __all__ = [
-    "BLOCKED_TARGETS",
+    "CALCULABLE_TARGETS",
     "CONFIRMED_TARGETS",
+    "ON_HOLD_REASONS",
+    "ON_HOLD_TARGETS",
     "STORABLE_TARGET_RATES",
     "ConfirmedTarget",
 ]

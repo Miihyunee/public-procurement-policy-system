@@ -46,6 +46,33 @@ class PolicyTargetUpdateRequest(BaseModel):
     target_rate: StrictStr | None
 
 
+class ScopedTargetModel(BaseModel):
+    """분모 기준 하나에 대한 목표비율.
+
+    여성기업처럼 목표가 **여럿**인 정책을 화면이 빠짐없이 보여 주기 위한 모델입니다.
+    ⛔ 여러 목표 중 하나만 골라 보여 주면 나머지가 없는 것처럼 보입니다.
+
+    Attributes:
+        scope: 분모 기준 코드(:mod:`procurement.core.target_scope`).
+        scope_label: 분모 기준의 한글 이름(예: ``"공사"``).
+        target_rate: 목표 구매비율(%)(직렬화 시 문자열).
+        calculable: 이 목표로 **달성률까지 낼 수 있는가**. ``False`` 면 화면은
+            «계산 보류» 로 표시합니다 — 목표는 있으나 분모를 못 구한다는 뜻이며,
+            ⛔ "목표 미설정" 과 다릅니다.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    scope: str
+    scope_label: str
+    target_rate: Decimal
+    calculable: bool
+
+    @field_serializer("target_rate", when_used="always")
+    def _serialize_rate(self, value: Decimal) -> str:
+        return str(value)
+
+
 class PolicyTargetItemModel(BaseModel):
     """한 연도 · 한 정책의 목표비율 응답.
 
@@ -59,6 +86,9 @@ class PolicyTargetItemModel(BaseModel):
         target_rate_status: ``SET`` / ``NOT_SET``. ``null`` 을 0 으로 오해하지
             않도록 상태를 함께 제공합니다.
         updated_at: 목표비율 최종 수정일시. 미설정이면 ``null``.
+        scoped_targets: 이 정책에 저장된 목표비율 **전부**(분모 기준별).
+            일반 정책은 ``TOTAL`` 하나뿐이라 ``target_rate`` 와 같은 값이
+            한 건 들어 있고, 여성기업은 공사·용역·물품 세 건이 들어 있습니다.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -71,6 +101,7 @@ class PolicyTargetItemModel(BaseModel):
     target_rate: Decimal | None
     target_rate_status: str
     updated_at: datetime | None
+    scoped_targets: tuple[ScopedTargetModel, ...] = ()
 
     @field_serializer("target_rate", when_used="always")
     def _serialize_decimal(self, value: Decimal | None) -> str | None:

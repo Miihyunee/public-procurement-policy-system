@@ -143,7 +143,15 @@ class TestRepository:
         assert saved.target_rate == Decimal("80")
 
     def test_unique_constraint_exists_in_schema(self, db_path: Path) -> None:
-        """제약이 **DB 에** 있다 — 애플리케이션 코드를 우회해도 막힌다."""
+        """제약이 **DB 에** 있다 — 애플리케이션 코드를 우회해도 막힌다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-09-03 STEP 99 §2(``DECISIONS.md``
+            §0.25)로 목표비율에 **분모 기준(scope)** 축이 생겼다. 여성기업 목표가
+            «공사 3% / 용역·물품 5%» 로 둘이라 정책당 한 행으로는 담을 수 없었고,
+            ⛔ 하나를 고르거나 평균 내는 대신 키를 넓혔다. 이 시험이 지키던 것 —
+            *중복 목표가 DB 단에서 막힌다* — 은 그대로이며 키만 넓어졌다.
+        """
         import sqlite3
 
         conn = sqlite3.connect(db_path)
@@ -151,7 +159,7 @@ class TestRepository:
             0
         ]
         conn.close()
-        assert "UNIQUE (year, policy_id)" in sql
+        assert "UNIQUE (year, policy_id, scope)" in sql
 
     def test_years_do_not_interfere(self, db_path: Path, targets: PolicyTargetRepository) -> None:
         """⭐ 2026년을 바꿔도 2025년이 그대로다."""
@@ -257,7 +265,14 @@ class TestApi:
         assert names["SMALL_BUSINESS"] == "중소기업"
 
     def test_list_never_carries_a_company(self, client: TestClient) -> None:
-        """⭐ 응답 어디에도 구매처가 없다 — 축은 연도 × 정책 뿐이다."""
+        """⭐ 응답 어디에도 구매처가 없다.
+
+        .. note::
+            **기대값이 바뀐 이유** — STEP 99 §2 로 응답에 ``scoped_targets`` 가
+            더해졌다(§0.25.4). 여성기업의 세 목표를 화면이 **빠짐없이** 보려면
+            필요하다 — ⛔ 하나만 보여 주면 나머지가 없는 것처럼 보인다.
+            이 시험이 막던 것은 **구매처 축**이며 그것은 여전히 없다.
+        """
         body = client.get(f"{LIST_URL}?year=2026").json()
 
         for item in body["items"]:
@@ -272,6 +287,7 @@ class TestApi:
                 "target_rate",
                 "target_rate_status",
                 "updated_at",
+                "scoped_targets",
             }
 
     def test_year_is_required(self, client: TestClient) -> None:
@@ -620,7 +636,13 @@ class TestForbiddenThingsWereNotDone:
     """⛔ 하지 않기로 한 것들."""
 
     def test_no_company_axis_in_the_schema(self, db_path: Path) -> None:
-        """⭐ 목표비율 테이블에 구매처 축이 없다."""
+        """⭐ 목표비율 테이블에 구매처 축이 없다.
+
+        .. note::
+            **기대값이 바뀐 이유** — STEP 99 §2 로 ``scope`` 컬럼이 생겼다
+            (§0.25). 늘어난 축은 **분모 기준**이지 구매처가 아니다 — 이 시험이
+            막던 것은 그대로 막혀 있다(아래 두 assert).
+        """
         import sqlite3
 
         conn = sqlite3.connect(db_path)
@@ -631,6 +653,7 @@ class TestForbiddenThingsWereNotDone:
             "year",
             "policy_id",
             "target_rate",
+            "scope",
             "created_at",
             "updated_at",
         }

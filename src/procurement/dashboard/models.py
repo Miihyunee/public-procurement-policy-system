@@ -43,8 +43,10 @@ class DashboardStatus(Enum):
     - ``TARGET_RATE_NOT_SET`` (목표율 미설정): ``target_rate`` 가 없어 계산하지 않음
     - ``COMPANY_DATA_NOT_REGISTERED`` (조회불가): 그 정책의 **기업정보 자체가
       등록되지 않아** 해당 여부를 판단할 수 없음 (STEP 96 §8)
+    - ``CALCULATION_ON_HOLD`` (계산 보류): 목표는 **받았으나** 그 목표를 재는
+      분모를 아직 구할 수 없음 (STEP 99 §1 중요)
 
-    두 값 모두 달성률로부터 판정되지 않으며
+    세 값 모두 달성률로부터 판정되지 않으며
     (:meth:`from_achievement_rate` 는 이 값들을 반환하지 않습니다),
     **서로 다른 상태**입니다.
 
@@ -56,7 +58,16 @@ class DashboardStatus(Enum):
                               실적을 셀 수 없다.
     ``TARGET_RATE_NOT_SET``   누가 해당하는지는 알지만, **목표가 없다**.
                               실적은 셀 수 있으나 달성률을 낼 수 없다.
+    ``CALCULATION_ON_HOLD``   목표도 있고 실적도 셀 수 있으나, 그 목표를 재는
+                              **분모**를 구할 수 없다. 여성기업(구매유형별)과
+                              자활용사촌(생산가능품목)이 여기에 해당한다.
     ========================  ===================================================
+
+    .. note::
+        ⭐ ``CALCULATION_ON_HOLD`` 는 «목표율 미설정» 과 다릅니다. 목표는 고객에게
+        **받았고 저장되어 있습니다.** 못 내는 것은 분모뿐이므로, 화면이 "목표를
+        아직 안 주셨다" 고 잘못 말하지 않도록 상태를 갈라 놓았습니다.
+        ⛔ 없는 분모를 전체 구매금액으로 대신해 숫자를 만들지 않습니다.
 
     .. warning::
         ⛔ **조회불가를 "미해당" 이나 0% 로 처리하지 않습니다.** 기업정보를 받지
@@ -68,6 +79,7 @@ class DashboardStatus(Enum):
     SHORTAGE = "SHORTAGE"
     TARGET_RATE_NOT_SET = "TARGET_RATE_NOT_SET"
     COMPANY_DATA_NOT_REGISTERED = "COMPANY_DATA_NOT_REGISTERED"
+    CALCULATION_ON_HOLD = "CALCULATION_ON_HOLD"
 
     @property
     def label(self) -> str:
@@ -99,6 +111,8 @@ _STATUS_LABELS: dict[DashboardStatus, str] = {
     DashboardStatus.TARGET_RATE_NOT_SET: "목표율 미설정",
     # ⛔ "미해당" 이 아니다. 판단할 근거 자체가 없다는 뜻이다(STEP 96 §8).
     DashboardStatus.COMPANY_DATA_NOT_REGISTERED: "기업정보 미등록",
+    # ⛔ "목표율 미설정" 이 아니다. 목표는 받았고 분모를 못 구하는 것이다(STEP 99).
+    DashboardStatus.CALCULATION_ON_HOLD: "계산 보류",
 }
 
 

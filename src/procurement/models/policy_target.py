@@ -8,8 +8,14 @@ procurement.models.policy_target
     사업자등록번호가 없는 것은 빠뜨린 것이 아니라 **의도**입니다
     (``DECISIONS.md`` §0.20).
 
-    목표비율은 *"기관 전체 지출 중 이 정책의 인증기업에 지출한 금액이 차지해야
-    하는 비율"* 이며, 축은 **연도 × 정책** 둘뿐입니다.
+    목표비율은 *"어떤 지출 중 이 정책의 인증기업에 지출한 금액이 차지해야 하는
+    비율"* 이며, 축은 **연도 × 정책 × 분모 기준** 셋입니다.
+
+.. note::
+    **분모 기준(``scope``)이 왜 축인가** — 2026-09-03 확정된 목표 중 둘은 분모가
+    기관 전체 구매금액이 아닙니다. 여성기업은 구매유형별(공사 3% · 용역·물품 5%),
+    자활용사촌은 생산가능품목 구매액 기준입니다. 분모를 함께 적지 않으면
+    «여성기업 3%» 와 «중소기업 3%» 가 같은 뜻이 되어 버립니다(§0.25).
 
 .. note::
     한 거래처가 여러 정책의 인증을 가지면 그 지출금액은 **각 정책 실적에 모두**
@@ -27,6 +33,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+from procurement.core.target_scope import TOTAL
+
 
 @dataclass(kw_only=True)
 class PolicyTarget:
@@ -36,6 +44,11 @@ class PolicyTarget:
         year: 대상 회계연도. 구매의 **결의일자 연도**(``resolution_date.year``)와
             맞춥니다. ⛔ 신고기준일·계약일자·지급일자의 연도가 아닙니다.
         policy_id: 대상 정책 ID (:class:`~procurement.models.policy.Policy` 참조).
+        scope: 이 비율을 재는 **분모 기준**
+            (:mod:`procurement.core.target_scope`). 기본값 ``TOTAL`` 은 기관 전체
+            구매금액이며 기존 정책은 모두 이 값입니다. 여성기업은
+            ``CONSTRUCTION`` · ``SERVICE`` · ``GOODS`` 로 나뉘고, 자활용사촌은
+            ``PRODUCIBLE_ITEMS`` 입니다.
         target_rate: 목표 구매비율(%). ``0`` 초과 ``100`` 이하이며, 임의의 값을
             쓸 수 있습니다(예: ``Decimal("37.5")``). ⛔ 화면의 달성률 표시 구간
             (20/40/60/80/100)과는 **다른 값**이며 그 값들로 제한되지 않습니다.
@@ -47,6 +60,7 @@ class PolicyTarget:
     year: int
     policy_id: int
     target_rate: Decimal
+    scope: str = TOTAL
     policy_target_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

@@ -77,10 +77,13 @@ def _run_health(db_path: Path | None) -> int:
 def _run_targets(db_path: Path | None, year: int) -> int:
     """고객이 확정한 목표비율을 지정한 연도에 등록합니다.
 
-    ⛔ **저장 가능한 것만 등록합니다.** 여성기업(구매유형별 두 목표)과
-    국가유공자자활용사촌(분모가 생산가능품목 구매액)은 지금 구조로 담으면 틀린
-    달성률이 나오므로 넣지 않고, 왜 넣지 않았는지를 출력합니다
-    (:data:`~procurement.policy.BLOCKED_TARGETS`).
+    **여덟 정책의 목표를 모두 등록합니다**(STEP 99 §1). 목표비율은 비율과 분모
+    두 가지이므로 분모 기준(``scope``)까지 함께 저장합니다 — 여성기업은 공사 ·
+    용역 · 물품 세 행, 나머지는 한 행씩입니다.
+
+    ⛔ **저장과 계산은 다릅니다.** 여성기업(구매유형별)과 자활용사촌(생산가능품목)
+    은 분모를 낼 방법이 아직 없어 **달성률만 «계산 보류»** 입니다. 어느 목표가
+    보류인지와 그 이유를 함께 출력합니다(:data:`~procurement.policy.ON_HOLD_REASONS`).
 
     이미 등록된 값이 있으면 덮어씁니다(연도 × 정책 단위 upsert). 목표비율은
     운영자가 고치는 값이므로 **여러 번 실행해도 결과가 같습니다.**
@@ -92,9 +95,10 @@ def _run_targets(db_path: Path | None, year: int) -> int:
     Returns:
         정상은 ``0``. 정책이 등록되어 있지 않아 붙일 곳이 없으면 ``1``.
     """
+    from procurement.core.target_scope import scope_label
     from procurement.database.policy_repository import PolicyRepository
     from procurement.database.policy_target_repository import PolicyTargetRepository
-    from procurement.policy import BLOCKED_TARGETS, STORABLE_TARGET_RATES
+    from procurement.policy import CONFIRMED_TARGETS, ON_HOLD_REASONS
 
     # ⚠️ 초기화되지 않은 DB 를 그냥 읽으면 sqlite 의 "no such table" 이 그대로
     #    올라와 운영자가 무엇을 해야 할지 알 수 없습니다. ``run`` 과 같은 방식으로
@@ -113,13 +117,17 @@ def _run_targets(db_path: Path | None, year: int) -> int:
     repository = PolicyTargetRepository(db_path)
     registered: list[str] = []
     missing: list[str] = []
-    for code, rate in STORABLE_TARGET_RATES.items():
-        policy = policies.get(code)
+    for target in CONFIRMED_TARGETS:
+        policy = policies.get(target.policy_code)
         if policy is None or policy.policy_id is None:
-            missing.append(code)
+            missing.append(target.policy_code)
             continue
-        repository.upsert(year, policy.policy_id, rate)
-        registered.append(f"  {policy.policy_name} ({code}) — {rate}%")
+        repository.upsert(year, policy.policy_id, target.target_rate, target.scope)
+        mark = "" if target.calculable else "   ← 달성률 계산 보류"
+        registered.append(
+            f"  {policy.policy_name} — {target.target_rate}% "
+            f"({scope_label(target.scope)} 기준){mark}"
+        )
 
     print(f"[{year}년] 목표비율 {len(registered)}건을 등록했습니다.")
     print("\n".join(registered))
@@ -127,10 +135,10 @@ def _run_targets(db_path: Path | None, year: int) -> int:
     if missing:
         print("\n정책을 찾지 못해 건너뛴 코드: " + ", ".join(sorted(missing)))
 
-    print("\n등록하지 않은 정책 — 확정은 받았으나 지금 구조로 담을 수 없습니다:")
-    for code, reason in BLOCKED_TARGETS.items():
+    print("\n달성률을 낼 수 없는 정책 — 목표는 저장했으나 분모를 구할 수 없습니다:")
+    for code, reason in ON_HOLD_REASONS.items():
         print(f"  {code}\n    {reason}")
-    print("\n⛔ 위 두 정책은 숫자를 지어내지 않고 '계산 보류' 로 둡니다.")
+    print("\n⛔ 없는 분모를 전체 구매금액으로 대신하지 않고 '계산 보류' 로 둡니다.")
     return 0
 
 

@@ -26,13 +26,16 @@ from procurement.admin.policy_admin import PolicyNotFoundError
 from procurement.admin.policy_target_response import (
     PolicyTargetItemModel,
     PolicyTargetListResponseModel,
+    ScopedTargetModel,
     target_rate_status,
 )
+from procurement.core.target_scope import TOTAL, is_calculable, scope_label
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.policy_target_repository import (
     PolicyTargetRepository,
     validate_year,
 )
+from procurement.models.policy_target import PolicyTarget
 
 
 class PolicyTargetAdminService:
@@ -73,13 +76,22 @@ class PolicyTargetAdminService:
         """
         validate_year(year)
 
-        saved = {target.policy_id: target for target in self._targets.list_by_year(year)}
+        # ⚠️ 한 정책에 목표가 **여럿**일 수 있습니다(여성기업: 공사·용역·물품).
+        #    그래서 정책별로 모아 둡니다 — ⛔ 그중 하나만 남기면 나머지가 없는
+        #    것처럼 보입니다(STEP 99 §2 금지사항).
+        by_policy: dict[int, list[PolicyTarget]] = {}
+        for target in self._targets.list_by_year(year):
+            by_policy.setdefault(target.policy_id, []).append(target)
+
         items: list[PolicyTargetItemModel] = []
         for policy in self._policies.find_active():
             if policy.policy_id is None:  # pragma: no cover - 저장된 정책은 ID 가 있다
                 continue
-            target = saved.get(policy.policy_id)
-            rate = target.target_rate if target is not None else None
+            saved = by_policy.get(policy.policy_id, [])
+            # ``target_rate`` 는 기존 화면·API 가 읽던 값 그대로 — 기관 전체
+            # 구매금액 기준 목표입니다. 분모가 다른 목표는 여기 담지 않습니다.
+            total_target = next((t for t in saved if t.scope == TOTAL), None)
+            rate = total_target.target_rate if total_target is not None else None
             items.append(
                 PolicyTargetItemModel(
                     year=year,
@@ -89,7 +101,16 @@ class PolicyTargetAdminService:
                     is_active=policy.is_active,
                     target_rate=rate,
                     target_rate_status=target_rate_status(rate),
-                    updated_at=target.updated_at if target is not None else None,
+                    updated_at=total_target.updated_at if total_target is not None else None,
+                    scoped_targets=tuple(
+                        ScopedTargetModel(
+                            scope=target.scope,
+                            scope_label=scope_label(target.scope),
+                            target_rate=target.target_rate,
+                            calculable=is_calculable(target.scope),
+                        )
+                        for target in saved
+                    ),
                 )
             )
         return PolicyTargetListResponseModel(year=year, items=items)
@@ -147,6 +168,18 @@ class PolicyTargetAdminService:
             target_rate=saved_rate,
             target_rate_status=target_rate_status(saved_rate),
             updated_at=updated_at,
+            # 이 API 가 건드리는 것은 ``TOTAL`` 하나지만, 응답에는 그 정책에
+            # 저장된 목표를 **모두** 담습니다 — 분모가 다른 목표를 이 API 로
+            # 지웠다고 오해하지 않도록.
+            scoped_targets=tuple(
+                ScopedTargetModel(
+                    scope=target.scope,
+                    scope_label=scope_label(target.scope),
+                    target_rate=target.target_rate,
+                    calculable=is_calculable(target.scope),
+                )
+                for target in self._targets.list_for_policy(year, policy.policy_id)
+            ),
         )
 
     @staticmethod

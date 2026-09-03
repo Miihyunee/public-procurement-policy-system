@@ -4,8 +4,15 @@ STEP 98 — 고객 확정 목표비율 등록과 그 한계.
 이 파일이 지키는 것은 두 가지입니다.
 
 1. **확정된 값이 그대로 저장된다** — 반올림·보정 없이(§2, §20).
-2. **담을 수 없는 것은 담지 않는다** — 여성기업과 국가유공자자활용사촌은
-   지금 구조로 저장하면 틀린 달성률이 나오므로 넣지 않았다(§2 중요, §13, §14).
+2. **틀린 달성률을 내지 않는다** — 여성기업과 국가유공자자활용사촌은 분모를
+   구할 수 없으므로 달성률을 계산하지 않는다(§2 중요, §13, §14).
+
+⚠️ **2026-09-03 · STEP 99 로 바뀐 것.** 이 파일을 처음 쓸 때는 두 정책의 목표를
+**저장조차 하지 않았다** — 단일 ``target_rate`` 로는 담을 수 없었기 때문이다.
+STEP 99 §2 에서 목표비율에 **분모 기준(scope)** 축이 생기면서 여덟 정책의 목표를
+모두 저장할 수 있게 되었다(§0.25). 지키려던 것 — *분모 없이 달성률을 지어내지
+않는다* — 은 그대로이며, 경계가 «저장하지 않는다» 에서 «계산하지 않는다» 로
+옮겨졌다. 그 경계는 :data:`~procurement.core.target_scope.CALCULABLE_SCOPES` 다.
 
 ⛔ 실제 고객 데이터는 쓰지 않습니다. 여기의 사업자등록번호·거래처명은 전부
 합성값이며, 실데이터 검증을 대신하지 않습니다(§17).
@@ -31,8 +38,8 @@ from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Certification, Company, Purchase
 from procurement.policy import (
-    BLOCKED_TARGETS,
     CONFIRMED_TARGETS,
+    ON_HOLD_REASONS,
     STORABLE_TARGET_RATES,
 )
 
@@ -91,8 +98,8 @@ class TestTheConfirmedRatesAreRecordedVerbatim:
         assert STORABLE_TARGET_RATES["DISABLED_STANDARD_WORKPLACE"] == Decimal("0.8")
 
     def test_every_confirmed_policy_is_covered(self) -> None:
-        """8개 정책이 저장 가능/불가 어느 쪽으로든 **빠짐없이** 분류되었다."""
-        covered = set(STORABLE_TARGET_RATES) | set(BLOCKED_TARGETS)
+        """8개 정책이 계산 가능/보류 어느 쪽으로든 **빠짐없이** 분류되었다."""
+        covered = set(STORABLE_TARGET_RATES) | set(ON_HOLD_REASONS)
         active = {seed.policy_code for seed in MVP_POLICY_SEEDS if seed.is_active}
 
         assert covered == active
@@ -103,30 +110,38 @@ class TestTheConfirmedRatesAreRecordedVerbatim:
 # §2 중요 · §13 · §14  담을 수 없는 것은 담지 않았는가
 # ======================================================================
 class TestTheUnrepresentableTargetsWereNotInvented:
-    """⛔ 구조로 표현할 수 없는 목표를 억지로 숫자로 만들지 않았다."""
+    """⛔ 분모 없이 달성률을 지어내지 않았다.
+
+    .. note::
+        **기대값이 바뀐 이유** — STEP 99 §2 로 분모 기준 축이 생겨 두 정책의
+        목표도 **저장**된다(§0.25). 그래서 "저장되지 않았다" 대신 "계산에
+        쓰이지 않는다" 를 지킨다. 모듈 docstring 참조.
+    """
 
     @pytest.mark.parametrize("code", ["WOMAN", "SELF_SUPPORT_VILLAGE"])
-    def test_the_rate_is_not_stored(self, code: str) -> None:
+    def test_the_rate_never_reaches_the_calculator(self, code: str) -> None:
         assert code not in STORABLE_TARGET_RATES
-        assert code in BLOCKED_TARGETS
+        assert code in ON_HOLD_REASONS
 
     @pytest.mark.parametrize("code", ["WOMAN", "SELF_SUPPORT_VILLAGE"])
     def test_the_reason_is_written_down(self, code: str) -> None:
         """조용히 빠진 것이 아니라 **이유가 남아 있다.**"""
-        assert len(BLOCKED_TARGETS[code]) > 30
+        assert len(ON_HOLD_REASONS[code]) > 30
 
-    def test_woman_keeps_both_customer_targets_in_the_record(self) -> None:
+    def test_woman_keeps_both_customer_targets(self) -> None:
         """공사 3% · 용역·물품 5% 를 한쪽만 적고 버리지 않았다."""
-        woman = next(t for t in CONFIRMED_TARGETS if t.policy_code == "WOMAN")
-        assert "3%" in woman.denominator
-        assert "5%" in woman.denominator
-        assert woman.target_rate is None
+        woman = [t for t in CONFIRMED_TARGETS if t.policy_code == "WOMAN"]
 
-    def test_self_support_village_records_its_own_denominator(self) -> None:
+        assert {t.target_rate for t in woman} == {Decimal("3"), Decimal("5")}
+        assert all(not t.calculable for t in woman)
+
+    def test_self_support_village_keeps_its_own_denominator(self) -> None:
         """분모가 전체 구매금액이 아님을 기록했다 — 7%×전체로 계산하지 않는다."""
         village = next(t for t in CONFIRMED_TARGETS if t.policy_code == "SELF_SUPPORT_VILLAGE")
-        assert "생산가능품목" in village.denominator
-        assert village.target_rate is None
+
+        assert village.target_rate == Decimal("7")
+        assert village.scope == "PRODUCIBLE_ITEMS"
+        assert not village.calculable
 
     def test_the_calculator_still_has_only_one_denominator(self) -> None:
         """⛔ §20 — 특수 분모를 만들려고 계산기를 건드리지 않았다.
@@ -352,9 +367,10 @@ class TestTheYearComesFromTheResolutionDate:
 class TestTheRegistrationCommand:
     """``python -m procurement targets`` 의 동작."""
 
-    def test_it_registers_only_the_storable_six(self, db_path: Path) -> None:
+    def test_it_registers_every_confirmed_target(self, db_path: Path) -> None:
+        """STEP 99 §1 — 여덟 정책 10행(여성기업 3행)을 모두 등록한다."""
         assert main(["targets", "--year", "2026", "--db", str(db_path)]) == 0
-        assert PolicyTargetRepository(db_path).count() == 6
+        assert PolicyTargetRepository(db_path).count() == 10
 
     def test_running_it_twice_changes_nothing(self, db_path: Path) -> None:
         """운영자가 두 번 실행해도 값이 늘거나 흔들리지 않는다(멱등)."""
