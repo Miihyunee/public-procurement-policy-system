@@ -12,6 +12,7 @@ from procurement.models.certification import Certification
 from procurement.models.company import Company
 from procurement.models.import_batch import ImportBatch
 from procurement.models.policy import Policy
+from procurement.models.policy_company_source import PolicyCompanySource
 from procurement.models.policy_target import PolicyTarget
 from procurement.models.purchase import Purchase
 
@@ -20,6 +21,7 @@ __all__ = [
     "Company",
     "ImportBatch",
     "Policy",
+    "PolicyCompanySource",
     "PolicyTarget",
     "Purchase",
 ]

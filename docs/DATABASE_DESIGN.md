@@ -287,6 +287,28 @@
 - **값 제한 없음**: `37` · `42.5` 같은 임의의 값을 쓸 수 있다. 화면의 달성률
   표시 구간(20/40/60/80/100)은 **표시 기준**이지 입력값 제한이 아니다.
 
+## Table: policy_company_source (정책별 기업정보 등록 여부)
+
+정책의 **기업 목록을 받았는가**를 기록한다. 이 기록이 없으면 그 정책은
+**조회불가**다 — ⛔ 미해당이나 0원이 아니다(`DECISIONS.md` §0.21).
+
+| 컬럼 | 타입 | 필수 | 설명 |
+|---------|------|----------|-------------|
+| policy_company_source_id | INTEGER | Yes | 내부 고유 ID (Primary Key) |
+| policy_id | INTEGER | Yes | 정책 참조 (FK → policy) |
+| source | TEXT | Yes | `FILE` / `API`. **표시·이력용**이며 판정에 쓰지 않는다 |
+| company_count | INTEGER | Yes | 확인한 기업 수 |
+| certification_count | INTEGER | Yes | 저장한 인증 수 |
+| source_label | TEXT | No | 사용자가 알아볼 출처 표시(파일명 등) |
+| registered_at | DATETIME | Yes | 최초 등록 시각 |
+| updated_at | DATETIME | Yes | 최종 갱신 시각 |
+
+- **제약**: `UNIQUE (policy_id)` — 정책당 현재 등록 상태는 하나다.
+- **`certification_count = 0` 도 등록완료다.** 목록을 받았는데 우리 거래처가
+  한 곳도 없을 수 있고, 그것은 "모른다" 가 아니라 **"전부 미해당"** 이다.
+- **판정 근거**: 이 기록이 있거나, 그 정책의 인증이 한 건이라도 있으면 판정
+  가능하다(둘의 합집합).
+
 ### evaluation_basis 허용 값
 
 정책별 판정 기준일 유형을 데이터로 관리하여, 계산 로직(Calculator)이 정책 코드를

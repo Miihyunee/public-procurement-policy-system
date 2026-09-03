@@ -711,6 +711,39 @@
     </section>
 
     <!--
+      기업정보 등록 — **정책별로** 목록을 받는다(STEP 96 §2).
+
+      ⭐ 기업정보는 지출 원본에 들어 있지 않다. 정책마다 **별개의 기업 목록**을
+         받아, 사업자등록번호로 지출과 맞춰 본다.
+      ⛔ 정책 목록을 화면이 들고 있지 않는다. 서버(/companies/registration)가 준다.
+      ⛔ 파일 내용을 보고 정책을 추론하지 않는다 — 사용자가 고른 정책으로 저장한다.
+      ⛔ 조회(API) 선택지는 **실제로 구현된 정책에만** 나온다.
+      ⛔ 목록을 받지 못한 정책은 "미해당" 이 아니라 **조회불가**다.
+    -->
+    <div class="row" style="margin-top:16px">
+      <section class="card" style="flex:1 1 100%">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">기업정보 등록</h2>
+            <p class="card-sub">
+              정책마다 기업 목록을 받습니다. 목록을 받지 못한 정책은
+              <b>조회불가</b>이며 — 해당 기업이 없다는 뜻이 아닙니다
+            </p>
+          </div>
+          <button id="cr-reload" class="control" type="button">새로고침</button>
+        </div>
+        <div id="cr-notice" class="notice" hidden></div>
+        <div id="cr-error" class="error" hidden></div>
+        <table class="kv"><tbody id="cr-rows"></tbody></table>
+        <p class="foot-note">
+          파일은 <b>사업자등록번호 · 기업명 · 대표자명 · 유효시작일 · 유효종료일</b>
+          다섯 칸이면 됩니다. 어느 정책인지는 위에서 고른 값으로 정해지므로
+          <b>인증종류 칸은 필요하지 않습니다</b>.
+        </p>
+      </section>
+    </div>
+
+    <!--
       기업정보 확인 방식 — 파일 업로드 / 조회 두 가지를 **사용자가 고른다.**
 
       ⛔ 화면은 "어디서 가져올지" 만 고르게 한다. 가져온 뒤의 기업 매칭 ·
@@ -2708,6 +2741,189 @@
     loadPolicyTargets();
   }
 
+  // ------------------------------------------------- 기업정보 등록 (정책별)
+  //
+  // ⭐ 정책마다 **별개의 기업 목록**을 받는다. 지출 원본에는 기업정보가 없다.
+  // ⛔ 정책 목록·정책명·선택지를 화면이 들고 있지 않는다. 서버가 준다.
+  // ⛔ 파일 내용을 보고 정책을 정하지 않는다 — 사용자가 고른 정책으로 저장한다.
+  // ⛔ 목록을 받지 못한 정책은 **조회불가**다. 미해당도 0원도 아니다.
+
+  var crItems = [];        // 서버가 준 정책별 등록 현황
+  var crPaths = {};        // policy_code -> 사용자가 고른 파일 경로
+
+  function crNotice(message) {
+    var box = el("cr-notice");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  function crError(message) {
+    var box = el("cr-error");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  /** 등록 현황 한 줄. 정책명 · 상태 · 방법 선택 · 파일 선택 · 등록 버튼. */
+  function crRow(item) {
+    var tr = document.createElement("tr");
+    tr.appendChild(make("th", null, item.policy_name));
+
+    var td = document.createElement("td");
+
+    // 상태 — "미등록" 을 "미해당" 으로 읽히지 않게 문구를 그대로 쓴다.
+    var status = make("span", "upload-stat", item.status_label);
+    td.appendChild(status);
+    if (item.registered && item.certification_count !== null) {
+      td.appendChild(document.createTextNode(
+        " 인증 " + numberFormat(item.certification_count) + "건"
+        + (item.source_label ? " · " + item.source_label : "")));
+    }
+
+    var actions = make("div", "upload-actions");
+
+    // 확보 방법 — ⛔ 서버가 준 것만 만든다. 조회가 없는 정책엔 API 가 없다.
+    var select = document.createElement("select");
+    select.className = "control-input";
+    select.id = "cr-method-" + item.policy_code;
+    select.setAttribute("aria-label", item.policy_name + " 기업정보 확보 방법");
+    (item.available_methods || []).forEach(function (method) {
+      var opt = document.createElement("option");
+      opt.value = method;
+      opt.textContent = method === "FILE" ? "파일 업로드" : "조회";
+      select.appendChild(opt);
+    });
+    var methodWrap = make("span", "control");
+    methodWrap.appendChild(make("span", "control-label", "방법"));
+    methodWrap.appendChild(select);
+    actions.appendChild(methodWrap);
+
+    var pick = make("button", "control", "파일 선택");
+    pick.type = "button";
+    pick.id = "cr-pick-" + item.policy_code;
+    pick.disabled = !desktop();
+    pick.addEventListener("click", function () { crPickFile(item); });
+    actions.appendChild(pick);
+
+    var save = make("button", "control", "등록");
+    save.type = "button";
+    save.id = "cr-save-" + item.policy_code;
+    save.addEventListener("click", function () { crRegister(item); });
+    actions.appendChild(save);
+
+    var chosen = make("span", "upload-file", crPaths[item.policy_code]
+      ? "선택한 파일: " + crPaths[item.policy_code].name
+      : "선택된 파일이 없습니다.");
+    chosen.id = "cr-file-" + item.policy_code;
+    actions.appendChild(chosen);
+
+    td.appendChild(actions);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function renderCompanyRegistration(body) {
+    crItems = body.items || [];
+    var rows = el("cr-rows");
+    clear(rows);
+    if (crItems.length === 0) {
+      var tr = document.createElement("tr");
+      var td = make("td", null, "활성 정책이 없습니다.");
+      td.colSpan = 2;
+      tr.appendChild(td);
+      rows.appendChild(tr);
+      return;
+    }
+    crItems.forEach(function (item) { rows.appendChild(crRow(item)); });
+  }
+
+  function loadCompanyRegistration() {
+    crError("");
+    return fetch("/companies/registration", { headers: { "Accept": "application/json" } })
+      .then(function (res) {
+        if (!res.ok) { throw httpError(res); }
+        return res.json();
+      })
+      .then(renderCompanyRegistration)
+      .catch(function (err) {
+        crError(failureMessage(err, "기업정보 등록 현황을 불러오지 못했습니다"));
+      });
+  }
+
+  function crPickFile(item) {
+    crError("");
+    if (!desktop()) { return; }
+    window.procurementApp.selectUploadFile().then(function (res) {
+      if (!res.selected) { return; }
+      crPaths[item.policy_code] = { path: res.path, name: res.name };
+      text(el("cr-file-" + item.policy_code), "선택한 파일: " + res.name);
+    });
+  }
+
+  /**
+   * 고른 정책으로 기업정보를 등록한다.
+   *
+   * ⭐ policy_code 를 **명시해서** 보낸다. 서버는 파일 전체를 그 정책의 목록으로
+   *    저장한다 — ⛔ 파일 안에 다른 인증명이 있어도 다른 정책에 넣지 않는다.
+   */
+  function crRegister(item) {
+    crError("");
+    var method = el("cr-method-" + item.policy_code).value;
+    if (method !== "FILE") {
+      // 조회 방식은 아래 "기업정보 확인 방식" 카드에서 기준일자·사업자번호를
+      // 받아 실행한다. ⛔ 여기서 기준일자를 임의로 정하지 않는다.
+      crNotice(item.policy_name + " 은(는) 아래 '기업정보 확인 방식' 카드에서 "
+               + "조회 기준일자와 사업자등록번호를 입력해 조회해 주세요.");
+      return;
+    }
+
+    var chosen = crPaths[item.policy_code];
+    if (!chosen) {
+      crError(item.policy_name + " 의 파일을 먼저 선택해 주세요.");
+      return;
+    }
+
+    var button = el("cr-save-" + item.policy_code);
+    button.disabled = true;
+    crNotice(item.policy_name + " 기업정보를 등록하는 중입니다...");
+
+    fetch("/companies/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ file_path: chosen.path, policy_code: item.policy_code })
+    })
+      .then(function (res) {
+        return res.json().then(function (body) {
+          if (!res.ok) { throw httpError(res); }
+          return body;
+        });
+      })
+      .then(function (body) {
+        if (!body.stored) {
+          crNotice("");
+          crError(item.policy_name + " — 저장하지 않았습니다: "
+                  + (body.file_errors || []).concat(body.issues || []).slice(0, 3).join(" / "));
+          return null;
+        }
+        crNotice(item.policy_name + " 등록 완료 — 기업 "
+                 + numberFormat(body.created + body.already_exists) + "건, 인증 "
+                 + numberFormat(body.certifications) + "건.");
+        // 등록 직후 지출과 맞춰 본다(기존 rematch 재사용, ⛔ 새 매칭 없음).
+        return fetch("/purchases/rematch", { method: "POST" })
+          .then(loadCompanyRegistration)
+          .then(load);
+      })
+      .catch(function (err) {
+        crNotice("");
+        crError(failureMessage(err, item.policy_name + " 기업정보를 등록하지 못했습니다"));
+      })
+      .finally(function () { button.disabled = false; });
+  }
+
+  function initCompanyRegistration() {
+    el("cr-reload").addEventListener("click", loadCompanyRegistration);
+    loadCompanyRegistration();
+  }
+
   // ------------------------------------------------- 기업정보 확인 방식
   //
   // 사용자가 **파일 업로드 / 조회** 중 하나를 고른다.
@@ -4326,6 +4542,7 @@
   buildYearOptions();
   initMissingResolutionFold();
   initPolicyTargets();
+  initCompanyRegistration();
   initUpload();
   initCompanySource();
   initReview();

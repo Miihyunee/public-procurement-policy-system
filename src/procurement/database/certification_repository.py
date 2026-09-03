@@ -176,6 +176,18 @@ class CertificationRepository(BaseRepository):
         )
         return [self._row_to_certification(row) for row in rows]
 
+    def policy_ids_with_certifications(self) -> set[int]:
+        """인증이 **한 건이라도 있는** 정책 ID 집합.
+
+        "이 정책을 판정할 근거가 있는가" 를 묻는 데 씁니다. 인증이 저장되어
+        있다는 것은 그 정책의 기업 목록을 **어떤 경로로든 받았다**는 뜻입니다.
+
+        Returns:
+            인증을 가진 정책 ID. 비어 있으면 그 정책들은 판정할 수 없습니다.
+        """
+        rows = self.execute("SELECT DISTINCT policy_id FROM certification")
+        return {int(row["policy_id"]) for row in rows}
+
     def count(self) -> int:
         """등록된 인증 수를 반환합니다.
 

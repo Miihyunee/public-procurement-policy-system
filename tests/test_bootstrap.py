@@ -494,6 +494,7 @@ class TestDashboardAfterBootstrap:
             정책 행은 삭제하지 않았으므로 ``GET /policies`` 에는 그대로 나옵니다.
         """
         bootstrap(db_path)
+        _register_company_data(db_path)
         payload = (
             TestClient(create_app(db_path, period_date_field="payment_date"))
             .get("/dashboard/summary?year=2026")
@@ -521,6 +522,7 @@ class TestDashboardAfterBootstrap:
         assert policy is not None
         assert policy.policy_id is not None
         PolicyTargetRepository(db_path).upsert(2026, policy.policy_id, Decimal("50"))
+        _register_company_data(db_path)
         payload = (
             TestClient(create_app(db_path, period_date_field="payment_date"))
             .get("/dashboard/summary?year=2026")
@@ -580,6 +582,7 @@ class TestGreenIsOutOfScope:
     def test_green_is_absent_from_the_dashboard(self, db_path: Path) -> None:
         """⛔ 대시보드 요약에 나타나지 않는다."""
         bootstrap(db_path)
+        _register_company_data(db_path)
         payload = (
             TestClient(create_app(db_path, period_date_field="payment_date"))
             .get("/dashboard/summary?year=2026")
@@ -670,3 +673,26 @@ class TestGreenIsOutOfScope:
     def test_other_seeds_stay_active(self) -> None:
         inactive = {seed.policy_code for seed in MVP_POLICY_SEEDS if not seed.is_active}
         assert inactive == {"GREEN"}
+
+
+def _register_company_data(db_path: Path, *policy_codes: str) -> None:
+    """정책의 기업 목록을 **받았다는 사실**만 기록합니다(STEP 96 §8).
+
+    ⚠️ 기업정보를 받지 못한 정책은 이제 **조회불가**이므로 목표율 상태까지
+    가지 못합니다. 목표율 쪽을 보는 시험이라 앞단을 열어 두는 것입니다.
+    ⛔ 기업·인증을 만들지 않습니다 — 목록은 받았으나 우리 거래처가 없는 상태이며,
+    그것은 "모른다" 가 아니라 **"전부 미해당"** 입니다.
+    ⛔ 기대값은 바뀌지 않았습니다.
+    """
+    from procurement.database.policy_company_source_repository import (
+        PolicyCompanySourceRepository,
+    )
+
+    registry = PolicyCompanySourceRepository(db_path)
+    repository = PolicyRepository(db_path)
+    codes = policy_codes or tuple(policy.policy_code for policy in repository.find_active())
+    for code in codes:
+        policy = repository.find_by_policy_code(code)
+        if policy is None or policy.policy_id is None:
+            continue
+        registry.record(policy.policy_id, source="FILE", company_count=0, certification_count=0)

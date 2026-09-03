@@ -220,6 +220,24 @@ def _register_target(db_path: Path, rate: Decimal, year: int = 2026) -> None:
     PolicyTargetRepository(db_path).upsert(year, policy.policy_id, rate)
 
 
+def _register_company_data(db_path: Path, policy_code: str = "SMALL_BUSINESS") -> None:
+    """정책의 기업 목록을 **받았다는 사실**만 기록합니다(STEP 96 §8).
+
+    ⛔ 기업·인증을 만들지 않습니다 — 목록은 받았지만 우리 거래처가 한 곳도
+    없는 상태이며, 그것은 "모른다" 가 아니라 **"전부 미해당"** 입니다.
+    """
+    from procurement.database.policy_company_source_repository import (
+        PolicyCompanySourceRepository,
+    )
+
+    policy = PolicyRepository(db_path).find_by_policy_code(policy_code)
+    assert policy is not None
+    assert policy.policy_id is not None
+    PolicyCompanySourceRepository(db_path).record(
+        policy.policy_id, source="FILE", company_count=0, certification_count=0
+    )
+
+
 def _summary(client: TestClient, year: int = 2026) -> dict[str, Any]:
     body: dict[str, Any] = client.get(f"/dashboard/summary?year={year}").json()
     return body
@@ -294,9 +312,17 @@ class TestMatchingReachesTheNumerator:
     def test_unmatched_rows_are_in_the_denominator_only(
         self, client: TestClient, db_path: Path, tmp_path: Path
     ) -> None:
-        """기업정보가 없으면 **분모에만** 들어간다 — 정상 흐름이다."""
+        """기업정보가 없으면 **분모에만** 들어간다 — 정상 흐름이다.
+
+        ⚠️ **STEP 96 — 설정 보완.** 기업정보를 받지 못한 정책은 이제 **조회불가**
+        이며 금액이 ``null`` 이다(STEP 96 §8). 이 시험이 보려는 것은 "분자에
+        없다" 이므로, 목록을 **받았다는 사실**을 먼저 등록해 둔다. 그래야 0 이
+        "모른다" 가 아니라 **"미해당"** 을 뜻한다.
+        ⛔ 기대값은 바뀌지 않았다.
+        """
         _upload(client, _excel(tmp_path / "a.xlsx", ROWS_A))
         _register_target(db_path, Decimal("30"))
+        _register_company_data(db_path)
 
         small = next(
             p for p in _summary(client)["policies"] if p["policy_code"] == "SMALL_BUSINESS"
@@ -312,9 +338,14 @@ class TestMatchingReachesTheNumerator:
 
         구매가 먼저 들어오고 기업정보가 나중에 확보되는 것이 이 시스템의
         정상 흐름이다(경우 B).
+
+        ⚠️ **STEP 96 — 설정 보완.** 목록을 받았다는 사실을 먼저 기록해, 처음의
+        0 이 "모른다"(조회불가) 가 아니라 **"미해당"** 을 뜻하게 한다(§8).
+        ⛔ 기대값은 바뀌지 않았다.
         """
         _upload(client, _excel(tmp_path / "a.xlsx", ROWS_A))
         _register_target(db_path, Decimal("30"))
+        _register_company_data(db_path)
         before = next(
             p for p in _summary(client)["policies"] if p["policy_code"] == "SMALL_BUSINESS"
         )

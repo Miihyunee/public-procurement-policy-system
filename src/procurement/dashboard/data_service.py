@@ -31,6 +31,10 @@ from procurement.dashboard.models import (
     MissingResolutionDate,
     PolicySummary,
 )
+from procurement.database.certification_repository import CertificationRepository
+from procurement.database.policy_company_source_repository import (
+    PolicyCompanySourceRepository,
+)
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
@@ -53,6 +57,8 @@ class DashboardDataService:
         policy_repository: PolicyRepository | None = None,
         purchase_repository: PurchaseRepository | None = None,
         policy_target_repository: PolicyTargetRepository | None = None,
+        policy_company_source_repository: PolicyCompanySourceRepository | None = None,
+        certification_repository: CertificationRepository | None = None,
     ) -> None:
         """서비스를 초기화합니다.
 
@@ -72,11 +78,22 @@ class DashboardDataService:
                 ``Policy.target_rate`` 를 읽습니다 — 기존 호출부를 깨지 않기
                 위한 하위호환 경로이며, ⛔ 새 경로는 ``Policy.target_rate`` 를
                 읽지 않습니다.
+            policy_company_source_repository: **기업정보를 받은 적이 있는지**
+                확인할 :class:`PolicyCompanySourceRepository`. 주입하면 등록되지
+                않은 정책을 **조회불가**로 표시합니다(STEP 96 §8). 생략하면 그
+                구분을 하지 않습니다(기존 호출부 하위호환).
+            certification_repository: 인증이 있는 정책을 확인할
+                :class:`CertificationRepository`. 등록 기록이 없어도 인증이
+                이미 있으면 판정 가능한 것으로 봅니다 —
+                :meth:`_registered_policy_ids` 참고. ⛔ 계산에는 쓰이지
+                않습니다(계산은 그대로 ``calculator`` 가 합니다).
         """
         self._calculator = calculator
         self._policy_repository = policy_repository
         self._purchase_repository = purchase_repository
         self._policy_target_repository = policy_target_repository
+        self._policy_company_source_repository = policy_company_source_repository
+        self._certification_repository = certification_repository
 
     def build_summary(
         self, target_rates: dict[int, Decimal], period: PeriodFilter | None = None
@@ -164,9 +181,15 @@ class DashboardDataService:
             for result in self._calculator.calculate_all(target_rates, period)
         }
 
+        registered = self._registered_policy_ids()
+
         summaries: list[PolicySummary] = []
         for policy in policies:
             assert policy.policy_id is not None  # 위에서 필터링됨
+            if registered is not None and policy.policy_id not in registered:
+                # ⛔ 기업정보를 받은 적이 없다 → **조회불가**. 미해당도 0원도 아니다.
+                summaries.append(self._to_not_registered_summary(policy, total_amount))
+                continue
             result = results.get(policy.policy_id)
             if result is None:
                 # 목표율 미설정 — 계산기를 호출하지 않는다.
@@ -293,6 +316,57 @@ class DashboardDataService:
             achievement_rate=result.achievement_rate,
             shortage_rate=shortage_rate,
             status=status,
+        )
+
+    def _registered_policy_ids(self) -> set[int] | None:
+        """**판정할 근거가 있는** 정책 ID.
+
+        근거는 둘 중 하나면 됩니다.
+
+        1. **등록 기록이 있다** — 그 정책의 목록을 받았다.
+           목록이 비어 있었어도(우리 거래처가 한 곳도 없어도) 근거는 있습니다.
+           그것은 "모른다" 가 아니라 **"전부 미해당"** 이기 때문입니다.
+        2. **인증이 한 건이라도 있다** — 어떤 경로로든 그 정책의 기업 정보가
+           들어와 있다는 뜻입니다.
+
+        ⭐ 둘을 합치는 이유: 인증이 저장되어 있는데 등록 기록이 없다고 해서
+        "판단할 수 없다" 고 말하면 **거짓말**이 됩니다. 이미 알고 있는 것이
+        있으니까요.
+
+        Returns:
+            판정 가능한 정책 ID 집합. 저장소를 주입하지 않았으면 ``None`` 이며,
+            그 경우 조회불가 구분을 하지 않습니다(기존 호출부 하위호환).
+        """
+        if self._policy_company_source_repository is None:
+            return None
+        registered = self._policy_company_source_repository.registered_policy_ids()
+        if self._certification_repository is not None:
+            registered |= self._certification_repository.policy_ids_with_certifications()
+        return registered
+
+    @staticmethod
+    def _to_not_registered_summary(policy: Policy, total_amount: Decimal) -> PolicySummary:
+        """기업정보를 받은 적이 없는 정책의 요약을 만듭니다 — **조회불가**.
+
+        .. warning::
+            ⛔ **미해당이 아닙니다.** 어떤 사업자가 이 정책의 기업인지 모르므로
+            실적을 셀 수 없습니다. 금액·비율·달성률을 모두 ``None`` 으로 두어
+            **0 과 구분**합니다(STEP 96 §8 · §22-7·8).
+
+        ⛔ 계산기를 호출하지 않습니다 — 인증이 0건이라 0 이 나오는데, 그 0 을
+        보여주면 "해당 기업이 없다" 로 읽히기 때문입니다.
+        """
+        assert policy.policy_id is not None  # 호출부에서 보장
+        return PolicySummary(
+            policy_id=policy.policy_id,
+            policy_code=policy.policy_code,
+            policy_name=policy.policy_name,
+            purchase_amount=None,
+            total_purchase_amount=total_amount,
+            target_rate=None,
+            achievement_rate=None,
+            shortage_rate=None,
+            status=DashboardStatus.COMPANY_DATA_NOT_REGISTERED,
         )
 
     @staticmethod

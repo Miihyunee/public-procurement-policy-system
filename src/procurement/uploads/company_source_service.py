@@ -36,7 +36,10 @@ from procurement.importers.company_importer import (
     CompanyImportReport,
     CompanyRecord,
 )
-from procurement.uploads.company_format import STANDARD_COMPANY_COLUMNS
+from procurement.uploads.company_format import (
+    POLICY_SCOPED_COMPANY_COLUMNS,
+    STANDARD_COMPANY_COLUMNS,
+)
 from procurement.uploads.excel_adapter import ExcelReadError, read_standard_workbook
 from procurement.uploads.validation import (
     ValidationReport,
@@ -86,32 +89,38 @@ class CompanySourceService:
     # ------------------------------------------------------------------
     # ① 파일 방식
     # ------------------------------------------------------------------
-    def validate_file(self, file_path: str) -> ValidationReport:
+    def validate_file(self, file_path: str, *, policy_code: str | None = None) -> ValidationReport:
         """기업정보 파일을 읽어 **검증만** 합니다. ⛔ 저장하지 않습니다.
 
         Args:
             file_path: 읽을 ``.xlsx`` 경로.
+            policy_code: 사용자가 **화면에서 고른** 정책. 주면 파일에 ``인증종류``
+                칸이 없어도 되며, 그 파일 전체를 이 정책의 목록으로 봅니다
+                (STEP 96 §5). ⛔ 파일 내용을 보고 정책을 추론하지 않습니다.
 
         Returns:
             :class:`ValidationReport`. 파일을 열 수 없으면 ``file_errors`` 에
             사유가 담깁니다.
         """
+        columns = STANDARD_COMPANY_COLUMNS if policy_code is None else POLICY_SCOPED_COMPANY_COLUMNS
         try:
             workbook = read_standard_workbook(file_path)
         except ExcelReadError as error:
             return ValidationReport(file_errors=[str(error)])
 
-        header_errors = validate_headers(workbook.headers, columns=STANDARD_COMPANY_COLUMNS)
+        header_errors = validate_headers(workbook.headers, columns=columns)
         if header_errors:
             return ValidationReport(file_errors=header_errors, total_rows=workbook.row_count)
 
         return validate_rows(
             workbook.rows,
             first_row_number=workbook.first_row_number,
-            columns=STANDARD_COMPANY_COLUMNS,
+            columns=columns,
         )
 
-    def import_file(self, file_path: str) -> tuple[ValidationReport, CompanyImportReport | None]:
+    def import_file(
+        self, file_path: str, *, policy_code: str | None = None
+    ) -> tuple[ValidationReport, CompanyImportReport | None]:
         """기업정보 파일을 검증하고, **오류가 하나도 없을 때만** 저장합니다.
 
         구매 업로드와 같은 **"전부 검증 → 전부 저장"** 원칙입니다. 한 행이라도
@@ -120,11 +129,14 @@ class CompanySourceService:
 
         Args:
             file_path: 읽을 ``.xlsx`` 경로.
+            policy_code: 사용자가 **화면에서 고른** 정책. 주면 파일의 모든 행을
+                이 정책의 인증으로 저장합니다 — ⛔ 파일 안에 다른 인증명이 적혀
+                있어도 **다른 정책에 등록하지 않습니다**(STEP 96 §5).
 
         Returns:
             ``(검증 결과, 적재 결과)``. 저장하지 않았으면 적재 결과는 ``None``.
         """
-        report = self.validate_file(file_path)
+        report = self.validate_file(file_path, policy_code=policy_code)
         if not report.ok:
             return report, None
 
@@ -133,7 +145,9 @@ class CompanySourceService:
                 business_no=row.values["business_no"],
                 company_name=_text(row.values.get("company_name")),
                 representative_name=_text(row.values.get("representative_name")),
-                policy_code=_text(row.values.get("policy_code")),
+                # ⭐ 사용자가 고른 정책이 이긴다. 파일 값은 정책을 고르지 않았을
+                #    때만 쓴다(기존 통합 양식 호환).
+                policy_code=policy_code or _text(row.values.get("policy_code")),
                 valid_from=_date(row.values.get("valid_from")),
                 valid_to=_date(row.values.get("valid_to")),
                 source_row=row.row_number,

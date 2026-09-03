@@ -32,6 +32,9 @@ from procurement.dashboard.models import DashboardStatus
 from procurement.database.bootstrap import MVP_POLICY_SEEDS, bootstrap
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.policy_company_source_repository import (
+    PolicyCompanySourceRepository,
+)
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
@@ -76,6 +79,21 @@ def _summary(client: TestClient, year: int) -> dict[str, dict[str, object]]:
     return {item["policy_code"]: item for item in body["policies"]}
 
 
+def _register_company_data(db_path: Path, *policy_codes: str) -> None:
+    """정책의 기업정보를 **받았다는 사실**만 기록합니다(STEP 96 §8).
+
+    ⚠️ 이 기록이 없으면 그 정책은 조회불가이며 목표비율까지 가지 못합니다.
+    목표비율 규칙을 보려는 시험이므로 앞단을 열어 두는 것입니다.
+    ⛔ 기업·인증을 만들지 않습니다 — 목록을 받았지만 우리 거래처가 없는 상태와
+    같습니다.
+    """
+    registry = PolicyCompanySourceRepository(db_path)
+    for code in policy_codes:
+        registry.record(
+            _policy_id(db_path, code), source="FILE", company_count=0, certification_count=0
+        )
+
+
 def _seed_one_certified_purchase(db_path: Path, *, policy_codes: tuple[str, ...]) -> None:
     """한 거래처에 지출 1건과 인증을 넣습니다(2026 · 2027 두 해)."""
     company = CompanyRepository(db_path).insert(
@@ -117,6 +135,7 @@ class TestYearAndPolicyIsolation:
 
     @pytest.fixture
     def matrix(self, db_path: Path, targets: PolicyTargetRepository) -> Path:
+        _register_company_data(db_path, "WOMAN", "STARTUP")
         woman = _policy_id(db_path, "WOMAN")
         startup = _policy_id(db_path, "STARTUP")
         targets.upsert(2026, woman, Decimal("60"))
@@ -178,12 +197,18 @@ class TestLegacyColumnIsNeverUsedAsFallback:
 
     ``Policy.target_rate`` 는 하위호환으로 남아 있을 뿐이며, 신규 계산 경로가
     이 값을 **어떤 경우에도** 끌어 쓰지 않는다(DECISIONS §0.20 · 지시서 §8).
+
+    ⚠️ **STEP 96 — 설정 보완.** 기업정보를 받지 못한 정책은 이제 **조회불가**다
+    (STEP 96 §8). 이 시험들이 보려는 것은 목표비율 쪽이므로, 그 정책의 기업정보를
+    받았다는 사실을 먼저 등록해 둔다.
+    ⛔ 기대값은 바뀌지 않았다 — 목표비율 규칙을 그대로 검증한다.
     """
 
     def test_case1_year_target_wins_over_the_legacy_column(
         self, db_path: Path, client: TestClient, targets: PolicyTargetRepository
     ) -> None:
         """Case 1 — 구 컬럼 50 · 2026 목표 60 → **60** 이 이긴다."""
+        _register_company_data(db_path, "WOMAN")
         PolicyRepository(db_path).update_target_rate("WOMAN", Decimal("50"))
         targets.upsert(2026, _policy_id(db_path, "WOMAN"), Decimal("60"))
 
@@ -193,6 +218,7 @@ class TestLegacyColumnIsNeverUsedAsFallback:
 
     def test_case2_legacy_column_alone_means_unset(self, db_path: Path, client: TestClient) -> None:
         """Case 2 — 구 컬럼 50 · 연도 목표 없음 → **미설정**. ⛔ 50 을 쓰지 않는다."""
+        _register_company_data(db_path, "WOMAN")
         PolicyRepository(db_path).update_target_rate("WOMAN", Decimal("50"))
 
         item = _summary(client, 2026)["WOMAN"]
@@ -205,6 +231,7 @@ class TestLegacyColumnIsNeverUsedAsFallback:
         self, db_path: Path, client: TestClient, targets: PolicyTargetRepository
     ) -> None:
         """Case 3 — 2025 목표 50 · 2026 없음 → **미설정**. ⛔ 2025 를 끌어오지 않는다."""
+        _register_company_data(db_path, "WOMAN")
         targets.upsert(2025, _policy_id(db_path, "WOMAN"), Decimal("50"))
 
         item = _summary(client, 2026)["WOMAN"]
@@ -216,6 +243,7 @@ class TestLegacyColumnIsNeverUsedAsFallback:
         self, db_path: Path, client: TestClient, targets: PolicyTargetRepository
     ) -> None:
         """Case 4 — 2026 WOMAN 60 · STARTUP 없음 → WOMAN 만 계산, STARTUP 미설정."""
+        _register_company_data(db_path, "WOMAN", "STARTUP")
         targets.upsert(2026, _policy_id(db_path, "WOMAN"), Decimal("60"))
 
         summary = _summary(client, 2026)
@@ -241,8 +269,11 @@ class TestLegacyColumnIsNeverUsedAsFallback:
         )
         assert response.status_code == 200
 
-    def test_the_legacy_endpoint_does_not_move_the_dashboard(self, client: TestClient) -> None:
+    def test_the_legacy_endpoint_does_not_move_the_dashboard(
+        self, db_path: Path, client: TestClient
+    ) -> None:
         """⭐ 구 API 로 넣어도 **달성률은 움직이지 않는다** — 정본이 아니기 때문이다."""
+        _register_company_data(db_path, "WOMAN")
         client.put(
             "/policies/WOMAN/target-rate",
             json={"target_rate": "50"},
@@ -283,6 +314,8 @@ class TestUnsetIsNotZero:
             assert item[key] != 0
 
     def test_the_status_label_says_unset_not_zero(self, db_path: Path, client: TestClient) -> None:
+        _register_company_data(db_path, "WOMAN")
+
         item = _summary(client, 2026)["WOMAN"]
 
         assert item["status_label"] == "목표율 미설정"

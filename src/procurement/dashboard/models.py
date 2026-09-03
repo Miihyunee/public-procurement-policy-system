@@ -41,16 +41,33 @@ class DashboardStatus(Enum):
     상태를 나타내는 값이 있습니다.
 
     - ``TARGET_RATE_NOT_SET`` (목표율 미설정): ``target_rate`` 가 없어 계산하지 않음
+    - ``COMPANY_DATA_NOT_REGISTERED`` (조회불가): 그 정책의 **기업정보 자체가
+      등록되지 않아** 해당 여부를 판단할 수 없음 (STEP 96 §8)
 
-    ``TARGET_RATE_NOT_SET`` 은 달성률로부터 판정되지 않으며
-    (:meth:`from_achievement_rate` 는 이 값을 반환하지 않습니다),
-    "정책이 없음"과 "목표율이 아직 등록되지 않음"을 구분하기 위해 사용합니다.
+    두 값 모두 달성률로부터 판정되지 않으며
+    (:meth:`from_achievement_rate` 는 이 값들을 반환하지 않습니다),
+    **서로 다른 상태**입니다.
+
+    ========================  ===================================================
+    상태                       뜻
+    ========================  ===================================================
+    ``COMPANY_DATA_NOT_REGISTERED``
+                              어떤 사업자가 이 정책의 기업인지 **모른다**.
+                              실적을 셀 수 없다.
+    ``TARGET_RATE_NOT_SET``   누가 해당하는지는 알지만, **목표가 없다**.
+                              실적은 셀 수 있으나 달성률을 낼 수 없다.
+    ========================  ===================================================
+
+    .. warning::
+        ⛔ **조회불가를 "미해당" 이나 0% 로 처리하지 않습니다.** 기업정보를 받지
+        못한 것과 "해당 기업이 없다" 는 전혀 다른 사실입니다(STEP 96 §8 · §22-7·8).
     """
 
     NORMAL = "NORMAL"
     WARNING = "WARNING"
     SHORTAGE = "SHORTAGE"
     TARGET_RATE_NOT_SET = "TARGET_RATE_NOT_SET"
+    COMPANY_DATA_NOT_REGISTERED = "COMPANY_DATA_NOT_REGISTERED"
 
     @property
     def label(self) -> str:
@@ -80,6 +97,8 @@ _STATUS_LABELS: dict[DashboardStatus, str] = {
     DashboardStatus.WARNING: "주의",
     DashboardStatus.SHORTAGE: "부족",
     DashboardStatus.TARGET_RATE_NOT_SET: "목표율 미설정",
+    # ⛔ "미해당" 이 아니다. 판단할 근거 자체가 없다는 뜻이다(STEP 96 §8).
+    DashboardStatus.COMPANY_DATA_NOT_REGISTERED: "기업정보 미등록",
 }
 
 
@@ -103,7 +122,7 @@ class PolicySummary:
         achievement_rate: 목표 대비 달성률(%). 목표율 미설정이면 ``None``.
         shortage_rate: 목표 달성까지 부족한 비율(%). ``max(0, 100 - 달성률)``.
             목표율 미설정이면 ``None``.
-        status: 달성 상태(정상/주의/부족/목표율 미설정).
+        status: 달성 상태(정상/주의/부족/목표율 미설정/기업정보 미등록).
     """
 
     policy_id: int

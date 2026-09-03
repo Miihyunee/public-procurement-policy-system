@@ -21,6 +21,9 @@ from procurement.app import create_app
 from procurement.database.bootstrap import init_db
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.policy_company_source_repository import (
+    PolicyCompanySourceRepository,
+)
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
@@ -435,7 +438,13 @@ class TestImportToDashboardEndToEnd:
         assert item["status"] == "SHORTAGE"
 
     def test_rematch_updates_dashboard(self, importer: PurchaseImporter, db_path: Path) -> None:
-        """기업정보가 나중에 들어와도 재매칭 후 달성률에 반영됩니다."""
+        """기업정보가 나중에 들어와도 재매칭 후 달성률에 반영됩니다.
+
+        ⚠️ **STEP 96 — 설정 보완.** 기업정보를 받지 못한 정책은 이제 조회불가라
+        금액이 ``null`` 이다(§8). 이 시험은 "재매칭 전 0 → 후 반영" 을 보므로,
+        목록을 받았다는 사실을 먼저 기록해 0 이 **미해당**을 뜻하게 한다.
+        ⛔ 기대값은 바뀌지 않았다.
+        """
         policy = PolicyRepository(db_path).insert(
             Policy(
                 policy_code="SMALL_BUSINESS",
@@ -447,6 +456,9 @@ class TestImportToDashboardEndToEnd:
         assert policy.policy_id is not None
         # ⚠️ STEP 93 — 목표비율의 정본은 연도별 값이다(DECISIONS §0.20).
         PolicyTargetRepository(db_path).upsert(2026, policy.policy_id, Decimal("50"))
+        PolicyCompanySourceRepository(db_path).record(
+            policy.policy_id, source="FILE", company_count=0, certification_count=0
+        )
 
         # ① 구매데이터 먼저 — 기업이 없어 미매칭
         importer.import_rows(

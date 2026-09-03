@@ -388,8 +388,15 @@ class TestScenarioEUnmatchedThenRematch:
     def test_step3_rematch_links_and_dashboard_reflects(
         self, db_path: Path, importer: PurchaseImporter
     ) -> None:
-        """③ 기업·인증정보 확보 후 재매칭하면 달성률에 반영됩니다."""
+        """③ 기업·인증정보 확보 후 재매칭하면 달성률에 반영됩니다.
+
+        ⚠️ **STEP 96 — 설정 보완.** 기업정보를 받지 못한 정책은 조회불가라
+        금액이 ``null`` 이다(§8). 이 시험은 "재매칭 전 0 → 후 반영" 을 보므로,
+        목록을 받았다는 사실을 먼저 기록해 처음의 0 이 **미해당**을 뜻하게 한다.
+        ⛔ 기대값은 바뀌지 않았다.
+        """
         policy_id = _register_policy(db_path, self.POLICY)
+        _register_company_data(db_path, self.POLICY.policy_code)
         importer.import_rows(
             [
                 _purchase_row(amount="5000000"),
@@ -489,8 +496,32 @@ class TestAllPoliciesTogether:
         PolicyRepository(db_path).insert(
             Policy(policy_code="GREEN", policy_name="녹색제품", target_rate=None)
         )
+        _register_company_data(db_path, "GREEN")
         importer.import_rows([_purchase_row(amount="1000000")])
 
         item = _dashboard(db_path)["by_code"]["GREEN"]
         assert item["status"] == "TARGET_RATE_NOT_SET"
         assert item["achievement_rate"] is None
+
+
+def _register_company_data(db_path: Path, *policy_codes: str) -> None:
+    """정책의 기업 목록을 **받았다는 사실**만 기록합니다(STEP 96 §8).
+
+    ⚠️ 기업정보를 받지 못한 정책은 이제 **조회불가**이므로 목표율 상태까지
+    가지 못합니다. 목표율 쪽을 보는 시험이라 앞단을 열어 두는 것입니다.
+    ⛔ 기업·인증을 만들지 않습니다 — 목록은 받았으나 우리 거래처가 없는 상태이며,
+    그것은 "모른다" 가 아니라 **"전부 미해당"** 입니다.
+    ⛔ 기대값은 바뀌지 않았습니다.
+    """
+    from procurement.database.policy_company_source_repository import (
+        PolicyCompanySourceRepository,
+    )
+
+    registry = PolicyCompanySourceRepository(db_path)
+    repository = PolicyRepository(db_path)
+    codes = policy_codes or tuple(policy.policy_code for policy in repository.find_active())
+    for code in codes:
+        policy = repository.find_by_policy_code(code)
+        if policy is None or policy.policy_id is None:
+            continue
+        registry.record(policy.policy_id, source="FILE", company_count=0, certification_count=0)

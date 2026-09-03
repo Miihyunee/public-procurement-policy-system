@@ -39,7 +39,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, ConfigDict, Field
 
 from procurement.admin import (
+    NOT_REGISTERED,
+    REGISTERED,
     PolicyAdminService,
+    PolicyCompanySourceItemModel,
+    PolicyCompanySourceListModel,
     PolicyItemResponseModel,
     PolicyListResponseModel,
     PolicyNotFoundError,
@@ -94,6 +98,9 @@ from procurement.database.import_batch_repository import (
     ImportBatchValidationError,
 )
 from procurement.database.import_rejection_repository import ImportRejectionRepository
+from procurement.database.policy_company_source_repository import (
+    PolicyCompanySourceRepository,
+)
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
@@ -316,6 +323,9 @@ def build_dashboard_api(db_path: str | Path | None = None) -> DashboardApiServic
         purchase_repository=purchase_repo,
         # 목표비율의 정본은 **연도별** 값이다(DECISIONS §0.20).
         policy_target_repository=PolicyTargetRepository(path),
+        # 기업정보를 받지 못한 정책은 **조회불가**다(STEP 96 §8).
+        policy_company_source_repository=PolicyCompanySourceRepository(path),
+        certification_repository=certification_repo,
     )
     return DashboardApiService(data_service)
 
@@ -573,6 +583,16 @@ class CompanyUploadRequestModel(BaseModel):
         min_length=1,
         description="기업정보 .xlsx 파일의 로컬 경로",
     )
+    policy_code: str | None = Field(
+        default=None,
+        description=(
+            "사용자가 **화면에서 고른** 정책 코드. 주면 파일 전체를 이 정책의 "
+            "기업 목록으로 저장하며, 파일에 `인증종류` 칸이 없어도 됩니다. "
+            "⛔ 파일 안에 다른 인증명이 적혀 있어도 다른 정책에 등록하지 "
+            "않습니다(STEP 96 §5). 생략하면 기존 통합 양식(인증종류 포함)으로 "
+            "처리합니다."
+        ),
+    )
 
 
 class CompanySyncRequestModel(BaseModel):
@@ -776,6 +796,33 @@ def create_app(
     company_policy_repository = PolicyRepository(
         db_path if db_path is not None else settings.db_file
     )
+    company_source_registry = PolicyCompanySourceRepository(
+        db_path if db_path is not None else settings.db_file
+    )
+
+    def _record_company_source(
+        policy_code: str,
+        source: str,
+        report: CompanyImportReport,
+        *,
+        source_label: str | None = None,
+    ) -> None:
+        """정책의 기업정보를 **받았다는 사실**을 기록합니다(STEP 96 §8).
+
+        ⛔ 인증이 0건이어도 기록합니다 — 목록을 받았는데 우리 거래처가 하나도
+        없을 수 있고, 그것은 "판단할 수 없다" 가 아니라 **"전부 미해당"** 입니다.
+        """
+        policy = company_policy_repository.find_by_policy_code(policy_code)
+        if policy is None or policy.policy_id is None:
+            return
+        company_source_registry.record(
+            policy.policy_id,
+            source=source,
+            company_count=report.created_count + report.existing_count,
+            certification_count=report.certification_count,
+            source_label=source_label,
+        )
+
     thresholds = parse_thresholds(settings.DASHBOARD_ACHIEVEMENT_DISPLAY_THRESHOLDS)
     token = admin_token if admin_token is not None else settings.ADMIN_API_TOKEN
     require_admin_token = build_admin_token_guard(token)
@@ -1111,6 +1158,56 @@ def create_app(
             ],
         )
 
+    @app.get(
+        "/companies/registration",
+        response_model=PolicyCompanySourceListModel,
+        summary="정책별 기업정보 등록 현황",
+        tags=["companies"],
+    )
+    def list_company_registration() -> PolicyCompanySourceListModel:
+        """정책별로 기업정보를 받았는지, 어떤 방법으로 받을 수 있는지 반환합니다.
+
+        **활성 정책 전체**가 담깁니다. 받지 못한 정책도 빼지 않고
+        ``registered: false`` · ``status: "NOT_REGISTERED"`` 로 내려갑니다 —
+        ⛔ 그것은 **조회불가**이지 "해당 기업이 없다" 가 아닙니다(STEP 96 §8).
+
+        ``available_methods`` 는 그 정책에서 실제로 **고를 수 있는** 방법만
+        담습니다. 조회가 구현되지 않은 정책(예: 중소기업)에는 ``API`` 가 들어
+        있지 않습니다 — ⛔ 없는 선택지를 화면에 만들지 않기 위해서입니다
+        (STEP 96 §3).
+        """
+        registered = {record.policy_id: record for record in company_source_registry.find_all()}
+        # 조회가 가능한 정책 = 기존 상수가 정한 것뿐. ⛔ 임의로 넓히지 않는다.
+        api_capable = set(SOURCE_POLICY_CODES.values())
+
+        items: list[PolicyCompanySourceItemModel] = []
+        for policy in company_policy_repository.find_active():
+            if policy.policy_id is None:  # pragma: no cover - 저장된 정책은 ID 가 있다
+                continue
+            record = registered.get(policy.policy_id)
+            methods = ["FILE"]
+            if policy.policy_code in api_capable:
+                methods.append("API")
+            items.append(
+                PolicyCompanySourceItemModel(
+                    policy_id=policy.policy_id,
+                    policy_code=policy.policy_code,
+                    policy_name=policy.policy_name,
+                    registered=record is not None,
+                    status=REGISTERED if record is not None else NOT_REGISTERED,
+                    status_label="등록완료" if record is not None else "미등록",
+                    source=record.source if record is not None else None,
+                    source_label=record.source_label if record is not None else None,
+                    company_count=record.company_count if record is not None else None,
+                    certification_count=(
+                        record.certification_count if record is not None else None
+                    ),
+                    updated_at=record.updated_at if record is not None else None,
+                    available_methods=methods,
+                )
+            )
+        return PolicyCompanySourceListModel(items=items)
+
     @app.post(
         "/companies/upload/validate",
         response_model=CompanyImportResponseModel,
@@ -1126,7 +1223,11 @@ def create_app(
         하는지 먼저 보여 줍니다.
         """
         return _company_import_response(
-            "FILE", None, company_source_service.validate_file(payload.file_path)
+            "FILE",
+            None,
+            company_source_service.validate_file(
+                payload.file_path, policy_code=payload.policy_code
+            ),
         )
 
     @app.post(
@@ -1142,10 +1243,20 @@ def create_app(
 
         구매 업로드와 같은 **"전부 검증 → 전부 저장"** 원칙입니다.
 
+        ``policy_code`` 를 주면 **그 정책의 목록**으로 저장하고, 그 정책의
+        기업정보를 받았다는 사실을 기록합니다 — 그때부터 그 정책은 조회불가가
+        아니게 됩니다(STEP 96 §5 · §8).
+
         저장한 뒤 구매와 연결하려면 기존 ``POST /purchases/rematch`` 를
         호출합니다 — ⛔ 새 매칭 기능을 만들지 않았습니다.
         """
-        validation, report = company_source_service.import_file(payload.file_path)
+        validation, report = company_source_service.import_file(
+            payload.file_path, policy_code=payload.policy_code
+        )
+        if report is not None and payload.policy_code is not None:
+            _record_company_source(
+                payload.policy_code, "FILE", report, source_label=Path(payload.file_path).name
+            )
         return _company_import_response("FILE", report, validation)
 
     @app.post(
@@ -1164,11 +1275,15 @@ def create_app(
         건을 **넣지 않고** 사유를 그대로 돌려줍니다 — ⛔ 없는 값을 임의로
         채우지 않습니다.
         """
+        # 조회 출처가 어느 정책인지는 **기존 상수**가 정한다. ⛔ 추론하지 않는다.
+        api_policy_code = SOURCE_POLICY_CODES.get(payload.source)
         report = company_source_service.import_from_api(
             payload.source,
             payload.business_numbers,
             stdr_date=payload.stdr_date,
         )
+        if api_policy_code is not None:
+            _record_company_source(api_policy_code, "API", report, source_label=payload.source)
         return _company_import_response("API", report)
 
     @app.post(

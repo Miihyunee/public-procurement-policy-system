@@ -121,6 +121,24 @@ COMPANY_PENDING_COLUMNS: Final[MappingProxyType[str, str]] = MappingProxyType(
 )
 
 
+#: **정책을 사용자가 고른 뒤** 올리는 파일의 컬럼(STEP 96 §5).
+#:
+#: ``인증종류`` 가 **빠져 있습니다.** 어느 정책의 목록인지는 화면에서 사용자가
+#: 고른 값으로 정해지며, ⛔ 파일 내용을 보고 시스템이 추론하지 않습니다.
+#:
+#: 정책별 원본(여성기업 명단 · 자활용사촌 명단 …)에는 "인증종류" 같은 칸이
+#: 없는 것이 보통입니다. 그 칸을 요구하면 사용자가 원본을 고쳐야 하고, 고치는
+#: 순간 원본이 아니게 됩니다.
+POLICY_SCOPED_COMPANY_COLUMNS: Final[tuple[StandardColumn, ...]] = COMPANY_COLUMNS + tuple(
+    column for column in CERTIFICATION_COLUMNS if column.key != "policy_code"
+)
+
+#: 정책을 고르고 올릴 때 반드시 있어야 하는 머리글.
+POLICY_SCOPED_REQUIRED_HEADERS: Final[tuple[str, ...]] = tuple(
+    column.header for column in POLICY_SCOPED_COMPANY_COLUMNS
+)
+
+
 def company_header_row() -> tuple[str, ...]:
     """엑셀 1행에 넣을 머리글을 순서대로 반환합니다."""
     return tuple(column.header for column in STANDARD_COMPANY_COLUMNS)
@@ -129,3 +147,13 @@ def company_header_row() -> tuple[str, ...]:
 def company_example_row() -> tuple[str, ...]:
     """양식에 넣을 입력 예시 한 줄을 반환합니다."""
     return tuple(column.example for column in STANDARD_COMPANY_COLUMNS)
+
+
+def policy_scoped_header_row() -> tuple[str, ...]:
+    """정책을 고르고 올릴 때의 머리글(⛔ 인증종류 없음)."""
+    return tuple(column.header for column in POLICY_SCOPED_COMPANY_COLUMNS)
+
+
+def policy_scoped_example_row() -> tuple[str, ...]:
+    """정책을 고르고 올릴 때의 입력 예시 한 줄."""
+    return tuple(column.example for column in POLICY_SCOPED_COMPANY_COLUMNS)

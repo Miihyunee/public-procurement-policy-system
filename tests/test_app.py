@@ -18,6 +18,9 @@ from procurement.api import DashboardApiService
 from procurement.app import build_dashboard_api, create_app
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.policy_company_source_repository import (
+    PolicyCompanySourceRepository,
+)
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
@@ -36,6 +39,9 @@ def db_path(tmp_path: Path) -> Path:
     #    ⛔ 저장소가 테이블 없음을 조용히 넘기게 만들지 않았다 — 초기화되지
     #    않은 DB 는 크게 실패하는 편이 낫다.
     PolicyTargetRepository(path).create_table()
+    # ⚠️ STEP 96 — 정책별 기업정보 등록 기록(§8). 이 fixture 는 init_db 를
+    #    쓰지 않고 테이블을 직접 만들므로 새 테이블도 여기에 더한다.
+    PolicyCompanySourceRepository(path).create_table()
     return path
 
 
@@ -63,6 +69,12 @@ def _seed(db_path: Path, target_rate: Decimal | None) -> None:
     #    ⛔ 기대값은 바뀌지 않았다 — 값을 **어디에 두는지**만 바뀌었다.
     if target_rate is not None:
         PolicyTargetRepository(db_path).upsert(2026, policy.policy_id, target_rate)
+    # ⚠️ STEP 96 — 기업정보를 받지 못한 정책은 조회불가다(§8). 이 시험들은 목표율
+    #    쪽을 보므로, 목록을 받았다는 사실을 기록해 앞단을 열어 둔다.
+    #    ⛔ 기대값은 바뀌지 않았다.
+    PolicyCompanySourceRepository(db_path).record(
+        policy.policy_id, source="FILE", company_count=0, certification_count=0
+    )
     cert_repo.insert(
         Certification(
             company_id=company.company_id,
