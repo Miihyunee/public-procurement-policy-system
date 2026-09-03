@@ -30,9 +30,64 @@ from procurement.dashboard.models import (
     DashboardSummary,
     MissingResolutionDate,
     PolicySummary,
+    ScopedAchievement,
 )
 from procurement.models.purchase import Purchase
 from procurement.reviews.response import PurchaseSourceResponseModel
+
+
+class ScopedAchievementResponseModel(BaseModel):
+    """구매유형 하나의 달성 결과 응답 모델(STEP 103).
+
+    여성기업처럼 목표가 유형별로 갈리는 정책을 위한 모델입니다.
+    ⛔ 정책 한 줄에 달성률 하나를 억지로 담지 않고, 유형마다 따로 내보냅니다 —
+    하나를 대표로 고르면 나머지가 화면에서 사라집니다.
+
+    Attributes:
+        scope: 구매유형 코드(``CONSTRUCTION`` · ``SERVICE`` · ``GOODS``).
+        scope_label: 화면 표시용 한글 이름(예: ``"공사"``).
+        purchase_amount: 그 유형에서 이 정책이 올린 실적(직렬화 시 문자열).
+        total_purchase_amount: 그 유형의 전체 구매금액 = **분모**.
+        target_rate: 그 유형의 목표 구매비율(%).
+        achievement_rate: 달성률(%). **분모가 0 이면 ``null``** — ⛔ 0% 나 100%
+            로 만들지 않습니다.
+        status / status_label: 달성 판정. 계산하지 못했으면 «계산 보류».
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    scope: str
+    scope_label: str
+    purchase_amount: Decimal
+    total_purchase_amount: Decimal
+    target_rate: Decimal
+    achievement_rate: Decimal | None
+    status: str
+    status_label: str
+
+    @field_serializer(
+        "purchase_amount",
+        "total_purchase_amount",
+        "target_rate",
+        "achievement_rate",
+        when_used="always",
+    )
+    def _serialize_decimal(self, value: Decimal | None) -> str | None:
+        return None if value is None else str(value)
+
+    @classmethod
+    def from_scoped_achievement(cls, item: ScopedAchievement) -> ScopedAchievementResponseModel:
+        """:class:`ScopedAchievement` 로부터 응답 모델을 만듭니다."""
+        return cls(
+            scope=item.scope,
+            scope_label=item.scope_label,
+            purchase_amount=item.purchase_amount,
+            total_purchase_amount=item.total_purchase_amount,
+            target_rate=item.target_rate,
+            achievement_rate=item.achievement_rate,
+            status=item.status.value,
+            status_label=item.status.label,
+        )
 
 
 class PolicySummaryResponseModel(BaseModel):
@@ -61,6 +116,10 @@ class PolicySummaryResponseModel(BaseModel):
         status: 달성 상태 코드(``NORMAL`` / ``WARNING`` / ``SHORTAGE`` /
             ``TARGET_RATE_NOT_SET``).
         status_label: 화면 표시용 한글 상태명(정상 / 주의 / 부족 / 목표율 미설정).
+        scoped_achievements: **구매유형별** 달성 결과. 여성기업처럼 목표가 유형별로
+            갈리는 정책만 채워지고 일반 정책은 빈 목록입니다. 값이 있으면
+            ``achievement_rate`` 는 ``null`` 이며 — 달성률이 하나가 아니기
+            때문입니다 — 화면은 이 목록을 보여 주어야 합니다.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -75,6 +134,9 @@ class PolicySummaryResponseModel(BaseModel):
     shortage_rate: Decimal | None
     status: str
     status_label: str
+    # ⚠️ tuple 이 아니라 list 입니다. ``model_dump()`` 는 tuple 을 그대로 두는데
+    #    JSON 은 배열이 되어, 두 표현이 어긋나면 직렬화 왕복이 깨집니다.
+    scoped_achievements: list[ScopedAchievementResponseModel] = []
 
     @field_serializer(
         "purchase_amount",
@@ -109,6 +171,10 @@ class PolicySummaryResponseModel(BaseModel):
             shortage_rate=summary.shortage_rate,
             status=summary.status.value,
             status_label=summary.status.label,
+            scoped_achievements=[
+                ScopedAchievementResponseModel.from_scoped_achievement(item)
+                for item in summary.scoped_achievements
+            ],
         )
 
 

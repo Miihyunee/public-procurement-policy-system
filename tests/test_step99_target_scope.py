@@ -134,7 +134,18 @@ class TestEveryConfirmedTargetIsStored:
 # §1 중요 · §6 · §18  저장과 계산은 다른 일이다
 # ======================================================================
 class TestStoringIsNotCalculating:
-    """목표가 있다고 달성률이 나오는 것은 아니다."""
+    """목표가 있다고 달성률이 나오는 것은 아니다.
+
+    .. note::
+        **기대값이 바뀐 이유** — 2026-09-03 STEP 103 으로 **여성기업이
+        계산됩니다.** 담당자가 확정한 구매유형을 분모·분자에 함께 적용하는
+        경로가 계산기에 연결되었기 때문입니다. ⛔ 유형을 자동 판정하게 된
+        것이 아니라 **확정된 행만** 셉니다.
+
+        이 시험 묶음이 지키려던 것 — *분모를 구할 수 없는 목표는 계산기에
+        가지 않는다* — 은 그대로이며, 그 대상이 두 정책에서 자활용사촌
+        하나로 줄었습니다.
+    """
 
     def test_only_total_scope_reaches_the_calculator(
         self, db_path: Path, targets: PolicyTargetRepository
@@ -147,30 +158,41 @@ class TestStoringIsNotCalculating:
         main(["targets", "--year", "2026", "--db", str(db_path)])
         reaching = targets.rates_by_policy_id(2026)
 
+        # 총 구매금액 기준 목표만 이 경로로 간다 — 여성기업은 유형별 경로를
+        # 따로 타므로(``scoped_rates_by_policy_id``) 여기 없는 것이 정상이다.
         assert _policy_id(db_path, "WOMAN") not in reaching
         assert _policy_id(db_path, "SELF_SUPPORT_VILLAGE") not in reaching
         assert len(reaching) == 6
+
+        # ⭐ 대신 여성기업은 유형별 목표 경로에 있다.
+        scoped = targets.scoped_rates_by_policy_id(2026)
+        assert set(scoped) == {_policy_id(db_path, "WOMAN")}
+        assert set(scoped[_policy_id(db_path, "WOMAN")]) == {CONSTRUCTION, SERVICE, GOODS}
 
     def test_the_on_hold_policies_are_named(
         self, db_path: Path, targets: PolicyTargetRepository
     ) -> None:
         main(["targets", "--year", "2026", "--db", str(db_path)])
 
+        # STEP 103 — 여성기업은 계산되므로 보류가 아니다.
         assert targets.on_hold_policy_ids(2026) == {
-            _policy_id(db_path, "WOMAN"),
             _policy_id(db_path, "SELF_SUPPORT_VILLAGE"),
         }
 
-    def test_only_total_is_calculable_for_now(self) -> None:
-        """⛔ 분모를 구하는 코드가 없는데 계산 가능 목록을 넓히지 않았다."""
-        assert CALCULABLE_SCOPES == {TOTAL}
-        assert not is_calculable(CONSTRUCTION)
+    def test_only_scopes_with_a_real_denominator_are_calculable(self) -> None:
+        """⛔ 분모를 구하는 코드가 있는 기준만 계산 가능 목록에 있다.
+
+        STEP 103 으로 구매유형 셋이 열렸습니다 — 담당자 확정값으로 분모를
+        구하는 경로가 실제로 생겼기 때문입니다. 생산가능품목은 거래별 품목
+        정보가 없어 그대로 닫혀 있습니다.
+        """
+        assert CALCULABLE_SCOPES == {TOTAL, CONSTRUCTION, SERVICE, GOODS}
+        assert is_calculable(CONSTRUCTION)
         assert not is_calculable(PRODUCIBLE_ITEMS)
 
     def test_the_reasons_are_recorded(self) -> None:
         """왜 못 내는지가 적혀 있다 — 조용히 비어 있지 않다."""
-        assert set(ON_HOLD_REASONS) == {"WOMAN", "SELF_SUPPORT_VILLAGE"}
-        assert "구매유형" in ON_HOLD_REASONS["WOMAN"]
+        assert set(ON_HOLD_REASONS) == {"SELF_SUPPORT_VILLAGE"}
         assert "생산가능품목" in ON_HOLD_REASONS["SELF_SUPPORT_VILLAGE"]
 
 
@@ -181,12 +203,17 @@ class TestTheDashboardTellsTheStatesApart:
     """«기업정보 미등록» · «목표율 미설정» · «계산 보류» 는 서로 다른 말이다."""
 
     def test_on_hold_shows_performance_but_no_rate(self, db_path: Path) -> None:
-        """§16 — 여성기업은 실적까지 보여 주고 달성률만 «계산 보류»."""
+        """§16 — 실적까지 보여 주고 달성률만 «계산 보류».
+
+        .. note::
+            **대상이 바뀐 이유** — STEP 103 으로 여성기업이 계산되면서
+            보류 상태의 예시가 자활용사촌으로 옮겨졌습니다.
+        """
         main(["targets", "--year", "2026", "--db", str(db_path)])
-        _register(db_path, "WOMAN")
+        _register(db_path, "SELF_SUPPORT_VILLAGE")
         _purchase(db_path, Decimal("1000000"))
 
-        item = _policy_item(db_path, "WOMAN")
+        item = _policy_item(db_path, "SELF_SUPPORT_VILLAGE")
 
         assert item["purchase_amount"] == "1000000"
         assert item["achievement_rate"] is None
@@ -195,12 +222,12 @@ class TestTheDashboardTellsTheStatesApart:
     def test_on_hold_differs_from_target_not_set(self, db_path: Path) -> None:
         """⭐ 목표를 등록하지 않은 정책은 «목표율 미설정» 이다 — 다른 말이다."""
         main(["targets", "--year", "2026", "--db", str(db_path)])
-        _register(db_path, "WOMAN")
+        _register(db_path, "SELF_SUPPORT_VILLAGE")
         _register(db_path, "SMALL_BUSINESS")
         PolicyTargetRepository(db_path).delete(2026, _policy_id(db_path, "SMALL_BUSINESS"))
         _purchase(db_path, Decimal("1000000"))
 
-        assert _policy_item(db_path, "WOMAN")["status_label"] == "계산 보류"
+        assert _policy_item(db_path, "SELF_SUPPORT_VILLAGE")["status_label"] == "계산 보류"
         assert _policy_item(db_path, "SMALL_BUSINESS")["status_label"] == "목표율 미설정"
 
     def test_unregistered_is_still_unknown(self, db_path: Path) -> None:
@@ -412,11 +439,21 @@ class TestForbidden:
     """⛔ 금지 목록."""
 
     def test_no_purchase_type_classifier_exists(self) -> None:
-        """⛔ 적요·거래처명으로 구매유형을 정하는 코드가 없다(§3 · §18)."""
+        """⛔ 적요로 구매유형을 **정하는** 코드가 없다(§3 · §18).
+
+        .. note::
+            **기대값이 바뀐 이유** — STEP 103 으로 계산 경로가 구매유형을
+            다루게 되었습니다. ⛔ 막으려던 것은 «낱말이 있다» 가 아니라
+            «시스템이 유형을 스스로 정한다» 이므로, 유형을 다루는 파일에
+            판정 재료(적요)가 함께 있지 않은지로 지킵니다.
+        """
         src = Path(__file__).resolve().parents[1] / "src" / "procurement"
         for area in ("calculators", "dashboard"):
             for path in (src / area).rglob("*.py"):
-                assert "CONSTRUCTION" not in path.read_text(encoding="utf-8"), path.name
+                text = path.read_text(encoding="utf-8")
+                if "CONSTRUCTION" not in text and "purchase_type" not in text:
+                    continue
+                assert "description" not in text, path.name
 
     def test_the_calculator_denominator_is_unchanged(self) -> None:
         """⛔ §19 — 계산기를 건드리지 않았다."""

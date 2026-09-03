@@ -45,6 +45,8 @@ class DashboardStatus(Enum):
       등록되지 않아** 해당 여부를 판단할 수 없음 (STEP 96 §8)
     - ``CALCULATION_ON_HOLD`` (계산 보류): 목표는 **받았으나** 그 목표를 재는
       분모를 아직 구할 수 없음 (STEP 99 §1 중요)
+    - ``SCOPED_BY_PURCHASE_TYPE`` (유형별 달성률): 달성률이 **하나가 아니라**
+      구매유형마다 따로 나옴. 여성기업이 여기 해당한다 (STEP 103)
 
     세 값 모두 달성률로부터 판정되지 않으며
     (:meth:`from_achievement_rate` 는 이 값들을 반환하지 않습니다),
@@ -59,8 +61,12 @@ class DashboardStatus(Enum):
     ``TARGET_RATE_NOT_SET``   누가 해당하는지는 알지만, **목표가 없다**.
                               실적은 셀 수 있으나 달성률을 낼 수 없다.
     ``CALCULATION_ON_HOLD``   목표도 있고 실적도 셀 수 있으나, 그 목표를 재는
-                              **분모**를 구할 수 없다. 여성기업(구매유형별)과
-                              자활용사촌(생산가능품목)이 여기에 해당한다.
+                              **분모**를 구할 수 없다. 자활용사촌(생산가능품목)이
+                              여기에 해당한다.
+    ``SCOPED_BY_PURCHASE_TYPE``
+                              계산은 되지만 결과가 **여럿**이다. 여성기업은 공사
+                              3% · 용역 5% · 물품 5% 로 목표가 갈리므로 달성률도
+                              셋이며, 정책 한 줄에 담을 하나의 값이 없다.
     ========================  ===================================================
 
     .. note::
@@ -80,6 +86,7 @@ class DashboardStatus(Enum):
     TARGET_RATE_NOT_SET = "TARGET_RATE_NOT_SET"
     COMPANY_DATA_NOT_REGISTERED = "COMPANY_DATA_NOT_REGISTERED"
     CALCULATION_ON_HOLD = "CALCULATION_ON_HOLD"
+    SCOPED_BY_PURCHASE_TYPE = "SCOPED_BY_PURCHASE_TYPE"
 
     @property
     def label(self) -> str:
@@ -113,7 +120,37 @@ _STATUS_LABELS: dict[DashboardStatus, str] = {
     DashboardStatus.COMPANY_DATA_NOT_REGISTERED: "기업정보 미등록",
     # ⛔ "목표율 미설정" 이 아니다. 목표는 받았고 분모를 못 구하는 것이다(STEP 99).
     DashboardStatus.CALCULATION_ON_HOLD: "계산 보류",
+    # 달성률이 **하나가 아니다.** 유형마다 따로 나온다(STEP 103 · 여성기업).
+    DashboardStatus.SCOPED_BY_PURCHASE_TYPE: "유형별 달성률",
 }
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScopedAchievement:
+    """구매유형 하나에 대한 달성 결과(DTO).
+
+    여성기업처럼 목표가 유형별로 갈리는 정책을 위한 값입니다. 정책 한 줄에
+    달성률 하나를 억지로 담지 않고, 유형마다 따로 담습니다.
+
+    Attributes:
+        scope: 구매유형(``CONSTRUCTION`` · ``SERVICE`` · ``GOODS``).
+        scope_label: 화면 표시용 한글 이름(예: ``"공사"``).
+        purchase_amount: 그 유형에서 이 정책이 올린 실적.
+        total_purchase_amount: 그 유형의 **전체** 구매금액(분모).
+        target_rate: 그 유형의 목표 구매비율(%).
+        achievement_rate: 달성률(%). **분모가 0 이면 ``None``** — ⛔ 0% 나
+            100% 로 만들지 않습니다.
+        status: 달성률 판정. 계산하지 못했으면
+            :attr:`DashboardStatus.CALCULATION_ON_HOLD`.
+    """
+
+    scope: str
+    scope_label: str
+    purchase_amount: Decimal
+    total_purchase_amount: Decimal
+    target_rate: Decimal
+    achievement_rate: Decimal | None
+    status: DashboardStatus
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -148,6 +185,10 @@ class PolicySummary:
     achievement_rate: Decimal | None
     shortage_rate: Decimal | None
     status: DashboardStatus
+    #: 구매유형별 달성 결과. 여성기업처럼 목표가 유형별로 갈리는 정책만 채워지며,
+    #: 일반 정책은 비어 있습니다(``()``). ⛔ 여기에 값이 있으면 정책 한 줄의
+    #: ``achievement_rate`` 는 ``None`` 입니다 — 대표값을 고르지 않기 때문입니다.
+    scoped_achievements: tuple[ScopedAchievement, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)

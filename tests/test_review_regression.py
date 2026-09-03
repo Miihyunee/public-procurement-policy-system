@@ -189,13 +189,37 @@ class TestCalculatorIsUnchanged:
         assert calculator.calculate_policy_purchase(policy.policy_id) == before
 
     def test_calculator_does_not_read_db2(self) -> None:
-        """⛔ 계산기가 검토 테이블·모듈을 참조하지 않는다."""
+        """⛔ 계산기가 검토 테이블·모듈을 참조하지 않는다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-09-03 STEP 103 §9. 여성기업 목표가
+            구매유형별(공사 3% · 용역·물품 5%)이라 유형별 분모가 필요해졌고,
+            계산기가 ``core.purchase_type`` 의 **낱말**을 알게 되었습니다.
+
+            ⛔ 느슨해진 것이 아닙니다. 계산기는 여전히 검토 테이블도, 분류
+            모듈도 건드리지 않습니다 — ``review`` · ``classification`` 금지는
+            그대로입니다. 유형을 **고르는** 일은 담당자가 하고 계산기는 받은
+            값을 Repository 에 넘길 뿐이며, 그 점은 아래 시험이 못박습니다.
+        """
         from pathlib import Path as FilePath
 
         import procurement.calculators.procurement_achievement as module
 
         source = FilePath(module.__file__).read_text(encoding="utf-8")
-        for forbidden in ("review", "purchase_type", "classification"):
+        for forbidden in ("review", "classification"):
+            assert forbidden not in source, forbidden
+
+    def test_calculator_does_not_decide_a_purchase_type(self) -> None:
+        """⛔ 계산기가 구매유형을 **정하지** 않는다 — 받은 값을 넘길 뿐이다.
+
+        적요·예산과목·거래처명을 보고 유형을 고르는 코드가 생기면 실패합니다.
+        """
+        from pathlib import Path as FilePath
+
+        import procurement.calculators.procurement_achievement as module
+
+        source = FilePath(module.__file__).read_text(encoding="utf-8")
+        for forbidden in ("description", "budget_account", "company_name"):
             assert forbidden not in source, forbidden
 
 

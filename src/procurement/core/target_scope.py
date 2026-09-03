@@ -58,7 +58,15 @@ TARGET_SCOPES: Final[frozenset[str]] = frozenset(
 #:
 #: ⛔ 여기에 값을 더하는 것은 "그 분모를 실제로 구하는 코드가 생겼다" 는 뜻입니다.
 #: 분모를 구하지 못하는 채로 값을 더하면 틀린 달성률이 화면에 나갑니다.
-CALCULABLE_SCOPES: Final[frozenset[str]] = frozenset({TOTAL})
+#:
+#: ⚠️ **2026-09-03 · STEP 103 으로 구매유형 셋이 열렸습니다.** 담당자가 확정한
+#: ``purchase_review.final_purchase_type`` 을 분모·분자에 함께 적용하는 경로가
+#: 생겼기 때문입니다(``calculate_total_purchase(period, scope)``).
+#: ⛔ 유형을 자동 판정하게 된 것이 **아닙니다** — 확정된 행만 셉니다.
+#:
+#: :data:`PRODUCIBLE_ITEMS` 는 여전히 빠져 있습니다. 거래별 품목 식별정보가
+#: 원본에도 시스템에도 없어 분모를 만들 수 없습니다(STEP 101 LEVEL 3).
+CALCULABLE_SCOPES: Final[frozenset[str]] = frozenset({TOTAL, CONSTRUCTION, SERVICE, GOODS})
 
 #: 화면에 보여 줄 한글 이름.
 TARGET_SCOPE_LABELS: Final[dict[str, str]] = {

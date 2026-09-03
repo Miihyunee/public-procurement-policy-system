@@ -130,6 +130,10 @@ class TestDashboardResponseModel:
             policy_summaries=[_policy_summary()],
         )
         payload = DashboardResponseModel.from_summary(summary).model_dump()
+        # 변경 사유(STEP 103): 구매유형별 달성 결과 필드가 추가되었습니다.
+        # 여성기업 목표가 공사 3% · 용역·물품 5% 로 갈려 달성률이 하나가
+        # 아니기 때문입니다. 일반 정책은 빈 목록이며 기존 값은 그대로입니다.
+        #
         # 변경 사유(STEP 59): 결의일자 공란 알림 필드가 추가되었습니다. 이
         # 시험이 지키던 것은 "응답 구조가 정확히 이것뿐" 이라는 사실이므로,
         # 비교를 느슨하게 하지 않고 **새 필드를 기대값에 함께 적습니다.**
@@ -149,6 +153,9 @@ class TestDashboardResponseModel:
                     "shortage_rate": "40.00",
                     "status": "SHORTAGE",
                     "status_label": "부족",
+                    # STEP 103 — 구매유형별 목표를 가진 정책만 채워진다.
+                    # 일반 정책(중소기업)은 비어 있다.
+                    "scoped_achievements": [],
                 }
             ],
         }

@@ -219,11 +219,37 @@ class PolicyTargetRepository(BaseRepository):
         Returns:
             달성률을 낼 수 있는 정책만 담긴 매핑. 비어 있을 수 있습니다.
         """
+        # ⭐ ``TOTAL`` 만 통과시킨다. ``is_calculable`` 만 보면 STEP 103 으로
+        #    계산 가능해진 **구매유형별** 목표까지 딸려 들어와, 여성기업 3% 가
+        #    기관 전체 구매금액을 분모로 계산되어 버린다. 유형별 목표는
+        #    :meth:`scoped_rates_by_policy_id` 라는 **다른 경로**로 나간다.
+        #    (한 정책에 유형이 셋이라 이 dict 에 담으면 둘이 사라지기도 한다.)
         return {
             target.policy_id: target.target_rate
             for target in self.list_by_year(year)
-            if is_calculable(target.scope)
+            if target.scope == TOTAL and is_calculable(target.scope)
         }
+
+    def scoped_rates_by_policy_id(self, year: int) -> dict[int, dict[str, Decimal]]:
+        """**구매유형별 목표**를 ``{policy_id: {scope: 목표비율}}`` 로 반환합니다.
+
+        기관 전체 구매금액(``TOTAL``) 기준 목표는 담지 않습니다 — 그쪽은
+        :meth:`rates_by_policy_id` 가 기존 모양 그대로 돌려줍니다. 여기 담기는
+        것은 여성기업처럼 **분모가 유형별로 갈리는** 목표뿐이며, 달성률을 낼 수
+        있는 기준만 통과시킵니다.
+
+        Args:
+            year: 대상 회계연도.
+
+        Returns:
+            해당 정책만 담긴 매핑. 없으면 빈 dict.
+        """
+        scoped: dict[int, dict[str, Decimal]] = {}
+        for target in self.list_by_year(year):
+            if target.scope == TOTAL or not is_calculable(target.scope):
+                continue
+            scoped.setdefault(target.policy_id, {})[target.scope] = target.target_rate
+        return scoped
 
     def on_hold_policy_ids(self, year: int) -> set[int]:
         """목표는 **저장되어 있으나 달성률을 낼 수 없는** 정책 ID.
@@ -238,7 +264,9 @@ class PolicyTargetRepository(BaseRepository):
         Returns:
             해당 정책 ID 집합. 계산 가능한 목표도 함께 가진 정책은 제외합니다.
         """
-        calculable = set(self.rates_by_policy_id(year))
+        # 계산 가능한 목표를 **하나라도** 가진 정책은 보류가 아니다 —
+        # 여성기업은 유형별 목표가 모두 계산되므로 여기에 들지 않는다.
+        calculable = set(self.rates_by_policy_id(year)) | set(self.scoped_rates_by_policy_id(year))
         return {
             target.policy_id
             for target in self.list_by_year(year)

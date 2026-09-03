@@ -24,12 +24,14 @@ from decimal import Decimal
 from procurement.calculators.achievement_result import AchievementResult
 from procurement.calculators.procurement_achievement import ProcurementAchievementCalculator
 from procurement.core.period import RESOLUTION_DATE, PeriodFilter
+from procurement.core.target_scope import scope_label
 from procurement.dashboard.models import (
     NOT_APPLICABLE,
     DashboardStatus,
     DashboardSummary,
     MissingResolutionDate,
     PolicySummary,
+    ScopedAchievement,
 )
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.policy_company_source_repository import (
@@ -187,6 +189,7 @@ class DashboardDataService:
 
         registered = self._registered_policy_ids()
         on_hold = self._on_hold_policy_ids(period)
+        scoped_targets = self._scoped_target_rates(period)
 
         summaries: list[PolicySummary] = []
         for policy in policies:
@@ -194,6 +197,12 @@ class DashboardDataService:
             if registered is not None and policy.policy_id not in registered:
                 # ⛔ 기업정보를 받은 적이 없다 → **조회불가**. 미해당도 0원도 아니다.
                 summaries.append(self._to_not_registered_summary(policy, total_amount))
+                continue
+            scoped = scoped_targets.get(policy.policy_id)
+            if scoped:
+                # 목표가 구매유형별로 갈린다 → 달성률도 여럿이다(STEP 103 §5).
+                # ⛔ 셋 중 하나를 대표값으로 고르지 않는다.
+                summaries.append(self._to_scoped_summary(policy, total_amount, period, scoped))
                 continue
             result = results.get(policy.policy_id)
             if result is None:
@@ -389,6 +398,72 @@ class DashboardDataService:
         if self._policy_target_repository is None or period is None:
             return set()
         return self._policy_target_repository.on_hold_policy_ids(period.start.year)
+
+    def _scoped_target_rates(self, period: PeriodFilter | None) -> dict[int, dict[str, Decimal]]:
+        """``{policy_id: {구매유형: 목표비율}}`` — 유형별 목표를 가진 정책만."""
+        if self._policy_target_repository is None or period is None:
+            return {}
+        return self._policy_target_repository.scoped_rates_by_policy_id(period.start.year)
+
+    def _to_scoped_summary(
+        self,
+        policy: Policy,
+        total_amount: Decimal,
+        period: PeriodFilter | None,
+        scoped: dict[str, Decimal],
+    ) -> PolicySummary:
+        """구매유형별 목표를 가진 정책의 요약을 만듭니다(STEP 103).
+
+        유형마다 분모·분자를 **따로** 구해 달성률을 냅니다. 정책 한 줄의
+        ``achievement_rate`` 는 ``None`` 입니다 — 셋 중 하나를 대표로 고르면
+        나머지 둘이 화면에서 사라지기 때문입니다.
+
+        ``purchase_amount`` 는 유형과 무관한 그 정책의 전체 실적입니다.
+
+        .. warning::
+            ⛔ **분모가 0 이면 달성률을 만들지 않습니다.** 그 유형의 구매가
+            아직 없거나 담당자가 유형을 확정하지 않았다는 뜻이므로,
+            0% 나 100% 가 아니라 «계산 보류» 로 둡니다(§7).
+        """
+        assert policy.policy_id is not None  # 호출부에서 보장
+        achievements: list[ScopedAchievement] = []
+        for scope in sorted(scoped):
+            target_rate = scoped[scope]
+            denominator = self._calculator.calculate_total_purchase(period, scope)
+            numerator = self._calculator.calculate_policy_purchase(policy.policy_id, period, scope)
+            if denominator == 0:
+                rate: Decimal | None = None
+                status = DashboardStatus.CALCULATION_ON_HOLD
+            else:
+                result = self._calculator.calculate_achievement(
+                    policy.policy_id, target_rate, period, scope
+                )
+                rate = result.achievement_rate
+                status = DashboardStatus.from_achievement_rate(rate)
+            achievements.append(
+                ScopedAchievement(
+                    scope=scope,
+                    scope_label=scope_label(scope),
+                    purchase_amount=numerator,
+                    total_purchase_amount=denominator,
+                    target_rate=target_rate,
+                    achievement_rate=rate,
+                    status=status,
+                )
+            )
+
+        return PolicySummary(
+            policy_id=policy.policy_id,
+            policy_code=policy.policy_code,
+            policy_name=policy.policy_name,
+            purchase_amount=self._calculator.calculate_policy_purchase(policy.policy_id, period),
+            total_purchase_amount=total_amount,
+            target_rate=None,
+            achievement_rate=None,
+            shortage_rate=None,
+            status=DashboardStatus.SCOPED_BY_PURCHASE_TYPE,
+            scoped_achievements=tuple(achievements),
+        )
 
     def _to_uncalculated_summary(
         self,

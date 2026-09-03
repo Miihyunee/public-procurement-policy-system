@@ -58,9 +58,7 @@ CREATE TABLE IF NOT EXISTS purchase (
 """
 
 #: 배치 단위 조회·대체 처리에 필요한 인덱스.
-CREATE_BATCH_INDEX_SQL = (
-    "CREATE INDEX IF NOT EXISTS idx_purchase_batch ON purchase (batch_id)"
-)
+CREATE_BATCH_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_purchase_batch ON purchase (batch_id)"
 
 #: 실적에서 빼는 예산과목 — SQL 파라미터 순서를 고정하기 위해 정렬해 둡니다.
 #: (frozenset 은 순서가 보장되지 않아 SQL 이 실행마다 달라져 보일 수 있습니다.)
@@ -283,7 +281,9 @@ class PurchaseRepository(BaseRepository):
         conditions, params = self._review_scope_conditions(period)
         return self._select_purchases(conditions, params)
 
-    def find_for_calculation(self, period: PeriodFilter | None = None) -> list[Purchase]:
+    def find_for_calculation(
+        self, period: PeriodFilter | None = None, purchase_type: str | None = None
+    ) -> list[Purchase]:
         """**계산 대상** 구매실적을 조회합니다 — 달성률 분모·분자의 모집단.
 
         :meth:`find_for_review` 의 조건에 **실적 제외**가 한 겹 더 붙습니다
@@ -302,8 +302,23 @@ class PurchaseRepository(BaseRepository):
             빼지 않습니다 — 고객이 지출결의서·품의서를 확인해 판단한다고 했고
             그 자료는 시스템에 없습니다.
 
+        .. note::
+            **구매유형 좁히기(STEP 103 §10).** ``purchase_type`` 을 주면 담당자가
+            검토 화면에서 **확정한** 유형이 그 값인 행만 남깁니다
+            (``purchase_review.final_purchase_type``). 여성기업 목표가 구매유형별
+            (공사 3% · 용역·물품 5%)이라 유형별 분모·분자가 필요하기 때문입니다.
+
+            ⛔ **유형을 추정하지 않습니다.** 확정되지 않은 행
+            (``final_purchase_type IS NULL`` 이거나 검토 행 자체가 없는 경우)은
+            어느 유형에도 넣지 않습니다 — 담당자가 나중에 확정하면 그때 자연히
+            들어옵니다. ⛔ 적요·예산과목·거래처명으로 유추하지 않습니다.
+
+            ``None`` 이면 유형을 보지 않으므로 **기존 동작 그대로**입니다.
+
         Args:
             period: 적용할 기간 조건. ``None`` 이면 기간 제한 없이 전체.
+            purchase_type: 좁힐 구매유형(``CONSTRUCTION``/``SERVICE``/``GOODS``).
+                ``None`` 이면 좁히지 않습니다.
 
         Returns:
             :class:`Purchase` 목록. 없으면 빈 목록.
@@ -312,7 +327,42 @@ class PurchaseRepository(BaseRepository):
         exclusion_conditions, exclusion_params = self._performance_exclusion_conditions()
         conditions.extend(exclusion_conditions)
         params.extend(exclusion_params)
+
+        if purchase_type is not None:
+            type_condition, type_params = self._confirmed_purchase_type_condition(purchase_type)
+            conditions.append(type_condition)
+            params.extend(type_params)
+
         return self._select_purchases(conditions, params)
+
+    def _confirmed_purchase_type_condition(self, purchase_type: str) -> tuple[str, list[object]]:
+        """담당자가 **확정한** 구매유형이 주어진 값인 행만 남기는 조건.
+
+        ⛔ 확정되지 않은 행은 남지 않습니다. 검토 행이 아예 없는 구매도,
+        ``final_purchase_type`` 이 ``NULL`` 인 구매도 제외됩니다 — 둘 다
+        «담당자가 아직 정하지 않았다» 는 같은 뜻이기 때문입니다.
+
+        구 스키마 DB(검토 테이블이 없는 경우)에서는 확정값이 존재할 수 없으므로
+        **아무 행도 남기지 않는** 조건을 돌려줍니다. ⛔ 반대로 «전부 남긴다» 로
+        열어 두면 유형이 확정된 적 없는 데이터가 통째로 공사·용역·물품 분모에
+        들어가 달성률이 틀립니다.
+        """
+        if not self._has_review_table():
+            return "1 = 0", []
+        return (
+            "EXISTS (SELECT 1 FROM purchase_review r "
+            "WHERE r.purchase_id = purchase.purchase_id "
+            "AND r.final_purchase_type = ?)",
+            [purchase_type],
+        )
+
+    def _has_review_table(self) -> bool:
+        """검토 테이블이 있는지 확인합니다(구 스키마 DB 보호)."""
+        return bool(
+            self.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'purchase_review'"
+            )
+        )
 
     def _review_scope_conditions(
         self, period: PeriodFilter | None
@@ -337,9 +387,7 @@ class PurchaseRepository(BaseRepository):
 
         return conditions, params
 
-    def _select_purchases(
-        self, conditions: list[str], params: list[object]
-    ) -> list[Purchase]:
+    def _select_purchases(self, conditions: list[str], params: list[object]) -> list[Purchase]:
         """조건을 붙여 구매 행을 읽습니다(정렬은 항상 ``purchase_id``)."""
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = self.execute(f"SELECT * FROM purchase{where} ORDER BY purchase_id", tuple(params))

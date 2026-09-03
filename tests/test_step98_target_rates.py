@@ -113,27 +113,33 @@ class TestTheUnrepresentableTargetsWereNotInvented:
     """⛔ 분모 없이 달성률을 지어내지 않았다.
 
     .. note::
-        **기대값이 바뀐 이유** — STEP 99 §2 로 분모 기준 축이 생겨 두 정책의
+        **기대값이 바뀐 이유 ①** — STEP 99 §2 로 분모 기준 축이 생겨 두 정책의
         목표도 **저장**된다(§0.25). 그래서 "저장되지 않았다" 대신 "계산에
-        쓰이지 않는다" 를 지킨다. 모듈 docstring 참조.
+        쓰이지 않는다" 를 지킨다.
+
+        **기대값이 바뀐 이유 ②** — 2026-09-03 STEP 103 으로 **여성기업이
+        계산된다.** 담당자가 확정한 구매유형을 분모·분자에 함께 적용하는 경로가
+        생겼기 때문이다. ⛔ 유형을 자동 판정하게 된 것이 아니라 확정된 행만
+        센다. 그래서 «계산에 쓰이지 않는다» 를 지키는 대상은 이제
+        자활용사촌뿐이며, 여성기업은 **값이 그대로 남아 있는지**를 본다.
     """
 
-    @pytest.mark.parametrize("code", ["WOMAN", "SELF_SUPPORT_VILLAGE"])
-    def test_the_rate_never_reaches_the_calculator(self, code: str) -> None:
-        assert code not in STORABLE_TARGET_RATES
-        assert code in ON_HOLD_REASONS
+    def test_the_village_rate_never_reaches_the_calculator(self) -> None:
+        """⛔ 자활용사촌은 여전히 분모를 못 구하므로 계산되지 않는다."""
+        assert "SELF_SUPPORT_VILLAGE" not in STORABLE_TARGET_RATES
+        assert "SELF_SUPPORT_VILLAGE" in ON_HOLD_REASONS
 
-    @pytest.mark.parametrize("code", ["WOMAN", "SELF_SUPPORT_VILLAGE"])
-    def test_the_reason_is_written_down(self, code: str) -> None:
+    def test_the_reason_is_written_down(self) -> None:
         """조용히 빠진 것이 아니라 **이유가 남아 있다.**"""
-        assert len(ON_HOLD_REASONS[code]) > 30
+        assert len(ON_HOLD_REASONS["SELF_SUPPORT_VILLAGE"]) > 30
 
     def test_woman_keeps_both_customer_targets(self) -> None:
         """공사 3% · 용역·물품 5% 를 한쪽만 적고 버리지 않았다."""
         woman = [t for t in CONFIRMED_TARGETS if t.policy_code == "WOMAN"]
 
         assert {t.target_rate for t in woman} == {Decimal("3"), Decimal("5")}
-        assert all(not t.calculable for t in woman)
+        # STEP 103 — 이제 셋 다 계산된다. ⛔ 값 자체는 그대로다.
+        assert all(t.calculable for t in woman)
 
     def test_self_support_village_keeps_its_own_denominator(self) -> None:
         """분모가 전체 구매금액이 아님을 기록했다 — 7%×전체로 계산하지 않는다."""
@@ -180,12 +186,28 @@ class TestPurchaseTypeIsNotDecidedAutomatically:
         assert "final_purchase_type" in source
 
     def test_no_keyword_classifier_was_added(self) -> None:
-        """⛔ 「공사」 같은 낱말로 유형을 정하는 코드를 넣지 않았다."""
+        """⛔ 적요·거래처명으로 유형을 **정하는** 코드를 넣지 않았다.
+
+        .. note::
+            **기대값이 바뀐 이유** — STEP 103 으로 계산기가 구매유형이라는
+            낱말을 알게 되었다(유형별 분모가 필요해졌다). ⛔ 느슨해진 것이
+            아니다 — 막으려던 것은 «낱말이 있다» 가 아니라 «시스템이 유형을
+            스스로 정한다» 이므로, 판정에 쓰일 재료(적요·거래처명)가 계산
+            경로에 없다는 것으로 더 정확하게 지킨다.
+        """
         src = Path(__file__).resolve().parents[1] / "src" / "procurement"
         for area in ("calculators", "dashboard"):
             for path in (src / area).rglob("*.py"):
                 text = path.read_text(encoding="utf-8")
-                assert "CONSTRUCTION" not in text, path.name
+                touches_type = any(
+                    word in text for word in ("CONSTRUCTION", "SERVICE", "GOODS", "purchase_type")
+                )
+                if not touches_type:
+                    continue
+                # 유형을 다루는 파일이 **판정 재료**까지 들고 있으면 분류기가
+                # 될 수 있다. 둘이 한 파일에서 만나지 않게 한다.
+                assert "description" not in text, path.name
+                assert "budget_account" not in text, path.name
 
 
 # ======================================================================
@@ -388,13 +410,19 @@ class TestTheRegistrationCommand:
     def test_it_names_the_policies_it_skipped(
         self, db_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """⛔ 두 정책을 말없이 건너뛰지 않는다 — 이유까지 출력한다."""
+        """⛔ 계산 못 하는 정책을 말없이 넘기지 않는다 — 이유까지 출력한다.
+
+        .. note::
+            **기대값이 바뀐 이유** — STEP 103 으로 여성기업이 계산되면서
+            보류 목록에서 빠졌다. 남은 것은 자활용사촌뿐이다.
+        """
         main(["targets", "--year", "2026", "--db", str(db_path)])
         out = capsys.readouterr().out
 
-        assert "WOMAN" in out
         assert "SELF_SUPPORT_VILLAGE" in out
         assert "계산 보류" in out
+        # 여성기업은 이제 계산되므로 **보류 사유 목록**에 없다.
+        assert "WOMAN\n" not in out
 
 
 # ======================================================================
