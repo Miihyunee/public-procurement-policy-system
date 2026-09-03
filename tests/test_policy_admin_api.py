@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from procurement.app import create_app
-from procurement.database.bootstrap import init_db, seed_policies
+from procurement.database.bootstrap import MVP_POLICY_SEEDS, init_db, seed_policies
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.policy_repository import PolicyRepository
@@ -30,7 +30,11 @@ from procurement.models import Certification, Company, Policy, Purchase
 #: 테스트 전용 관리자 토큰(운영 값 아님).
 TEST_TOKEN = "test-admin-token"
 #: 정본 정책 코드 개수(bootstrap seed 기준).
-SEED_POLICY_COUNT = 5
+#:
+#: ⚠️ 하드코딩하지 않는다 — 2026-09-03 PM 확정(§0.22 · STEP 97)으로 정책이
+#: 5종에서 9종(활성 8 + 비활성 GREEN)으로 늘면서 고정값 ``5`` 가 어긋났다.
+#: 정본은 seed 목록이므로 거기에서 센다.
+SEED_POLICY_COUNT = len(MVP_POLICY_SEEDS)
 
 AUTH = {"Authorization": f"Bearer {TEST_TOKEN}"}
 
@@ -65,9 +69,14 @@ class TestListPolicies:
         assert len(payload["policies"]) == SEED_POLICY_COUNT
 
     def test_seed_policy_codes(self, client: TestClient) -> None:
-        """정본 코드가 그대로 노출됩니다(GREEN 포함)."""
+        """정본 코드가 그대로 노출됩니다(비활성 ``GREEN`` 포함).
+
+        ⚠️ 기대 코드를 손으로 적지 않고 seed 정본과 대조합니다 — 2026-09-03
+        PM 확정(§0.22)으로 정책이 늘었을 때 이 목록만 뒤처졌기 때문입니다.
+        API 가 seed 를 **빠짐없이 그대로** 노출하는지가 이 시험의 요지입니다.
+        """
         codes = {item["policy_code"] for item in client.get("/policies").json()["policies"]}
-        assert codes == {"SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP", "GREEN"}
+        assert codes == {seed.policy_code for seed in MVP_POLICY_SEEDS}
 
     def test_unset_target_rate_is_json_null(self, client: TestClient) -> None:
         """미설정 목표율은 문자열이 아니라 JSON null 입니다."""

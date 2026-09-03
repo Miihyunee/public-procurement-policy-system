@@ -186,12 +186,22 @@ class TestWiring:
             "나머지는 전부 지급일" 이라는 형태로는 더 이상 적을 수 없습니다.
             이 시험이 지키려던 것 — **창업기업 규칙이 다른 정책으로 번지지
             않는다** — 은 그대로 두고, 기준값만 실제 확정 규칙으로 적습니다.
+
+            **기대값이 바뀐 이유 ②** — 2026-09-03 PM 확정(§0.22 · STEP 97)으로
+            정책 4종이 추가되었습니다. 네 정책도 ⛔ OR 규칙을 물려받지 않고
+            일반 규칙인 ``RESOLUTION_DATE`` 를 씁니다 — 즉 이 시험이 막으려던
+            "OR 규칙이 번진다" 는 일은 여전히 일어나지 않았고, 새로 늘어난
+            정책까지 함께 감시하도록 기준표만 넓혔습니다.
         """
         expected = {
             "SMALL_BUSINESS": "RESOLUTION_DATE",
             "WOMAN": "RESOLUTION_DATE",
             "DISABLED": "RESOLUTION_DATE",
             "GREEN": PAYMENT_DATE,
+            "SOCIAL_ENTERPRISE": "RESOLUTION_DATE",
+            "SOCIAL_COOPERATIVE": "RESOLUTION_DATE",
+            "DISABLED_STANDARD_WORKPLACE": "RESOLUTION_DATE",
+            "SELF_SUPPORT_VILLAGE": "RESOLUTION_DATE",
         }
         for seed in MVP_POLICY_SEEDS:
             if seed.policy_code != "STARTUP":

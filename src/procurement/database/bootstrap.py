@@ -12,7 +12,7 @@ procurement.database.bootstrap
 
 - :func:`init_db` — 핵심 테이블을 일괄 생성(멱등)
 - :func:`migrate_schema` — 이전 버전 DB 에 누락된 컬럼을 보완(멱등)
-- :func:`seed_policies` — MVP 정책 5종을 등록(멱등)
+- :func:`seed_policies` — 정책 9종을 등록(멱등). 활성 8종 + 비활성 1종
 - :func:`verify_bootstrap` — DB·테이블·컬럼·seed 상태를 점검
 - :func:`bootstrap` — 위 과정을 순서대로 수행하는 오케스트레이터
 
@@ -67,7 +67,10 @@ class PolicySeed:
     is_active: bool = True
 
 
-#: MVP 대상 정책 5종. 판정 기준일은 ``docs/POLICY_DEFINITION.md`` 를 따릅니다.
+#: 대상 정책. 판정 기준일은 ``docs/POLICY_DEFINITION.md`` 를 따릅니다.
+#:
+#: 2026-09-03 PM 확정(STEP 97)으로 **활성 8종**이 최종 범위입니다. 녹색제품은
+#: 등록만 하고 비활성으로 두어 이력을 보존합니다(§0.5.1).
 #:
 #: ``target_rate`` 는 의도적으로 포함하지 않습니다(NULL 등록).
 MVP_POLICY_SEEDS: tuple[PolicySeed, ...] = (
@@ -102,6 +105,42 @@ MVP_POLICY_SEEDS: tuple[PolicySeed, ...] = (
         # 해당하면 인정한다(OR 조건). 계약일 단독 기준이 아니다.
         evaluation_basis="RESOLUTION_OR_CONTRACT_DATE",
         description="창업기업제품 우선구매(결의일자·계약일자 중 하나라도 인증기간에 해당하면 인정)",
+    ),
+    # ── 2026-09-03 PM 확정(STEP 97 §0 · §2) — 최종 정책 범위 8종.
+    #    확인 요청서 ② ⑦("사회적기업 등을 집계할 것인가")에 대한 답이며, 이 네
+    #    정책이 등록되면서 그 질문이 닫혔다.
+    #
+    #    판정 기준일은 **결의일자**다 — 2026-08-31 고객 최종 회신(§0.12.1)의
+    #    일반 규칙을 그대로 적용한 것이며, ⛔ 새 규칙을 만든 것이 아니다.
+    #    창업기업만 OR 규칙이고 나머지는 전부 결의일자다.
+    PolicySeed(
+        policy_code="SOCIAL_ENTERPRISE",
+        policy_name="사회적기업",
+        evaluation_basis="RESOLUTION_DATE",
+        description="사회적기업제품 우선구매",
+    ),
+    PolicySeed(
+        policy_code="SOCIAL_COOPERATIVE",
+        policy_name="사회적협동조합",
+        evaluation_basis="RESOLUTION_DATE",
+        description="사회적협동조합제품 우선구매",
+    ),
+    PolicySeed(
+        policy_code="DISABLED_STANDARD_WORKPLACE",
+        policy_name="장애인표준사업장",
+        evaluation_basis="RESOLUTION_DATE",
+        description="장애인표준사업장 생산품 우선구매",
+    ),
+    PolicySeed(
+        policy_code="SELF_SUPPORT_VILLAGE",
+        policy_name="자활용사촌",
+        evaluation_basis="RESOLUTION_DATE",
+        # ⚠️ `DATA_DICTIONARY.md` 는 자활용사촌을 "기간 무관 · 거래 유무 · 품목
+        #    기준"(VENDOR_EXISTENCE)으로 적어 두었다. 그 유형은 아직 구현되어
+        #    있지 않고, 이번 STEP 은 날짜 규칙을 재설계하지 않는다(§15).
+        #    ⛔ 임의로 새 판정 유형을 만들지 않고 일반 규칙(결의일자)을 쓴다.
+        #    판정 기준이 실제로 다른지는 PM 확인이 필요하다.
+        description="자활용사촌 생산품 우선구매",
     ),
     PolicySeed(
         policy_code="GREEN",
@@ -519,7 +558,7 @@ def deactivate_out_of_scope_policies(db_path: str | Path | None = None) -> list[
 
 
 def seed_policies(db_path: str | Path | None = None) -> list[str]:
-    """MVP 정책 5종을 등록합니다(멱등).
+    """대상 정책을 등록합니다(멱등).
 
     이미 같은 ``policy_code`` 가 존재하면 건너뛰므로 반복 실행해도 중복 등록되지
     않으며, 기존 정책의 값(특히 운영자가 설정한 ``target_rate``)을 덮어쓰지

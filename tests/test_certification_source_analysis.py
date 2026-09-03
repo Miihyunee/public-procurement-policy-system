@@ -286,17 +286,54 @@ class TestTheJudgementStructureIsReady:
 
 
 class TestNoNewPolicyWasRegistered:
-    """⛔ 시트에 값이 있다는 이유로 정책을 만들지 않았는가."""
+    """정책은 **확정을 받고** 만들었는가.
+
+    ⚠️ **규칙 변경(2026-09-03 · STEP 97 · PM 확정).** 이 시험은 원래 "시트에
+    값이 있다는 이유로 정책을 만들지 않았다" 를 기록했다. 그 시점에는 확인
+    요청서 ② ⑦("사회적기업 등 3종을 집계할 것인가")이 미확정이었기 때문이다.
+
+    PM 이 최종 정책 범위를 **8종**으로 확정하면서(DECISIONS §0.22) 그 질문이
+    닫혔고, 네 정책이 등록되었다.
+
+    ⛔ 지키려던 것은 그대로 지킨다 — **시트를 보고 만든 것이 아니라 확정을
+    받고 만들었다.** 아래 시험은 등록된 코드가 PM 이 지정한 값과 정확히
+    일치하는지, 그리고 목표율을 여전히 만들지 않았는지를 본다.
+    """
+
+    #: 2026-09-03 PM 확정(STEP 97 §2)이 지정한 코드. ⛔ 임의로 정한 것이 아니다.
+    CONFIRMED_NEW_CODES = (
+        "SOCIAL_ENTERPRISE",
+        "SOCIAL_COOPERATIVE",
+        "DISABLED_STANDARD_WORKPLACE",
+        "SELF_SUPPORT_VILLAGE",
+    )
 
     @pytest.mark.parametrize(
         "code",
         ["SOCIAL_ENTERPRISE", "SOCIAL_COOPERATIVE", "DISABLED_STANDARD_WORKPLACE"],
     )
-    def test_the_policy_was_not_added(self, code: str) -> None:
-        assert code not in {seed.policy_code for seed in MVP_POLICY_SEEDS}
+    def test_the_policy_is_registered_with_the_confirmed_code(self, code: str) -> None:
+        """PM 이 지정한 코드 그대로 등록되었다."""
+        assert code in {seed.policy_code for seed in MVP_POLICY_SEEDS}
 
-    def test_the_policy_count_is_unchanged(self) -> None:
-        assert len(MVP_POLICY_SEEDS) == 5
+    def test_no_policy_beyond_the_confirmed_scope(self) -> None:
+        """⛔ 확정 범위를 넘는 정책을 만들지 않았다."""
+        codes = {seed.policy_code for seed in MVP_POLICY_SEEDS}
+
+        assert codes == {
+            "SMALL_BUSINESS",
+            "WOMAN",
+            "DISABLED",
+            "STARTUP",
+            "GREEN",
+            *self.CONFIRMED_NEW_CODES,
+        }
+
+    def test_the_new_policies_use_the_confirmed_date_basis(self) -> None:
+        """⛔ 새 판정 규칙을 만들지 않았다 — 일반 규칙(결의일자)을 그대로 쓴다."""
+        for seed in MVP_POLICY_SEEDS:
+            if seed.policy_code in self.CONFIRMED_NEW_CODES:
+                assert seed.evaluation_basis == "RESOLUTION_DATE", seed.policy_code
 
     def test_no_target_rate_was_invented(self) -> None:
         """⛔ D-004 — 목표율을 임의로 채우지 않았다."""
@@ -316,13 +353,25 @@ class TestTheRequestSheetIsComplete:
     확정하면서(DECISIONS §0.19) 「업체규모」 관련 두 문항이 **불필요해졌고**,
     ⛔ 이미 답을 받은 것을 다시 여쭙지 않는다는 원칙에 따라 뺐다.
     나머지 5문항은 문구도 순서도 그대로다.
+
+    ⚠️ **2차 규칙 변경(2026-09-03 · STEP 97).** 그 5문항 중 ⑤「사회적기업 등을
+    집계해야 합니까」는 PM 이 최종 정책 범위 8종을 확정하면서(DECISIONS §0.22)
+    **답을 받았다.** 같은 원칙 — ⛔ 이미 답을 받은 것을 다시 여쭙지 않는다 — 을
+    적용해 요청서에서 뺐고, 남은 것은 ②~④ 4문항이다. 조용히 사라지지 않도록
+    요청서에는 🟢 로 "답을 받았습니다" 가 기록돼 있다
+    (→ `test_the_answered_question_is_recorded_as_closed`).
     """
 
-    def test_there_are_exactly_five_questions(self, request_sheet: str) -> None:
+    def test_there_are_exactly_four_questions(self, request_sheet: str) -> None:
         """⛔ 질문을 늘리지도, 남은 것을 빠뜨리지도 않았다."""
         headings = [line for line in request_sheet.splitlines() if line.startswith("## ")]
-        numbered = [h for h in headings if h.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤"))]
-        assert len(numbered) == 5, headings
+        numbered = [h for h in headings if h.startswith(("## ①", "## ②", "## ③", "## ④"))]
+        assert len(numbered) == 4, headings
+
+    def test_the_answered_question_is_recorded_as_closed(self, request_sheet: str) -> None:
+        """⑤ 는 조용히 사라진 것이 아니라 **답을 받아서** 닫혔다."""
+        assert "답을 받았습니다" in request_sheet
+        assert "🟢" in request_sheet
 
     def test_the_dropped_questions_are_gone(self, request_sheet: str) -> None:
         """⛔ 「업체규모」 두 문항은 **다시 묻지 않는다.**"""
@@ -339,7 +388,7 @@ class TestTheRequestSheetIsComplete:
         numbered = [
             line
             for line in request_sheet.splitlines()
-            if line.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤"))
+            if line.startswith(("## ①", "## ②", "## ③", "## ④"))
         ]
         assert all("🔴" in line for line in numbered), numbered
 
@@ -350,7 +399,6 @@ class TestTheRequestSheetIsComplete:
             "#N/A",
             "끝나는 날짜가 없는",
             "없는 80개 업체",
-            "집계해야 합니까",
         ],
     )
     def test_the_topic_is_covered(self, request_sheet: str, topic: str) -> None:

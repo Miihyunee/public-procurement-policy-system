@@ -137,12 +137,16 @@ class DashboardDataService:
         뒤, 목표율 설정 여부에 따라 다르게 처리합니다.
 
         - **목표율이 설정된 정책**: 기존과 동일하게 계산기로 달성률을 계산합니다.
-        - **목표율이 없는(NULL) 정책**: 계산기를 호출하지 않고, 계산 값을 모두
-          ``None`` 으로 두고 상태를 :attr:`DashboardStatus.TARGET_RATE_NOT_SET`
-          으로 표시합니다. **요약에서 제외하지 않습니다.**
+        - **목표율이 없는 정책**: 실적과 분모는 그대로 채우고 **달성률만**
+          ``None`` 으로 두며, 상태는 :attr:`DashboardStatus.TARGET_RATE_NOT_SET`
+          입니다(STEP 97 §13). 누가 해당하는지는 알기 때문에 실적은 셀 수
+          있습니다. **요약에서 제외하지 않습니다.**
+        - **기업정보가 등록되지 않은 정책**: 누가 해당하는지 모르므로 실적까지
+          ``None`` 이며, 상태는
+          :attr:`DashboardStatus.COMPANY_DATA_NOT_REGISTERED` 입니다(STEP 96 §8).
 
-        목표율이 없는 정책을 제외하지 않는 이유는, 화면에서 "정책이 없음"과
-        "정책은 있으나 목표율이 아직 등록되지 않음"을 구분하기 위해서입니다.
+        정책을 제외하지 않는 이유는, 화면에서 "정책이 없음" · "기업정보를 아직
+        받지 못함" · "목표율이 아직 등록되지 않음" 을 구분하기 위해서입니다.
         달성률을 ``0`` 으로 처리하지 않습니다.
 
         목표율이 있는 정책만 골라 dict 로 넘기는 방식은 기존과 같습니다.
@@ -192,12 +196,10 @@ class DashboardDataService:
                 continue
             result = results.get(policy.policy_id)
             if result is None:
-                # 목표율 미설정 — 계산기를 호출하지 않는다.
-                summaries.append(self._to_unset_summary(policy, total_amount))
+                # 목표율 미설정 — 실적은 세고 달성률만 비운다(§13).
+                summaries.append(self._to_unset_summary(policy, total_amount, period))
             else:
-                summaries.append(
-                    self._to_policy_summary(result, target_rates[policy.policy_id])
-                )
+                summaries.append(self._to_policy_summary(result, target_rates[policy.policy_id]))
 
         return DashboardSummary(
             total_purchase_amount=total_amount,
@@ -369,19 +371,29 @@ class DashboardDataService:
             status=DashboardStatus.COMPANY_DATA_NOT_REGISTERED,
         )
 
-    @staticmethod
-    def _to_unset_summary(policy: Policy, total_amount: Decimal) -> PolicySummary:
-        """목표율이 없는 정책의 요약을 만듭니다(계산 없음).
+    def _to_unset_summary(
+        self, policy: Policy, total_amount: Decimal, period: PeriodFilter | None = None
+    ) -> PolicySummary:
+        """목표율이 없는 정책의 요약을 만듭니다.
 
-        계산기를 호출하지 않으므로 정책별 구매금액·달성률·부족률은 모두
-        ``None`` 이며, ``0`` 과 구분됩니다(계산하지 않았음을 의미).
+        ⚠️ **STEP 97 §13 — 실적과 구매비율은 보여 줍니다.** 기업정보가 등록되어
+        있으면 누가 해당하는지 알 수 있으므로 **실적은 셀 수 있습니다.** 목표가
+        없어서 못 내는 것은 **달성률뿐**입니다.
+
+        ========================  ============================================
+        기업정보 미등록(조회불가)    실적도 모른다 → 전부 ``None``
+        목표율 미설정              실적은 안다 → 금액은 채우고 달성률만 ``None``
+        ========================  ============================================
+
+        ⛔ 달성률·부족률은 ``None`` 으로 두어 ``0`` 과 구분합니다.
         """
         assert policy.policy_id is not None  # 호출부에서 보장
         return PolicySummary(
             policy_id=policy.policy_id,
             policy_code=policy.policy_code,
             policy_name=policy.policy_name,
-            purchase_amount=None,
+            # ⭐ 목표가 없어도 실적은 센다(§13). 계산기는 목표 없이도 금액을 낸다.
+            purchase_amount=self._calculator.calculate_policy_purchase(policy.policy_id, period),
             total_purchase_amount=total_amount,
             target_rate=None,
             achievement_rate=None,

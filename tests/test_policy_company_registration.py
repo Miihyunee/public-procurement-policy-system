@@ -30,7 +30,7 @@ from openpyxl import Workbook
 
 from procurement.app import create_app
 from procurement.dashboard.models import DashboardStatus
-from procurement.database.bootstrap import bootstrap
+from procurement.database.bootstrap import MVP_POLICY_SEEDS, bootstrap
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.policy_company_source_repository import (
@@ -310,7 +310,10 @@ class TestNotRegisteredMeansUnknown:
         body = client.get("/companies/registration").json()
 
         by_code = {item["policy_code"]: item for item in body["items"]}
-        assert set(by_code) == {"SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP"}
+        # ⚠️ 코드를 손으로 적지 않고 활성 seed 와 대조한다 — 2026-09-03 PM 확정
+        #    (§0.22)으로 활성 정책이 4종에서 8종으로 늘었고, 이 시험의 요지는
+        #    "미등록 정책도 목록에서 빠지지 않는다" 이지 개수 자체가 아니다.
+        assert set(by_code) == {seed.policy_code for seed in MVP_POLICY_SEEDS if seed.is_active}
         assert all(item["registered"] is False for item in body["items"])
         assert all(item["status_label"] == "미등록" for item in body["items"])
 
@@ -472,10 +475,18 @@ class TestAvailableMethods:
 class TestForbidden:
     """⛔ 금지 목록."""
 
-    def test_no_new_policy_was_registered(self, db_path: Path) -> None:
-        """⛔ §22-12 — 고객 미확정 정책을 임의로 추가하지 않았다."""
+    def test_no_policy_beyond_the_confirmed_scope(self, db_path: Path) -> None:
+        """⛔ §22-12 — 고객 **미확정** 정책을 임의로 추가하지 않았다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-09-03 PM 확정(``DECISIONS.md`` §0.22 ·
+            STEP 97 §2)으로 정책 4종이 **확정을 받고** 추가되었다. STEP 96
+            시점에는 미확정이었으므로 "추가하지 않았다" 가 맞았다. 금지하려던
+            것 — *확정 없이 정책이 늘어나는 것* — 은 그대로 지킨다: 아래는 DB
+            에 있는 코드가 seed 정본과 정확히 일치하는지를 본다.
+        """
         codes = {policy.policy_code for policy in PolicyRepository(db_path).find_all()}
-        assert codes == {"SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP", "GREEN"}
+        assert codes == {seed.policy_code for seed in MVP_POLICY_SEEDS}
 
     def test_registration_table_has_no_company_axis(self, db_path: Path) -> None:
         import sqlite3

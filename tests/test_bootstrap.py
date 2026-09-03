@@ -33,8 +33,25 @@ from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Purchase
 from procurement.models.policy import Policy
 
-#: 확정된 MVP 정책 코드 (PM 확정 — 변경하지 않음)
-EXPECTED_CODES = {"SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP", "GREEN"}
+#: 확정된 정책 코드 (PM 확정 — 임의로 늘리거나 줄이지 않는다)
+#:
+#: ⚠️ **기대값이 바뀐 이유** — 2026-09-03 PM 확정(DECISIONS §0.22 · STEP 97)으로
+#: 최종 정책 범위가 **활성 8종 + 비활성 1종(GREEN)** 으로 늘었다. 원래 5종이었고
+#: 네 개(사회적기업·사회적협동조합·장애인표준사업장·자활용사촌)가 추가되었다.
+#: ⛔ 판정 기준을 새로 만든 것은 아니다 — 네 정책 모두 일반 규칙인 **결의일자**를
+#: 그대로 쓴다(§0.12.1). 이 시험이 지키려던 것 — *seed 집합이 조용히 바뀌지
+#: 않는다* — 는 그대로 두고, 기준값만 확정된 범위로 적는다.
+EXPECTED_CODES = {
+    "SMALL_BUSINESS",
+    "WOMAN",
+    "DISABLED",
+    "STARTUP",
+    "GREEN",
+    "SOCIAL_ENTERPRISE",
+    "SOCIAL_COOPERATIVE",
+    "DISABLED_STANDARD_WORKPLACE",
+    "SELF_SUPPORT_VILLAGE",
+}
 
 #: 대시보드가 계산 대상으로 보는 코드 — ``GREEN`` 은 제외된다.
 #:
@@ -82,13 +99,13 @@ class TestInitDb:
 
 
 class TestSeedPolicies:
-    """MVP 정책 5종 등록과 멱등성을 검증합니다."""
+    """확정된 정책 seed 등록과 멱등성을 검증합니다(→ ``EXPECTED_CODES``)."""
 
-    def test_seeds_five_mvp_policies(self, db_path: Path) -> None:
+    def test_seeds_the_confirmed_mvp_policies(self, db_path: Path) -> None:
         init_db(db_path)
         created = seed_policies(db_path)
         assert set(created) == EXPECTED_CODES
-        assert PolicyRepository(db_path).count() == 5
+        assert PolicyRepository(db_path).count() == len(MVP_POLICY_SEEDS)
 
     def test_target_rate_is_null(self, db_path: Path) -> None:
         """D-004: 목표율은 임의 값 없이 NULL 로 등록됩니다."""
@@ -122,6 +139,11 @@ class TestSeedPolicies:
             바뀌어** 기대값이 달라진 경우입니다.
 
             ⛔ 녹색제품(``GREEN``)은 이번 답변에 없으므로 **그대로 둡니다.**
+
+            **기대값이 바뀐 이유 ③** — 2026-09-03 PM 확정(§0.22 · STEP 97)으로
+            정책 4종이 추가되었습니다. 네 정책 모두 ⛔ 새 판정 유형을 만들지
+            않고 §0.12.1 의 일반 규칙인 ``RESOLUTION_DATE`` 를 그대로 씁니다.
+            (자활용사촌의 기준이 이것이 맞는지는 고객 확인 대기 — §0.22.3.)
         """
         init_db(db_path)
         seed_policies(db_path)
@@ -132,6 +154,10 @@ class TestSeedPolicies:
             "DISABLED": "RESOLUTION_DATE",
             "STARTUP": "RESOLUTION_OR_CONTRACT_DATE",
             "GREEN": "PAYMENT_DATE",
+            "SOCIAL_ENTERPRISE": "RESOLUTION_DATE",
+            "SOCIAL_COOPERATIVE": "RESOLUTION_DATE",
+            "DISABLED_STANDARD_WORKPLACE": "RESOLUTION_DATE",
+            "SELF_SUPPORT_VILLAGE": "RESOLUTION_DATE",
         }
         assert set(expected) == EXPECTED_CODES
         for code, basis in expected.items():
@@ -144,7 +170,7 @@ class TestSeedPolicies:
         init_db(db_path)
         seed_policies(db_path)
         assert seed_policies(db_path) == []
-        assert PolicyRepository(db_path).count() == 5
+        assert PolicyRepository(db_path).count() == len(MVP_POLICY_SEEDS)
 
     def test_does_not_overwrite_existing_target_rate(self, db_path: Path) -> None:
         """운영자가 설정한 목표율을 재실행이 덮어쓰지 않습니다."""
@@ -228,7 +254,7 @@ class TestBootstrapOrchestrator:
         bootstrap(db_path)
         report = bootstrap(db_path)
         assert report.healthy
-        assert PolicyRepository(db_path).count() == 5
+        assert PolicyRepository(db_path).count() == len(MVP_POLICY_SEEDS)
 
 
 class TestCli:
@@ -242,7 +268,7 @@ class TestCli:
         """PM 지정 확인 항목 D — init 을 두 번 실행해도 정상이어야 합니다."""
         assert main(["init", "--db", str(db_path)]) == 0
         assert main(["init", "--db", str(db_path)]) == 0
-        assert PolicyRepository(db_path).count() == 5
+        assert PolicyRepository(db_path).count() == len(MVP_POLICY_SEEDS)
 
     def test_init_no_seed(self, db_path: Path) -> None:
         """--no-seed 는 정책을 등록하지 않으므로 점검에 실패합니다."""
@@ -485,12 +511,13 @@ class TestDashboardAfterBootstrap:
         assert response.status_code == 200
 
     def test_seeded_policies_are_shown_as_target_rate_not_set(self, db_path: Path) -> None:
-        """초기화 직후 **활성 4종**이 모두 '목표율 미설정'으로 표시됩니다.
+        """초기화 직후 **활성 정책 전부**가 '목표율 미설정'으로 표시됩니다.
 
         .. note::
             **기대값이 바뀐 이유** — 2026-08-14 고객 결정(DECISIONS §0.5.1)으로
             녹색제품이 이번 MVP 계산 대상에서 제외되어 ``is_active=False`` 로
-            seed 됩니다. 대시보드는 활성 정책만 보므로 5종 → 4종이 됩니다.
+            seed 됩니다. 대시보드는 활성 정책만 보므로 ``GREEN`` 한 종이 빠진
+            ``ACTIVE_CODES`` 가 됩니다(STEP 97 확정 범위에서는 8종).
             정책 행은 삭제하지 않았으므로 ``GET /policies`` 에는 그대로 나옵니다.
         """
         bootstrap(db_path)

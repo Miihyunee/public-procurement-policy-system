@@ -204,18 +204,51 @@ class TestTheStartupRuleIsUnchanged:
 
 
 class TestNoNewPoliciesWereRegistered:
-    """⛔ 사회적기업 · 사회적협동조합 · 장애인표준사업장을 **만들지 않았다**.
+    """⛔ 확정 범위를 넘는 정책을 만들지 않았다.
 
-    고객은 그 3종의 **기준일**을 말했을 뿐이며(§0.12.1), 정책을 새로
-    등록하라고 한 것이 아닙니다.
+    ⚠️ **기대값이 바뀐 이유** — 원래 이 시험은 *"사회적기업 · 사회적협동조합 ·
+    장애인표준사업장을 **만들지 않았다**"* 를 지켰다. 고객은 §0.12.1 에서 그
+    3종의 **기준일**만 말했을 뿐이고, 정책을 등록하라고 한 것이 아니었기
+    때문이다. 2026-09-03 PM 이 최종 정책 범위를 **8종**으로 확정하면서
+    (DECISIONS §0.22 · STEP 97) 그 3종에 자활용사촌까지 더해 네 정책이
+    등록되었다.
+
+    ⛔ 지키려던 것은 그대로 지킨다 — **기준일 언급만 보고 만든 것이 아니라
+    확정을 받고 만들었다.** 그래서 아래 시험은 "없다" 를 "확정된 코드와 정확히
+    일치한다" 로 바꿔 적었다. 확정 범위 밖의 정책이 하나라도 늘면 여전히
+    실패한다.
     """
+
+    #: 2026-09-03 PM 확정(STEP 97 §2)이 지정한 코드. ⛔ 임의로 정한 것이 아니다.
+    CONFIRMED_NEW_CODES = (
+        "SOCIAL_ENTERPRISE",
+        "SOCIAL_COOPERATIVE",
+        "DISABLED_STANDARD_WORKPLACE",
+        "SELF_SUPPORT_VILLAGE",
+    )
 
     @pytest.mark.parametrize(
         "code",
         ["SOCIAL_ENTERPRISE", "SOCIAL_COOPERATIVE", "DISABLED_STANDARD_WORKPLACE"],
     )
-    def test_the_policy_was_not_added(self, code: str) -> None:
-        assert code not in {seed.policy_code for seed in MVP_POLICY_SEEDS}
+    def test_the_policy_is_registered_with_the_confirmed_code(self, code: str) -> None:
+        assert code in {seed.policy_code for seed in MVP_POLICY_SEEDS}
 
-    def test_the_policy_count_is_unchanged(self) -> None:
-        assert len(MVP_POLICY_SEEDS) == 5
+    def test_the_policy_set_matches_the_confirmed_scope(self) -> None:
+        codes = {seed.policy_code for seed in MVP_POLICY_SEEDS}
+
+        assert codes == {
+            "SMALL_BUSINESS",
+            "WOMAN",
+            "DISABLED",
+            "STARTUP",
+            "GREEN",
+            *self.CONFIRMED_NEW_CODES,
+        }
+        assert len(MVP_POLICY_SEEDS) == 9
+
+    def test_the_new_policies_did_not_invent_a_date_basis(self) -> None:
+        """⛔ 새 판정 유형을 만들지 않았다 — 일반 규칙(결의일자)을 그대로 쓴다."""
+        for seed in MVP_POLICY_SEEDS:
+            if seed.policy_code in self.CONFIRMED_NEW_CODES:
+                assert seed.evaluation_basis == RESOLUTION_DATE, seed.policy_code

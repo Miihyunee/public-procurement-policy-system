@@ -32,7 +32,7 @@ from procurement.calculators import ProcurementAchievementCalculator
 from procurement.core.period import RESOLUTION_DATE, PeriodFilter
 from procurement.dashboard.data_service import DashboardDataService
 from procurement.dashboard.models import DashboardStatus
-from procurement.database.bootstrap import bootstrap
+from procurement.database.bootstrap import MVP_POLICY_SEEDS, bootstrap
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.policy_repository import (
@@ -242,7 +242,9 @@ class TestApi:
 
         assert body["year"] == 2026
         codes = {item["policy_code"] for item in body["items"]}
-        assert codes == {"SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP"}
+        # ⚠️ 활성 seed 와 대조한다 — §0.22 로 활성 정책이 4종 → 8종이 되었고,
+        #    이 시험의 요지는 "미설정 정책도 목록에 담긴다" 이다.
+        assert codes == {seed.policy_code for seed in MVP_POLICY_SEEDS if seed.is_active}
         assert all(item["target_rate"] is None for item in body["items"])
         assert all(item["target_rate_status"] == "NOT_SET" for item in body["items"])
 
@@ -663,13 +665,30 @@ class TestForbiddenThingsWereNotDone:
         conn.close()
         assert "target_rate" in columns
 
-    def test_no_new_policy_was_added(self) -> None:
-        """⛔ 사회적기업 등 신규 정책을 만들지 않았다."""
+    def test_no_policy_beyond_the_confirmed_scope(self) -> None:
+        """⛔ 확정 범위를 넘는 정책을 만들지 않았다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-09-03 PM 확정(``DECISIONS.md`` §0.22 ·
+            STEP 97 §2)으로 정책 4종이 **확정을 받고** 추가되었다. STEP 93
+            시점에는 미확정이었다. 막으려던 것 — *확정 없이 정책이 늘어나는
+            것* — 은 그대로이며, 기준표만 확정본으로 바꿔 적었다.
+        """
         from procurement.database.bootstrap import MVP_POLICY_SEEDS
 
-        assert len(MVP_POLICY_SEEDS) == 5
+        assert len(MVP_POLICY_SEEDS) == 9
         codes = {seed.policy_code for seed in MVP_POLICY_SEEDS}
-        assert codes == {"SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP", "GREEN"}
+        assert codes == {
+            "SMALL_BUSINESS",
+            "WOMAN",
+            "DISABLED",
+            "STARTUP",
+            "GREEN",
+            "SOCIAL_ENTERPRISE",
+            "SOCIAL_COOPERATIVE",
+            "DISABLED_STANDARD_WORKPLACE",
+            "SELF_SUPPORT_VILLAGE",
+        }
 
     def test_the_resolution_date_basis_is_unchanged(self) -> None:
         """⛔ 결의일자 기준을 바꾸지 않았다."""

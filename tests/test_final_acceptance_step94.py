@@ -530,14 +530,26 @@ class TestExistingRulesAreUnchanged:
         seed = next(s for s in MVP_POLICY_SEEDS if s.policy_code == "STARTUP")
         assert seed.evaluation_basis == "RESOLUTION_OR_CONTRACT_DATE"
 
-    def test_the_policy_set_is_unchanged(self) -> None:
-        """⛔ 사회적기업 등 신규 정책을 만들지 않았다."""
+    def test_the_policy_set_matches_the_confirmed_scope(self) -> None:
+        """⛔ 확정 범위를 넘는 정책을 만들지 않았다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-09-03 PM 확정(``DECISIONS.md`` §0.22 ·
+            STEP 97 §2)으로 최종 정책 범위가 8종(+ 비활성 ``GREEN``)으로
+            확정되어 네 정책이 등록되었다. STEP 94 시점에는 확정 전이라
+            "만들지 않았다" 가 맞았다. 지키려던 것 — *seed 집합이 확정 없이
+            조용히 늘지 않는다* — 은 그대로이고 기준표만 확정본으로 바꿨다.
+        """
         assert {s.policy_code for s in MVP_POLICY_SEEDS} == {
             "SMALL_BUSINESS",
             "WOMAN",
             "DISABLED",
             "STARTUP",
             "GREEN",
+            "SOCIAL_ENTERPRISE",
+            "SOCIAL_COOPERATIVE",
+            "DISABLED_STANDARD_WORKPLACE",
+            "SELF_SUPPORT_VILLAGE",
         }
 
     def test_direct_production_is_not_used_for_performance(self) -> None:

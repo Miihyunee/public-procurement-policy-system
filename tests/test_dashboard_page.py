@@ -18,13 +18,17 @@ from fastapi.testclient import TestClient
 
 from procurement.api.status_response import PERIOD_NOTICE_AVAILABLE, PERIOD_NOTICE_UNAVAILABLE
 from procurement.app import create_app
-from procurement.database.bootstrap import init_db, seed_policies
+from procurement.database.bootstrap import MVP_POLICY_SEEDS, init_db, seed_policies
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Purchase
 from procurement.web.policy_display import ON_HOLD, POLICY_DISPLAY, READY, get_display_info
 
 #: 정본 정책 코드 개수(bootstrap seed 기준).
-SEED_POLICY_COUNT = 5
+#:
+#: ⚠️ 하드코딩하지 않는다 — 2026-09-03 PM 확정(§0.22 · STEP 97)으로 정책이
+#: 5종에서 9종(활성 8 + 비활성 GREEN)으로 늘면서 고정값 ``5`` 가 어긋났다.
+#: 정본은 seed 목록이므로 거기에서 센다.
+SEED_POLICY_COUNT = len(MVP_POLICY_SEEDS)
 
 
 @pytest.fixture
