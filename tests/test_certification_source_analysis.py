@@ -360,13 +360,28 @@ class TestTheRequestSheetIsComplete:
     적용해 요청서에서 뺐고, 남은 것은 ②~④ 4문항이다. 조용히 사라지지 않도록
     요청서에는 🟢 로 "답을 받았습니다" 가 기록돼 있다
     (→ `test_the_answered_question_is_recorded_as_closed`).
+
+    ⚠️ **3차 규칙 변경(2026-09-03 · STEP 98).** 목표 비율 8종을 받아 반영하는
+    과정에서 그중 **둘을 지금 구조로는 계산할 수 없다**는 사실이 드러났다
+    (DECISIONS §0.24.3). 여성기업은 구매유형별 목표가 둘이고, 자활용사촌은
+    분모가 생산가능품목 구매액이다. ⛔ 임의로 계산하지 않고 되물었으므로
+    ⑤⑥ 두 문항이 **새로 늘었고**, 「1000분의 8」 표기 확인(⑦)이 더해져
+    ②~⑦ 6문항이 열려 있다. 질문이 준 것이 아니라 는 것에 주의 —
+    답을 받으면서 **새 질문이 생긴** 경우다.
     """
 
-    def test_there_are_exactly_four_questions(self, request_sheet: str) -> None:
+    #: 요청서 ② 에서 답을 받아 닫힌 번호. ⛔ 다시 여쭙지 않는다.
+    CLOSED_NUMBERS = ("## ①",)
+
+    def test_there_are_exactly_seven_numbered_questions(self, request_sheet: str) -> None:
         """⛔ 질문을 늘리지도, 남은 것을 빠뜨리지도 않았다."""
         headings = [line for line in request_sheet.splitlines() if line.startswith("## ")]
-        numbered = [h for h in headings if h.startswith(("## ①", "## ②", "## ③", "## ④"))]
-        assert len(numbered) == 4, headings
+        numbered = [
+            h
+            for h in headings
+            if h.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤", "## ⑥", "## ⑦"))
+        ]
+        assert len(numbered) == 7, headings
 
     def test_the_answered_question_is_recorded_as_closed(self, request_sheet: str) -> None:
         """⑤ 는 조용히 사라진 것이 아니라 **답을 받아서** 닫혔다."""
@@ -388,7 +403,7 @@ class TestTheRequestSheetIsComplete:
         numbered = [
             line
             for line in request_sheet.splitlines()
-            if line.startswith(("## ①", "## ②", "## ③", "## ④"))
+            if line.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤", "## ⑥", "## ⑦"))
         ]
         assert all("🔴" in line for line in numbered), numbered
 
@@ -404,10 +419,27 @@ class TestTheRequestSheetIsComplete:
     def test_the_topic_is_covered(self, request_sheet: str, topic: str) -> None:
         assert topic in request_sheet, topic
 
-    def test_the_target_rate_is_asked_for(self, request_sheet: str) -> None:
-        """📎 목표 비율이 없으면 달성률이 나오지 않는다 — 함께 요청했는가."""
+    def test_the_target_rates_were_received_and_recorded(self, request_sheet: str) -> None:
+        """📎 목표 비율은 **받았다** — 요청서에 답을 받은 사실이 적혀 있는가.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-09-03 고객이 8개 정책의 목표 비율을
+            모두 회신했다(``DECISIONS.md`` §0.24 · STEP 98 §2). 원래 이 시험은
+            *"목표 비율을 함께 요청했는가"* 를 지켰다. 답을 받았으므로 ⛔ 이미
+            답을 받은 것을 다시 여쭙지 않는다는 원칙에 따라 요청 문구를 뺐고,
+            대신 **받은 값이 요청서에 남아 있는지**를 지킨다. 조용히 사라지지
+            않도록 8개 값이 그대로 적혀 있어야 한다.
+        """
         assert "목표 비율" in request_sheet
-        assert "임의로 넣지 않았습니다" in request_sheet
+        assert "받았습니다" in request_sheet
+        for rate in ("50%", "3.4%", "3%", "0.1%", "1%", "0.8%", "7%"):
+            assert rate in request_sheet, rate
+
+    def test_the_two_uncomputable_targets_are_asked_about(self, request_sheet: str) -> None:
+        """⛔ 담을 수 없는 두 목표를 조용히 넘기지 않고 되물었다(§0.24.3)."""
+        assert "구매유형" in request_sheet or "공사" in request_sheet
+        assert "생산가능품목" in request_sheet
+        assert "계산 보류" in request_sheet
 
 
 class TestTheRequestSheetIsPlain:

@@ -7,6 +7,7 @@ Usage:
     python -m procurement init      # DB 초기화 + 정책 등록 + 상태 점검
     python -m procurement run       # DB 스키마 점검 후 FastAPI 개발 서버 실행
     python -m procurement health    # 초기화 상태만 점검
+    python -m procurement targets --year 2026   # 확정 목표비율을 해당 연도에 등록
 
     # Swagger(OpenAPI) 문서: http://127.0.0.1:8000/docs
 """
@@ -35,9 +36,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "init", help="DB 초기화, 기본 정책 등록, 상태 점검을 수행합니다."
     )
     init_parser.add_argument("--db", type=Path, default=None, help="DB 파일 경로")
-    init_parser.add_argument(
-        "--no-seed", action="store_true", help="기본 정책 등록을 건너뜁니다."
-    )
+    init_parser.add_argument("--no-seed", action="store_true", help="기본 정책 등록을 건너뜁니다.")
 
     run_parser = subparsers.add_parser("run", help="FastAPI 개발 서버를 실행합니다.")
     run_parser.add_argument("--host", default=_DEFAULT_HOST, help="바인딩 주소")
@@ -46,6 +45,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     health_parser = subparsers.add_parser("health", help="초기화 상태를 점검합니다.")
     health_parser.add_argument("--db", type=Path, default=None, help="DB 파일 경로")
+
+    targets_parser = subparsers.add_parser(
+        "targets", help="고객이 확정한 목표비율을 해당 연도에 등록합니다."
+    )
+    targets_parser.add_argument(
+        "--year", type=int, required=True, help="목표비율을 등록할 연도 (예: 2026)"
+    )
+    targets_parser.add_argument("--db", type=Path, default=None, help="DB 파일 경로")
 
     return parser
 
@@ -65,6 +72,66 @@ def _run_health(db_path: Path | None) -> int:
     report = verify_bootstrap(db_path)
     print(report.format_report())
     return 0 if report.healthy else 1
+
+
+def _run_targets(db_path: Path | None, year: int) -> int:
+    """고객이 확정한 목표비율을 지정한 연도에 등록합니다.
+
+    ⛔ **저장 가능한 것만 등록합니다.** 여성기업(구매유형별 두 목표)과
+    국가유공자자활용사촌(분모가 생산가능품목 구매액)은 지금 구조로 담으면 틀린
+    달성률이 나오므로 넣지 않고, 왜 넣지 않았는지를 출력합니다
+    (:data:`~procurement.policy.BLOCKED_TARGETS`).
+
+    이미 등록된 값이 있으면 덮어씁니다(연도 × 정책 단위 upsert). 목표비율은
+    운영자가 고치는 값이므로 **여러 번 실행해도 결과가 같습니다.**
+
+    Args:
+        db_path: DB 경로. ``None`` 이면 설정값을 사용합니다.
+        year: 목표비율을 등록할 연도.
+
+    Returns:
+        정상은 ``0``. 정책이 등록되어 있지 않아 붙일 곳이 없으면 ``1``.
+    """
+    from procurement.database.policy_repository import PolicyRepository
+    from procurement.database.policy_target_repository import PolicyTargetRepository
+    from procurement.policy import BLOCKED_TARGETS, STORABLE_TARGET_RATES
+
+    # ⚠️ 초기화되지 않은 DB 를 그냥 읽으면 sqlite 의 "no such table" 이 그대로
+    #    올라와 운영자가 무엇을 해야 할지 알 수 없습니다. ``run`` 과 같은 방식으로
+    #    **먼저 점검하고** 조치를 안내합니다.
+    report = verify_bootstrap(db_path)
+    if not report.healthy:
+        print(report.format_report())
+        print(
+            "\n목표비율을 등록하지 않았습니다. DB 를 먼저 초기화하세요."
+            "\n  python -m procurement init"
+        )
+        return 1
+
+    policies = {policy.policy_code: policy for policy in PolicyRepository(db_path).find_all()}
+
+    repository = PolicyTargetRepository(db_path)
+    registered: list[str] = []
+    missing: list[str] = []
+    for code, rate in STORABLE_TARGET_RATES.items():
+        policy = policies.get(code)
+        if policy is None or policy.policy_id is None:
+            missing.append(code)
+            continue
+        repository.upsert(year, policy.policy_id, rate)
+        registered.append(f"  {policy.policy_name} ({code}) — {rate}%")
+
+    print(f"[{year}년] 목표비율 {len(registered)}건을 등록했습니다.")
+    print("\n".join(registered))
+
+    if missing:
+        print("\n정책을 찾지 못해 건너뛴 코드: " + ", ".join(sorted(missing)))
+
+    print("\n등록하지 않은 정책 — 확정은 받았으나 지금 구조로 담을 수 없습니다:")
+    for code, reason in BLOCKED_TARGETS.items():
+        print(f"  {code}\n    {reason}")
+    print("\n⛔ 위 두 정책은 숫자를 지어내지 않고 '계산 보류' 로 둡니다.")
+    return 0
 
 
 def _run_server(host: str, port: int, db_path: Path | None = None) -> int:
@@ -122,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_init(args.db, seed=not args.no_seed)
     if args.command == "health":
         return _run_health(args.db)
+    if args.command == "targets":
+        return _run_targets(args.db, args.year)
     if args.command == "run":
         return _run_server(args.host, args.port, args.db)
 
