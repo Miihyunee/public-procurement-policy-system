@@ -25,12 +25,16 @@ STEP 108 — **종료일 없는 인증**(사회적기업·사회적협동조합)
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
+from procurement.app import create_app
 from procurement.calculators.procurement_achievement import ProcurementAchievementCalculator
 from procurement.calculators.rules import RuleContext, build_default_registry
 from procurement.calculators.rules.date_rules import is_within_any
@@ -323,3 +327,219 @@ class TestMigratingAnExistingDatabase:
             repo.create_table()
         assert repo.count() == 1
         assert "valid_to DATE," in CREATE_TABLE_SQL  # NOT NULL 이 아니다
+
+
+# ======================================================================
+# 실제 사회적협동조합 파일이 지나가는 경로 (지시서 §17)
+#
+# 실제 자료는 「연번·협동조합명·대표자·사업자등록번호·주소·전화번호·품목·
+# 인가일」 여덟 칸이고 **종료일·인증상태·취소일 칸이 아예 없습니다.** 그
+# 모양을 합성 데이터로 그대로 흉내 내어 파일 한 장이 실적 숫자가 되기까지를
+# 확인합니다. ⛔ 실제 기업명·사업자등록번호는 쓰지 않습니다.
+# ======================================================================
+
+#: 목표율 — 🟢 2026-09-03 고객 확정(DECISIONS §0.24).
+_COOP_TARGET_RATE = Decimal("0.1")
+
+#: 합성 사업자등록번호 — 체크섬만 맞춘 값입니다.
+_COOP = "1000000014"
+_ABSENT = "1000000028"
+
+
+def _coop_file(path: Path, rows: list[tuple[str, str, str, str]]) -> Path:
+    """정책을 고르고 올리는 표준 양식 — 유효종료일은 **비워 둡니다**."""
+    openpyxl = pytest.importorskip("openpyxl")
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.append(["사업자등록번호", "기업명", "대표자명", "유효시작일", "유효종료일"])
+    for business_no, name, representative, approved_on in rows:
+        sheet.append([business_no, name, representative, approved_on, None])
+    book.save(path)
+    return path
+
+
+def _plain_purchase(db: Path, business_no: str, *, resolution: date, amount: str) -> None:
+    PurchaseRepository(db).insert(
+        Purchase(
+            business_no=business_no,
+            company_name="합성업체",
+            resolution_date=resolution,
+            amount=Decimal(amount),
+        )
+    )
+
+
+@pytest.fixture
+def coop_db(tmp_path: Path) -> Path:
+    from procurement.__main__ import main
+
+    path = tmp_path / "coop_flow.db"
+    init_db(path)
+    seed_policies(path)
+    # 목표비율은 seed 가 아니라 ``targets --year`` 이 넣습니다(STEP 98).
+    assert main(["targets", "--year", "2026", "--db", str(path)]) == 0
+    return path
+
+
+@pytest.fixture
+def coop_client(coop_db: Path) -> Iterator[TestClient]:
+    with TestClient(create_app(coop_db)) as client:
+        yield client
+
+
+def _coop_summary(client: TestClient) -> dict[str, Any]:
+    payload = client.get("/dashboard/summary", params={"year": 2026}).json()
+    row = next(r for r in payload["policies"] if r["policy_code"] == "SOCIAL_COOPERATIVE")
+    return dict(row)
+
+
+def _upload_coop(
+    client: TestClient, path: Path, policy_code: str = "SOCIAL_COOPERATIVE"
+) -> dict[str, Any]:
+    response = client.post(
+        "/companies/upload", json={"file_path": str(path), "policy_code": policy_code}
+    )
+    assert response.status_code == 200, response.text
+    return dict(response.json())
+
+
+class TestTheCooperativeFileFlow:
+    """§4 · §11 · §12 — 파일 한 장이 0.1% 달성률이 되기까지."""
+
+    def test_the_policy_is_already_wired_for_file_upload(self, coop_client: TestClient) -> None:
+        rows = coop_client.get("/companies/registration").json()["items"]
+        row = next(r for r in rows if r["policy_code"] == "SOCIAL_COOPERATIVE")
+        assert "FILE" in row["available_methods"]
+
+        targets = coop_client.get("/policy-targets", params={"year": 2026}).json()["items"]
+        target = next(t for t in targets if t["policy_code"] == "SOCIAL_COOPERATIVE")
+        assert Decimal(target["target_rate"]) == _COOP_TARGET_RATE
+
+    def test_nothing_registered_is_not_zero(self, coop_client: TestClient, coop_db: Path) -> None:
+        """§13 — 등록 전에는 **조회불가**. ⛔ 0원도 0% 도 아닙니다."""
+        _plain_purchase(coop_db, _COOP, resolution=date(2026, 5, 1), amount="1000")
+        row = _coop_summary(coop_client)
+        assert row["status"] == "COMPANY_DATA_NOT_REGISTERED"
+        assert row["purchase_amount"] is None
+        assert row["achievement_rate"] is None
+
+    def test_the_whole_path_produces_the_achievement(
+        self, coop_client: TestClient, coop_db: Path, tmp_path: Path
+    ) -> None:
+        """§5 · §12 — 하이픈 정규화 → 정확 매칭 → 0.1% 목표 → 달성률 100%."""
+        # 분모 1,000,000원 중 조합 거래 1,000원 → 0.1% → 달성률 100%
+        _plain_purchase(coop_db, _COOP, resolution=date(2026, 5, 1), amount="1000")
+        _plain_purchase(coop_db, _ABSENT, resolution=date(2026, 5, 1), amount="999000")
+        path = _coop_file(
+            tmp_path / "coop.xlsx",
+            [("100-00-00014", "합성사회적협동조합", "가나다", "2026-03-15")],
+        )
+        result = _upload_coop(coop_client, path)
+        assert result["stored"] is True
+        assert result["certifications"] == 1
+        coop_client.post("/purchases/rematch")
+
+        # ⛔ 종료일을 지어내지 않았습니다.
+        stored = CertificationRepository(coop_db).find_by_policy(
+            _policy_id(coop_db, "SOCIAL_COOPERATIVE")
+        )
+        assert [c.valid_to for c in stored] == [None]
+
+        row = _coop_summary(coop_client)
+        assert row["total_purchase_amount"] == "1000000"
+        assert row["purchase_amount"] == "1000"
+        assert Decimal(row["target_rate"]) == _COOP_TARGET_RATE
+        assert Decimal(row["achievement_rate"]) == Decimal("100")
+        assert row["status"] == "NORMAL"
+
+    def test_a_company_not_on_the_list_is_not_counted(
+        self, coop_client: TestClient, coop_db: Path, tmp_path: Path
+    ) -> None:
+        """§13 — 등록은 되어 있고 목록에 없으면 **미해당**입니다.
+
+        조회불가와 달리 금액이 나옵니다 — 셀 수 있는데 이 업체가 아닐 뿐입니다.
+        ⛔ 비슷한 번호·같은 이름으로 대신 맞추지 않습니다(§5).
+        """
+        _plain_purchase(coop_db, _ABSENT, resolution=date(2026, 5, 1), amount="1000")
+        path = _coop_file(
+            tmp_path / "coop.xlsx", [(_COOP, "합성사회적협동조합", "가나다", "2026-03-15")]
+        )
+        _upload_coop(coop_client, path)
+        coop_client.post("/purchases/rematch")
+
+        row = _coop_summary(coop_client)
+        assert row["status"] != "COMPANY_DATA_NOT_REGISTERED"
+        assert row["purchase_amount"] == "0"
+
+    def test_the_issue_date_is_not_the_basis(
+        self, coop_client: TestClient, coop_db: Path, tmp_path: Path
+    ) -> None:
+        """§6 — ⛔ 신고기준일로 판정하지 않습니다.
+
+        결의일자는 인가일 **이전**, 신고기준일은 인가일 이후에 두었습니다.
+        신고기준일을 본다면 실적이 잡히는데, 잡히면 안 됩니다.
+        """
+        PurchaseRepository(coop_db).insert(
+            Purchase(
+                business_no=_COOP,
+                company_name="합성업체",
+                resolution_date=date(2026, 1, 5),  # 인가일 전 → 실적 아님
+                issue_date=date(2026, 6, 1),  # 인가일 후 — ⛔ 판정에 쓰이면 안 된다
+                amount=Decimal("1000"),
+            )
+        )
+        path = _coop_file(
+            tmp_path / "coop.xlsx", [(_COOP, "합성사회적협동조합", "가나다", "2026-03-15")]
+        )
+        _upload_coop(coop_client, path)
+        coop_client.post("/purchases/rematch")
+        assert _coop_summary(coop_client)["purchase_amount"] == "0"
+
+    def test_one_purchase_lands_in_two_policies(
+        self, coop_client: TestClient, coop_db: Path, tmp_path: Path
+    ) -> None:
+        """§14 — 같은 거래가 두 정책에 각각 들어갑니다. ⛔ 중복 제거 없음."""
+        _plain_purchase(coop_db, _COOP, resolution=date(2026, 5, 1), amount="1000")
+        _upload_coop(
+            coop_client,
+            _coop_file(
+                tmp_path / "coop.xlsx", [(_COOP, "합성사회적협동조합", "가나다", "2026-03-15")]
+            ),
+        )
+        # 창업기업은 종료일이 **필수**입니다 — 두 정책만 비울 수 있습니다.
+        openpyxl = pytest.importorskip("openpyxl")
+        startup_path = tmp_path / "startup.xlsx"
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.append(["사업자등록번호", "기업명", "대표자명", "유효시작일", "유효종료일"])
+        sheet.append([_COOP, "합성업체", "가나다", "2026-01-01", "2026-12-31"])
+        book.save(startup_path)
+        _upload_coop(coop_client, startup_path, "STARTUP")
+        coop_client.post("/purchases/rematch")
+
+        payload = coop_client.get("/dashboard/summary", params={"year": 2026}).json()
+        amounts = {row["policy_code"]: row["purchase_amount"] for row in payload["policies"]}
+        assert amounts["SOCIAL_COOPERATIVE"] == "1000"
+        assert amounts["STARTUP"] == "1000"  # 같은 1,000원이 양쪽에 들어간다
+        assert payload["total_purchase_amount"] == "1000"  # 분모는 한 번만 센다
+
+
+class TestTheRealFileShapeHasNoCancellation:
+    """§8 — 실제 자료에 없는 개념을 시스템이 만들어 내지 않았습니다."""
+
+    def test_the_upload_form_has_no_status_or_cancellation_column(self) -> None:
+        from procurement.uploads.company_format import COMPANY_REQUIRED_HEADERS
+
+        for absent in ("인증상태", "인증취소일", "취소일"):
+            assert absent not in COMPANY_REQUIRED_HEADERS, absent
+
+    def test_no_source_file_judges_on_a_cancellation(self) -> None:
+        """⛔ 취소로 판정하는 코드가 소스 어디에도 없습니다."""
+        source_root = Path(__file__).resolve().parents[1] / "src" / "procurement"
+        for term in ("인증취소", "취소일", "cancell", "revoke"):
+            hits = [
+                path.name
+                for path in source_root.rglob("*.py")
+                if term.lower() in path.read_text(encoding="utf-8").lower()
+            ]
+            assert hits == [], (term, hits)
