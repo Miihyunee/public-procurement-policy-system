@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
 
+from procurement.core.open_ended_certification import allows_open_ended
 from procurement.database.certification_repository import (
     CertificationRepository,
     CertificationValidationError,
@@ -72,7 +73,9 @@ class CompanyRecord:
         representative_name: 대표자명. **없으면 저장하지 않습니다.**
         policy_code: 인증 정책 코드. 인증까지 넣을 때만 채웁니다.
         valid_from: 인증 유효 시작일.
-        valid_to: 인증 유효 종료일.
+        valid_to: 인증 유효 종료일. 비어 있어도 되는 정책은
+            :data:`~procurement.core.open_ended_certification.OPEN_ENDED_POLICY_CODES`
+            뿐입니다 — 그 경우 시작일 이후로 계속 유효한 인증이 됩니다.
         source_row: 사용자에게 알려 줄 원본 행 번호(파일) 또는 순번(조회).
     """
 
@@ -281,7 +284,12 @@ class CompanyImporter:
                 f"등록되지 않은 인증 종류입니다: {record.policy_code}. "
                 "기업은 저장했고 인증만 넣지 않았습니다."
             )
-        if record.valid_from is None or record.valid_to is None:
+        if record.valid_from is None:
+            return False, "인증 유효기간이 없어 인증을 넣지 않았습니다."
+        # 🟢 2026-09-04 고객 확정: 사회적기업·사회적협동조합만 종료일 없이
+        #    계속 유효합니다. 그 외 정책에서 종료일이 비어 있으면 예전처럼
+        #    넣지 않습니다 — 빠진 값이 조용히 "영원히 유효" 가 되면 안 됩니다.
+        if record.valid_to is None and not allows_open_ended(record.policy_code):
             return False, "인증 유효기간이 없어 인증을 넣지 않았습니다."
 
         # 재실행 안전성 — 같은 (정책, 시작일, 종료일)이면 넣지 않는다.

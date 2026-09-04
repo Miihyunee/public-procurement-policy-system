@@ -330,12 +330,22 @@ class TestCertificationValidity:
         _add(db, "1000", company_id=company_id)
         assert calculator.calculate_policy_purchase(_policy_id(db, "WOMAN")) == Decimal("0")
 
-    def test_certification_dates_cannot_be_null(self, db: Path) -> None:
-        """인증 유효기간은 **비어 있을 수 없다** — 경계 판정에 빈 값이 오지 않는다."""
+    def test_certification_start_date_cannot_be_null(self, db: Path) -> None:
+        """시작일은 **비어 있을 수 없다**. 종료일은 비어 있을 수 있다.
+
+        .. note::
+            분류 ② 요구사항 변경 (STEP 108). 이 시험은 두 날짜 모두
+            ``NOT NULL`` 이기를 요구했습니다. 🟢 2026-09-04 고객 확정
+            (*"사회적기업과 사회적협동조합은 종료일이 없으며 계속 유효한
+            것으로 판단한다"*)에 따라 종료일 쪽 기대값을 뒤집습니다.
+            ``valid_to IS NULL`` 은 **끝이 없다**는 뜻이며, 경계 판정은
+            :func:`~procurement.calculators.rules.date_rules.is_within_any`
+            가 그대로 처리합니다.
+        """
         columns = CertificationRepository(db).execute("PRAGMA table_info(certification)")
         notnull = {row["name"]: row["notnull"] for row in columns}
         assert notnull["valid_from"] == 1
-        assert notnull["valid_to"] == 1
+        assert notnull["valid_to"] == 0
 
 
 class TestStartupOrRule:

@@ -266,7 +266,9 @@ class ProcurementAchievementCalculator:
             return Decimal("0")
 
         # company_id -> 인증 유효기간(valid_from, valid_to) 목록
-        validity_ranges: dict[int, list[tuple[date, date]]] = {}
+        # ``valid_to`` 가 ``None`` 인 구간은 **종료일 없이 계속 유효**한 인증입니다
+        # (🟢 2026-09-04 고객 확정 · 사회적기업·사회적협동조합).
+        validity_ranges: dict[int, list[tuple[date, date | None]]] = {}
         for certification in self._certification_repository.find_by_policy(policy_id):
             if certification.company_id is None:
                 continue

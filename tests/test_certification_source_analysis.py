@@ -368,20 +368,28 @@ class TestTheRequestSheetIsComplete:
     ⑤⑥ 두 문항이 **새로 늘었고**, 「1000분의 8」 표기 확인(⑦)이 더해져
     ②~⑦ 6문항이 열려 있다. 질문이 준 것이 아니라 는 것에 주의 —
     답을 받으면서 **새 질문이 생긴** 경우다.
+
+    ⚠️ **4차 규칙 변경(2026-09-04 · STEP 108).** ③「끝나는 날짜가 없는 인증은
+    어떻게 봅니까」에 **답을 받았다** — *"사회적기업과 사회적협동조합은 종료일이
+    없으며 계속 유효한 것으로 판단한다"*(DECISIONS §0.27). 같은 원칙대로
+    요청서에서 빼고 🟢 로 "답을 받았습니다" 를 남겼으므로 ①②④⑤⑥⑦ 6문항이다.
     """
 
     #: 요청서 ② 에서 답을 받아 닫힌 번호. ⛔ 다시 여쭙지 않는다.
-    CLOSED_NUMBERS = ("## ①",)
+    CLOSED_NUMBERS = ("## ①", "## ③")
 
-    def test_there_are_exactly_seven_numbered_questions(self, request_sheet: str) -> None:
-        """⛔ 질문을 늘리지도, 남은 것을 빠뜨리지도 않았다."""
+    def test_there_are_exactly_six_numbered_questions(self, request_sheet: str) -> None:
+        """⛔ 질문을 늘리지도, 남은 것을 빠뜨리지도 않았다.
+
+        분류 ② 요구사항 변경 (STEP 108) — ③ 에 답을 받아 7에서 6이 되었다.
+        """
         headings = [line for line in request_sheet.splitlines() if line.startswith("## ")]
         numbered = [
             h
             for h in headings
             if h.startswith(("## ①", "## ②", "## ③", "## ④", "## ⑤", "## ⑥", "## ⑦"))
         ]
-        assert len(numbered) == 7, headings
+        assert len(numbered) == 6, headings
 
     def test_the_answered_question_is_recorded_as_closed(self, request_sheet: str) -> None:
         """⑤ 는 조용히 사라진 것이 아니라 **답을 받아서** 닫혔다."""

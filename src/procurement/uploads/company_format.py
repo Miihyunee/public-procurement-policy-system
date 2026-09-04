@@ -30,9 +30,11 @@ procurement.uploads.company_format
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Final
 
+from procurement.core.open_ended_certification import allows_open_ended
 from procurement.uploads.format import StandardColumn
 
 #: 인증 없이 **기업만** 올릴 때 필요한 컬럼.
@@ -86,8 +88,9 @@ CERTIFICATION_COLUMNS: Final[tuple[StandardColumn, ...]] = (
         header="유효종료일",
         required=True,
         description=(
-            "인증 유효기간의 종료일입니다. **비워 둘 수 없습니다** — 종료일이 "
-            "없는 인증을 어떻게 볼지는 아직 정해지지 않았습니다."
+            "인증 유효기간의 종료일입니다. **비워 둘 수 없습니다** — 단, "
+            "사회적기업·사회적협동조합만 예외이며 비우면 계속 유효한 인증이 "
+            "됩니다(2026-09-04 고객 확정)."
         ),
         example="2026-12-31",
     ),
@@ -137,6 +140,28 @@ POLICY_SCOPED_COMPANY_COLUMNS: Final[tuple[StandardColumn, ...]] = COMPANY_COLUM
 POLICY_SCOPED_REQUIRED_HEADERS: Final[tuple[str, ...]] = tuple(
     column.header for column in POLICY_SCOPED_COMPANY_COLUMNS
 )
+
+
+def policy_scoped_columns(policy_code: str | None) -> tuple[StandardColumn, ...]:
+    """정책을 고르고 올릴 때 검증에 쓸 컬럼 정의.
+
+    🟢 2026-09-04 고객 확정(STEP 108): *"사회적기업과 사회적협동조합은
+    종료일이 없으며 계속 유효한 것으로 판단한다."* 그 두 정책에서만
+    ``유효종료일`` 이 **선택 항목**이 됩니다.
+
+    Args:
+        policy_code: 사용자가 화면에서 고른 정책 코드.
+
+    Returns:
+        검증에 쓸 컬럼 정의. 그 외 정책은 기존과 완전히 같습니다 —
+        ⛔ 종료일이 비어 있으면 여전히 오류입니다.
+    """
+    if not allows_open_ended(policy_code):
+        return POLICY_SCOPED_COMPANY_COLUMNS
+    return tuple(
+        replace(column, required=False) if column.key == "valid_to" else column
+        for column in POLICY_SCOPED_COMPANY_COLUMNS
+    )
 
 
 def company_header_row() -> tuple[str, ...]:

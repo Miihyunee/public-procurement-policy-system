@@ -98,23 +98,51 @@ def _purchase(db: Path, *, resolution: date, company_id: int | None) -> None:
 class TestTheCertificationShape:
     """§15 · §17 — 인증이 무엇을 담을 수 있는가."""
 
-    def test_a_certification_needs_both_dates(self, db: Path) -> None:
-        """⚠️ **종료일이 필수다** — 지금은 종료일 없는 인증을 저장할 수 없다.
+    def test_a_certification_can_have_no_end_date(self, db: Path) -> None:
+        """**종료일 없는 인증을 저장할 수 있다** — 시작일 이후로 계속 유효.
 
         .. note::
-            이것은 업무규칙이 아니라 **현재 구조의 사실**입니다. 실데이터의
-            사회적기업·사회적협동조합에는 종료일이 없어(§17) 고객 답변에 따라
-            이 제약을 푸는 변경이 필요할 수 있습니다. 그때 이 시험이 깨지는
-            것이 정상이며, 기대값을 바꾸고 사유를 적습니다.
+            분류 ② 요구사항 변경 (STEP 108). 이 시험은 STEP 107 까지
+            *"종료일이 필수다"* 였고, 그때 이미 *"고객 답변에 따라 이 제약을
+            푸는 변경이 필요할 수 있다. 그때 이 시험이 깨지는 것이 정상이며,
+            기대값을 바꾸고 사유를 적는다"* 고 적어 두었습니다.
+
+            🟢 2026-09-04 고객 확정: *"사회적기업과 사회적협동조합은 종료일이
+            없으며 계속 유효한 것으로 판단한다."* 그래서 기대값을 뒤집습니다.
+
+        .. warning::
+            ⛔ 종료일이 **있는** 인증의 규칙은 그대로입니다. 그리고 파일에서
+            들어오는 빈 종료일은 여전히 두 정책에서만 허용됩니다
+            (:mod:`procurement.core.open_ended_certification`).
         """
+        company_id = _company(db)
+        stored = CertificationRepository(db).insert(
+            Certification(
+                company_id=company_id,
+                policy_id=_policy_id(db, "SOCIAL_COOPERATIVE"),
+                valid_from=_VALID_FROM,
+                valid_to=None,
+            )
+        )
+        assert stored.certification_id is not None
+        assert stored.valid_to is None
+
+        # 저장한 그대로 다시 읽힌다 — ⛔ 어디서도 종료일이 만들어지지 않는다.
+        reloaded = CertificationRepository(db).find_by_id(stored.certification_id)
+        assert reloaded is not None
+        assert reloaded.valid_from == _VALID_FROM
+        assert reloaded.valid_to is None
+
+    def test_a_certification_still_needs_a_start_date(self, db: Path) -> None:
+        """시작일은 여전히 필수다 — 언제부터 유효한지 모르면 판정할 수 없다."""
         company_id = _company(db)
         with pytest.raises(CertificationValidationError):
             CertificationRepository(db).insert(
                 Certification(
                     company_id=company_id,
-                    policy_id=_policy_id(db, "SMALL_BUSINESS"),
-                    valid_from=_VALID_FROM,
-                    valid_to=None,  # type: ignore[arg-type]
+                    policy_id=_policy_id(db, "SOCIAL_COOPERATIVE"),
+                    valid_from=None,  # type: ignore[arg-type]
+                    valid_to=None,
                 )
             )
 

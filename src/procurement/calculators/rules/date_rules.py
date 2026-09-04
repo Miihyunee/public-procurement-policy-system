@@ -24,6 +24,7 @@ procurement.calculators.rules.date_rules
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import date
 
 from procurement.calculators.rules.base import RuleContext
@@ -61,6 +62,27 @@ RESOLUTION_DATE = "RESOLUTION_DATE"
 RESOLUTION_OR_CONTRACT_DATE = "RESOLUTION_OR_CONTRACT_DATE"
 
 
+def is_within_any(basis: date, validity_ranges: Sequence[tuple[date, date | None]]) -> bool:
+    """기준일이 유효기간(경계 포함) 중 하나라도 만족하면 ``True``.
+
+    ``valid_to`` 가 ``None`` 인 구간은 **종료일이 없는 인증**이며,
+    ``valid_from`` 이후이기만 하면 계속 유효합니다.
+
+    🟢 2026-09-04 고객 확정(STEP 108): *"사회적기업과 사회적협동조합은
+    종료일이 없으며 계속 유효한 것으로 판단한다."*
+
+    .. warning::
+        ⛔ 없는 종료일을 지어내지 않습니다 — 인가일 + N년, 연말,
+        ``9999-12-31`` 같은 값은 전부 시스템이 만들어낸 규칙입니다.
+        종료일이 **있는** 인증(여성기업·창업기업·장애인기업 등)의 판정은
+        기존과 완전히 같습니다.
+    """
+    return any(
+        valid_from <= basis and (valid_to is None or basis <= valid_to)
+        for valid_from, valid_to in validity_ranges
+    )
+
+
 class DateBasisRule(ABC):
     """기준일이 인증 유효기간 내에 있는지로 판정하는 규칙의 공통 기반.
 
@@ -92,9 +114,7 @@ class DateBasisRule(ABC):
         basis = self.basis_date(context.purchase)
         if basis is None:
             return False
-        return any(
-            valid_from <= basis <= valid_to for valid_from, valid_to in context.validity_ranges
-        )
+        return is_within_any(basis, context.validity_ranges)
 
 
 class PaymentDateRule(DateBasisRule):
@@ -144,9 +164,7 @@ class ResolutionDateRule:
         basis = context.purchase.resolution_date
         if basis is None:
             return False
-        return any(
-            valid_from <= basis <= valid_to for valid_from, valid_to in context.validity_ranges
-        )
+        return is_within_any(basis, context.validity_ranges)
 
 
 class ResolutionOrContractDateRule:
@@ -201,8 +219,4 @@ class ResolutionOrContractDateRule:
             for basis in (purchase.resolution_date, purchase.contract_date)
             if basis is not None
         ]
-        return any(
-            valid_from <= basis <= valid_to
-            for basis in bases
-            for valid_from, valid_to in context.validity_ranges
-        )
+        return any(is_within_any(basis, context.validity_ranges) for basis in bases)

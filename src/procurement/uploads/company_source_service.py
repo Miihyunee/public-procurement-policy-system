@@ -37,8 +37,8 @@ from procurement.importers.company_importer import (
     CompanyRecord,
 )
 from procurement.uploads.company_format import (
-    POLICY_SCOPED_COMPANY_COLUMNS,
     STANDARD_COMPANY_COLUMNS,
+    policy_scoped_columns,
 )
 from procurement.uploads.excel_adapter import ExcelReadError, read_standard_workbook
 from procurement.uploads.validation import (
@@ -102,7 +102,11 @@ class CompanySourceService:
             :class:`ValidationReport`. 파일을 열 수 없으면 ``file_errors`` 에
             사유가 담깁니다.
         """
-        columns = STANDARD_COMPANY_COLUMNS if policy_code is None else POLICY_SCOPED_COMPANY_COLUMNS
+        # 정책을 고르고 올릴 때만 그 정책의 규칙을 적용합니다 — 사회적기업·
+        # 사회적협동조합은 유효종료일이 선택 항목입니다(🟢 2026-09-04 고객 확정).
+        columns = (
+            STANDARD_COMPANY_COLUMNS if policy_code is None else policy_scoped_columns(policy_code)
+        )
         try:
             workbook = read_standard_workbook(file_path)
         except ExcelReadError as error:

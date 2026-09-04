@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS certification (
     policy_id INTEGER NOT NULL,
     certificate_number TEXT,
     valid_from DATE NOT NULL,
-    valid_to DATE NOT NULL,
+    valid_to DATE,
     issuing_agency TEXT,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS certification (
 """
 
 # 필수 입력값 (None 허용 금지)
-_REQUIRED_FIELDS = ("company_id", "policy_id", "valid_from", "valid_to")
+#
+# 🟢 2026-09-04 고객 확정(STEP 108): 사회적기업·사회적협동조합은 종료일이
+#    없으며 계속 유효하다. 따라서 ``valid_to`` 는 필수값이 아닙니다.
+#    ⛔ 없는 종료일을 지어내어 채우지 않습니다.
+_REQUIRED_FIELDS = ("company_id", "policy_id", "valid_from")
 
 
 def _to_db(value: datetime) -> str:
@@ -65,6 +69,16 @@ def _from_db_date(value: str) -> date:
     return date.fromisoformat(value)
 
 
+def _to_db_date_optional(value: date | None) -> str | None:
+    """종료일이 없는 인증을 위해 ``None`` 을 그대로 통과시킵니다."""
+    return None if value is None else _to_db_date(value)
+
+
+def _from_db_date_optional(value: str | None) -> date | None:
+    """NULL 종료일을 ``None`` 으로 읽습니다 (= 계속 유효)."""
+    return None if value is None else _from_db_date(value)
+
+
 class CertificationRepository(BaseRepository):
     """Certification 테이블에 대한 데이터 접근 계층."""
 
@@ -74,9 +88,34 @@ class CertificationRepository(BaseRepository):
         """Certification 테이블을 생성합니다 (없을 때만).
 
         ``CREATE TABLE IF NOT EXISTS`` 를 사용하므로 반복 호출해도 안전합니다.
+
+        이미 만들어진 DB 는 ``valid_to`` 가 ``NOT NULL`` 이라 종료일 없는
+        인증을 넣을 수 없습니다. 그런 DB 만 골라 테이블을 다시 만들고 기존
+        행을 **값 그대로** 옮깁니다. 옮기는 동안 어떤 날짜도 바꾸지 않습니다.
         """
         with self.connection() as conn:
             conn.execute(CREATE_TABLE_SQL)
+            self._migrate_valid_to_nullable(conn)
+
+    @staticmethod
+    def _migrate_valid_to_nullable(conn: sqlite3.Connection) -> None:
+        """구 스키마(``valid_to NOT NULL``)를 종료일 없는 인증도 담도록 바꿉니다."""
+        columns = conn.execute("PRAGMA table_info(certification)").fetchall()
+        valid_to = next((column for column in columns if column["name"] == "valid_to"), None)
+        if valid_to is None or not valid_to["notnull"]:
+            return  # 이미 종료일 없는 인증을 담을 수 있습니다.
+
+        conn.execute("ALTER TABLE certification RENAME TO certification_pre_open_ended")
+        conn.execute(CREATE_TABLE_SQL)
+        conn.execute(
+            "INSERT INTO certification "
+            "(certification_id, company_id, policy_id, certificate_number, "
+            "valid_from, valid_to, issuing_agency, created_at, updated_at) "
+            "SELECT certification_id, company_id, policy_id, certificate_number, "
+            "valid_from, valid_to, issuing_agency, created_at, updated_at "
+            "FROM certification_pre_open_ended"
+        )
+        conn.execute("DROP TABLE certification_pre_open_ended")
 
     def insert(self, certification: Certification) -> Certification:
         """인증 정보를 저장하고 채번된 ID 와 타임스탬프를 반영해 반환합니다.
@@ -110,7 +149,7 @@ class CertificationRepository(BaseRepository):
             certification.policy_id,
             certification.certificate_number,
             _to_db_date(certification.valid_from),
-            _to_db_date(certification.valid_to),
+            _to_db_date_optional(certification.valid_to),
             certification.issuing_agency,
             _to_db(created_at),
             _to_db(updated_at),
@@ -206,7 +245,8 @@ class CertificationRepository(BaseRepository):
             if getattr(certification, field) is None:
                 raise CertificationValidationError(f"필수값이 누락되었습니다: {field}")
 
-        if certification.valid_to < certification.valid_from:
+        # 종료일이 없는 인증(= 계속 유효)은 순서를 따질 대상이 아닙니다.
+        if certification.valid_to is not None and certification.valid_to < certification.valid_from:
             raise CertificationValidationError(
                 "valid_to 는 valid_from 보다 이전일 수 없습니다: "
                 f"valid_from={certification.valid_from}, valid_to={certification.valid_to}"
@@ -221,7 +261,7 @@ class CertificationRepository(BaseRepository):
             policy_id=row["policy_id"],
             certificate_number=row["certificate_number"],
             valid_from=_from_db_date(row["valid_from"]),
-            valid_to=_from_db_date(row["valid_to"]),
+            valid_to=_from_db_date_optional(row["valid_to"]),
             issuing_agency=row["issuing_agency"],
             created_at=_from_db(row["created_at"]),
             updated_at=_from_db(row["updated_at"]),
