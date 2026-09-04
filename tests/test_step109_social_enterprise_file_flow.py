@@ -429,3 +429,53 @@ class TestNothingInventsACancellationRule:
 
 def _unused() -> Certification:  # pragma: no cover - import 유지용
     return Certification(company_id=1, policy_id=1, valid_from=_FROM, valid_to=_TO)
+
+
+class TestAFarFutureEndDateIsJustADate:
+    """§5 — `9999-12-31` 을 시스템이 **어떻게 다루는지**를 적어 둡니다.
+
+    실제 사회적기업 자료에 종료일이 `9999-12-31` 로 적혀 있는 경우가 있다고
+    합니다. 지금 시스템에는 그 값에 대한 **특별 규칙이 하나도 없습니다** —
+    그냥 아주 먼 날짜입니다. 저장한 값 그대로 남고, 판정은 여느 종료일과
+    똑같이 `기준일 <= 종료일` 입니다.
+
+    .. warning::
+        ⛔ *"9999-12-31 은 무기한을 뜻한다"* 는 **고객이 확정한 적 없는
+        규칙**입니다. 그래서 만들지 않았습니다. 이 시험은 규칙을 정하는
+        것이 아니라 **지금 무슨 일이 일어나는지**를 적어 둘 뿐이며,
+        고객이 뜻을 알려 주면 그때 기대값을 바꾸고 사유를 적습니다.
+
+    .. note::
+        종료일이 **없는**(``NULL``) 인증과는 다른 이야기입니다. 그쪽은
+        2026-09-04 고객 확정이 있고 사회적기업·사회적협동조합에만
+        적용됩니다(DECISIONS §0.27).
+    """
+
+    def test_it_is_stored_as_written_and_not_turned_into_null(
+        self, client: TestClient, db: Path, tmp_path: Path
+    ) -> None:
+        path = _company_file(
+            tmp_path / "social.xlsx",
+            [(_SOCIAL, "합성사회적기업", "가나다", "2026-01-01", "9999-12-31")],
+        )
+        _upload(client, path)
+
+        repository = CertificationRepository(db)
+        stored = repository.find_by_policy(_policy_id(db, "SOCIAL_ENTERPRISE"))
+        assert [c.valid_to for c in stored] == [date(9999, 12, 31)]
+        # ⛔ 「무기한」으로 해석해 NULL 로 바꾸지 않았다.
+        raw = repository.execute("SELECT valid_to FROM certification")
+        assert [row["valid_to"] for row in raw] == ["9999-12-31"]
+
+    def test_it_judges_like_any_other_end_date(
+        self, client: TestClient, db: Path, tmp_path: Path
+    ) -> None:
+        _purchase(db, _SOCIAL, resolution=date(2025, 12, 31), amount="100")  # 시작 전 → 제외
+        _purchase(db, _SOCIAL, resolution=date(2026, 5, 1), amount="300")  # 안 → 인정
+        path = _company_file(
+            tmp_path / "social.xlsx",
+            [(_SOCIAL, "합성사회적기업", "가나다", "2026-01-01", "9999-12-31")],
+        )
+        _upload(client, path)
+        client.post("/purchases/rematch")
+        assert _summary(client)["purchase_amount"] == "300"
