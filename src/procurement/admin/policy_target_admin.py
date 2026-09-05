@@ -33,6 +33,7 @@ from procurement.core.target_scope import TOTAL, is_calculable, scope_label
 from procurement.database.policy_repository import PolicyRepository, PolicyValidationError
 from procurement.database.policy_target_repository import (
     PolicyTargetRepository,
+    validate_scope,
     validate_year,
 )
 from procurement.models.policy_target import PolicyTarget
@@ -116,11 +117,19 @@ class PolicyTargetAdminService:
         return PolicyTargetListResponseModel(year=year, items=items)
 
     def set_target(
-        self, year: int, policy_code: str, target_rate: str | None
+        self,
+        year: int,
+        policy_code: str,
+        target_rate: str | None,
+        scope: str = TOTAL,
     ) -> PolicyTargetItemModel:
-        """한 연도 · 한 정책의 목표비율을 저장하거나 해제합니다.
+        """한 연도 · 한 정책 · 한 분모 기준의 목표비율을 저장하거나 해제합니다.
 
-        같은 ``(연도, 정책)`` 으로 몇 번을 호출해도 결과가 같습니다(멱등).
+        같은 ``(연도, 정책, 분모 기준)`` 으로 몇 번을 호출해도 결과가 같습니다
+        (멱등).
+
+        목표비율은 **해마다 달라집니다.** 연도가 키의 일부이므로 한 해의 값을
+        고쳐도 다른 해는 그대로입니다 — ⛔ 지난해 값을 끌어다 채우지 않습니다.
 
         Args:
             year: 대상 회계연도.
@@ -128,16 +137,21 @@ class PolicyTargetAdminService:
             target_rate: 새 목표비율 문자열(예: ``"37.5"``). ``None`` 이면
                 **해제**합니다 — 행을 지워 "미설정" 으로 되돌립니다.
                 ⛔ 0 을 넣지 않습니다.
+            scope: 이 비율을 재는 분모 기준. 생략하면 기관 전체 구매금액
+                (``TOTAL``)이며 기존 호출부의 동작이 달라지지 않습니다.
+                여성기업처럼 목표가 유형별로 여럿인 정책은 기준마다 한 번씩
+                부릅니다 — ⛔ 둘을 합치거나 평균 내지 않습니다.
 
         Returns:
             저장 결과 :class:`PolicyTargetItemModel`.
 
         Raises:
             PolicyNotFoundError: 해당 정책 코드가 없는 경우.
-            PolicyValidationError: 연도·목표비율이 허용 범위를 벗어났거나,
-                **비활성 정책**의 목표비율을 바꾸려는 경우.
+            PolicyValidationError: 연도·분모 기준·목표비율이 허용 범위를
+                벗어났거나, **비활성 정책**의 목표비율을 바꾸려는 경우.
         """
         validate_year(year)
+        validate_scope(scope)
 
         policy = self._policies.find_by_policy_code(policy_code)
         if policy is None or policy.policy_id is None:
@@ -151,13 +165,23 @@ class PolicyTargetAdminService:
         parsed = self._parse_target_rate(target_rate)
         if parsed is None:
             # 해제 = 행 삭제. ⛔ 0 으로 저장하지 않는다 — 0% 는 "미설정" 이 아니다.
-            self._targets.delete(year, policy.policy_id)
+            self._targets.delete(year, policy.policy_id, scope)
             saved_rate: Decimal | None = None
             updated_at = None
         else:
-            saved = self._targets.upsert(year, policy.policy_id, parsed)
+            saved = self._targets.upsert(year, policy.policy_id, parsed, scope)
             saved_rate = saved.target_rate
             updated_at = saved.updated_at
+
+        # ``target_rate`` 는 예나 지금이나 **기관 전체 구매금액 기준** 값입니다.
+        # 유형별 목표를 고쳤다고 이 칸이 그 값으로 바뀌면 화면이 다른 분모의
+        # 숫자를 총액 목표로 읽게 됩니다.
+        remaining = self._targets.list_for_policy(year, policy.policy_id)
+        total_rate = (
+            saved_rate
+            if scope == TOTAL
+            else next((t.target_rate for t in remaining if t.scope == TOTAL), None)
+        )
 
         return PolicyTargetItemModel(
             year=year,
@@ -165,10 +189,10 @@ class PolicyTargetAdminService:
             policy_code=policy.policy_code,
             policy_name=policy.policy_name,
             is_active=policy.is_active,
-            target_rate=saved_rate,
-            target_rate_status=target_rate_status(saved_rate),
+            target_rate=total_rate,
+            target_rate_status=target_rate_status(total_rate),
             updated_at=updated_at,
-            # 이 API 가 건드리는 것은 ``TOTAL`` 하나지만, 응답에는 그 정책에
+            # 이 호출이 건드린 것은 분모 기준 **하나**지만, 응답에는 그 정책에
             # 저장된 목표를 **모두** 담습니다 — 분모가 다른 목표를 이 API 로
             # 지웠다고 오해하지 않도록.
             scoped_targets=tuple(
@@ -178,7 +202,7 @@ class PolicyTargetAdminService:
                     target_rate=target.target_rate,
                     calculable=is_calculable(target.scope),
                 )
-                for target in self._targets.list_for_policy(year, policy.policy_id)
+                for target in remaining
             ),
         )
 

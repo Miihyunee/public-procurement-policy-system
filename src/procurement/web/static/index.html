@@ -415,6 +415,10 @@
   .scoped .kv th { font-weight: 500; white-space: nowrap; }
   .scoped .kv td { text-align: right; }
 
+  /* 목표비율 관리 — 분모 기준마다 입력칸을 한 줄씩 둔다. */
+  .scoped-input { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .scoped-input .scoped-title { min-width: 8em; }
+
   .policy-value { font-size: 25px; font-weight: 700; letter-spacing: -.02em; margin-top: 10px; }
   .policy-state { font-size: 12px; margin-top: 1px; }
   .st-NORMAL { color: var(--normal); }
@@ -2693,11 +2697,12 @@
   /**
    * 목표가 **구매유형별로 갈리는** 정책 한 줄 (여성기업).
    *
-   * 값을 그대로 보여 주기만 한다. 이 화면의 저장 경로
-   * (PUT /policy-targets/{year}/{code})는 기관 전체 구매금액 기준 목표
-   * 하나만 다루므로, 유형별 목표를 여기서 고치면 어느 유형을 고친 것인지
-   * 알 수 없다. ⛔ 그래서 입력칸을 만들지 않는다 — 값을 잃는 것보다
-   * 못 고치는 편이 낫다.
+   * 기준마다 입력칸을 따로 둔다. 저장은 분모 기준까지 받는 경로
+   * (PUT /policy-targets/{year}/{code}/{scope})로 각각 보내므로,
+   * 어느 기준을 고친 것인지 서버가 안다.
+   *
+   * ⛔ 여러 기준을 한 칸으로 합치지 않는다 — 합치는 순간 고객이 준 값이
+   *    아닌 숫자로 달성률을 재게 된다.
    */
   function ptScopedRow(item) {
     var tr = document.createElement("tr");
@@ -2705,14 +2710,30 @@
 
     var td = document.createElement("td");
     item.scoped_targets.forEach(function (scoped) {
-      var line = make("div", null, scoped.scope_label + " " + scoped.target_rate + " %");
+      var line = make("div", "scoped-input");
+      line.appendChild(make("span", "scoped-title", scoped.scope_label));
+
+      var input = document.createElement("input");
+      input.className = "control-input";
+      input.type = "text";
+      input.inputMode = "decimal";
+      input.id = "pt-input-" + item.policy_code + "-" + scoped.scope;
+      input.value = scoped.target_rate === null ? "" : scoped.target_rate;
+      input.placeholder = "미설정";
+      input.setAttribute("aria-label",
+                         item.policy_name + " " + scoped.scope_label + " 목표비율(%)");
+      input.style.width = "7em";
+      input.setAttribute("data-scope", scoped.scope);
+      input.setAttribute("data-code", item.policy_code);
+
+      line.appendChild(input);
+      line.appendChild(document.createTextNode(" %"));
       if (!scoped.calculable) {
-        line.appendChild(document.createTextNode(" (계산 보류)"));
+        // 저장은 되지만 분모를 구할 방법이 없어 달성률은 나오지 않는다.
+        line.appendChild(make("span", "hint", " (저장됨 · 달성률은 계산 보류)"));
       }
       td.appendChild(line);
     });
-    var note = make("div", "hint", "유형별 목표입니다. 이 화면에서는 고칠 수 없습니다.");
-    td.appendChild(note);
 
     tr.appendChild(td);
     return tr;
@@ -2771,8 +2792,23 @@
     var changed = [];
 
     ptItems.forEach(function (item) {
+      // 유형별 목표 정책은 기준마다 칸이 하나씩 있다.
+      if (item.scoped_targets && item.scoped_targets.length > 0) {
+        item.scoped_targets.forEach(function (scoped) {
+          var scopedInput = el("pt-input-" + item.policy_code + "-" + scoped.scope);
+          if (!scopedInput) { return; }
+          var typedScoped = scopedInput.value.trim();
+          var beforeScoped = scoped.target_rate === null ? "" : String(scoped.target_rate);
+          if (typedScoped === beforeScoped) { return; }
+          changed.push({
+            code: item.policy_code,
+            scope: scoped.scope,
+            value: typedScoped === "" ? null : typedScoped
+          });
+        });
+        return;
+      }
       var input = el("pt-input-" + item.policy_code);
-      if (!input) { return; }  // 유형별 목표 정책 — 입력칸이 없다.
       if (!input) { return; }
       var typed = input.value.trim();
       var before = item.target_rate === null ? "" : String(item.target_rate);
@@ -2789,8 +2825,12 @@
     ptNotice("저장 중입니다...");
 
     var requests = changed.map(function (change) {
-      return fetch("/policy-targets/" + encodeURIComponent(year) + "/"
-                   + encodeURIComponent(change.code), {
+      // 분모 기준이 있는 변경은 기준까지 담은 경로로 보낸다. 없는 변경은
+      // 기존 경로 그대로 — 서버가 기관 전체 구매금액 기준으로 받는다.
+      var url = "/policy-targets/" + encodeURIComponent(year) + "/"
+                + encodeURIComponent(change.code);
+      if (change.scope) { url += "/" + encodeURIComponent(change.scope); }
+      return fetch(url, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         body: JSON.stringify({ target_rate: change.value })

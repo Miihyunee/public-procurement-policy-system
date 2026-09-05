@@ -2020,6 +2020,41 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.put(
+        "/policy-targets/{year}/{policy_code}/{scope}",
+        response_model=PolicyTargetItemModel,
+        summary="연도별 정책 목표비율 설정·해제 (분모 기준별)",
+        tags=["policy-targets"],
+        dependencies=[Depends(require_admin_token)],
+    )
+    def set_scoped_policy_target(
+        year: int, policy_code: str, scope: str, payload: PolicyTargetUpdateRequest
+    ) -> PolicyTargetItemModel:
+        """한 연도 · 한 정책 · **한 분모 기준**의 목표비율을 저장합니다.
+
+        위의 `PUT /policy-targets/{year}/{policy_code}` 와 같은 일을 하되,
+        어느 분모를 기준으로 재는 목표인지까지 지정합니다. 목표가 하나뿐인
+        정책은 위의 경로로 충분하고, 여성기업처럼 **구매유형마다 목표가 다른**
+        정책은 이 경로로 각 값을 따로 고칩니다(DECISIONS §0.25 · §0.26).
+
+        ``scope`` 는 ``TOTAL`` · ``CONSTRUCTION`` · ``SERVICE`` · ``GOODS`` ·
+        ``PRODUCIBLE_ITEMS`` 중 하나입니다. ``scope=TOTAL`` 은 위 경로와
+        완전히 같은 동작입니다.
+
+        ⛔ 유형별 목표를 하나로 합치거나 평균 내지 않습니다 — 그렇게 하면
+        고객이 준 값이 아닌 숫자로 달성률을 재게 됩니다.
+
+        ⚠️ 저장할 수 있다고 계산까지 되는 것은 아닙니다. ``PRODUCIBLE_ITEMS``
+        처럼 분모를 구할 방법이 아직 없는 기준은 값이 그대로 남되 달성률은
+        «계산 보류» 입니다.
+        """
+        try:
+            return policy_target_admin.set_target(year, policy_code, payload.target_rate, scope)
+        except PolicyNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PolicyValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put(
         "/policies/{policy_code}/target-rate",
         response_model=PolicyItemResponseModel,
         summary="정책 목표율 설정·해제",
