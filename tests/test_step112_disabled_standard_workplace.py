@@ -13,7 +13,7 @@
 3. 목록 미등록 → **조회불가**. 등록했는데 매칭 0건 → **미해당(0원)**.
 4. 판정 기준일은 **결의일자**. 시작일·종료일 당일은 인정.
 5. 한 거래가 두 정책에 해당하면 **각각** 들어간다. ⛔ 차감 없음.
-6. 🔴 **종료일이 없는 파일은 지금 등록되지 않는다** — 그 현재 동작을 적어 둔다.
+6. 🟢 **종료일이 없으면 인증일자 이후로 계속 유효**하다 (2026-09-05 고객 확정).
 
 .. warning::
     ⛔ ``타인증구분``(사회적기업·여성기업·장애인기업…)과 ``인증유형``
@@ -38,6 +38,7 @@ from procurement.__main__ import main
 from procurement.app import create_app
 from procurement.core.open_ended_certification import allows_open_ended
 from procurement.database.bootstrap import init_db, seed_policies
+from procurement.database.certification_repository import CertificationRepository
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Purchase
@@ -77,6 +78,12 @@ def _company_file(path: Path, rows: list[list[object]]) -> Path:
         sheet.append(row)
     book.save(path)
     return path
+
+
+def _policy_id(db: Path, code: str) -> int:
+    policy = PolicyRepository(db).find_by_policy_code(code)
+    assert policy is not None and policy.policy_id is not None
+    return policy.policy_id
 
 
 def _purchase(db: Path, business_no: str, *, resolution: date, amount: str) -> None:
@@ -243,28 +250,29 @@ class TestPoliciesStayIndependent:
         assert payload["total_purchase_amount"] == "1000"
 
 
-class TestAFileWithNoEndDateIsRefusedToday:
-    """🔴 §8 · §19 — 지금 무슨 일이 일어나는지 적어 둔다.
+class TestAFileWithNoEndDateIsAccepted:
+    """🟢 §8 — 종료일이 없으면 인증일자 이후로 계속 유효하다.
 
-    실제 장애인표준사업장 자료에는 「인증일자」만 있고 **종료일 칸이 없습니다.**
-    그런데 종료일을 비울 수 있는 정책은 사회적기업·사회적협동조합 둘뿐이라
-    (🟢 2026-09-04 고객 확정 · DECISIONS §0.27.3), 이 정책은 종료일이 비면
-    등록되지 않습니다.
+    🟢 2026-09-05 고객 확정: *"종료(취소)일자가 없으면 그냥 사회적기업,
+    사회적협동조합과 같은 규칙으로 가면 된다."*
+
+    .. note::
+        분류 A · 고객 확정 반영. 이 시험은 어제까지 *"종료일 없는 파일은 지금
+        등록되지 않는다"* 는 **현재 상태**를 적어 두었고, 그 warning 에
+        *"고객이 답하면 기대값을 바꾸고 사유를 적는다"* 고 써 두었습니다.
+        답이 왔으므로 뒤집습니다.
 
     .. warning::
-        ⛔ 고객 확정 없이 이 정책을 그 명단에 넣지 않았습니다. 넣으면
-        「인증일자 이후 영원히 유효」라는, 아무도 정한 적 없는 규칙이 실적
-        숫자를 만들게 됩니다. ⛔ 임의의 종료일을 지어내지도 않았습니다.
-
-        이 시험은 **규칙이 아니라 현재 상태**를 적습니다. 고객이 답하면
-        기대값을 바꾸고 사유를 적습니다.
+        ⛔ 그래도 종료일을 지어내지 않습니다 — 인증일자 + N년도, 연말도,
+        ``9999-12-31`` 도 넣지 않고 ``NULL`` 로 둡니다.
     """
 
-    def test_the_policy_is_not_on_the_open_ended_list(self) -> None:
-        assert allows_open_ended(_CODE) is False
-        assert allows_open_ended("SOCIAL_ENTERPRISE") is True
+    def test_the_policy_is_on_the_open_ended_list(self) -> None:
+        assert allows_open_ended(_CODE) is True
+        # ⛔ 장애인기업은 다른 정책이며 여전히 종료일이 필수다.
+        assert allows_open_ended("DISABLED") is False
 
-    def test_a_blank_end_date_stops_the_whole_upload(
+    def test_a_blank_end_date_is_stored_as_no_end_date(
         self, client: TestClient, db: Path, tmp_path: Path
     ) -> None:
         path = _company_file(
@@ -273,7 +281,34 @@ class TestAFileWithNoEndDateIsRefusedToday:
         )
         result = _upload(client, path)
 
-        assert result["stored"] is False
-        assert any("유효종료일" in issue for issue in result["issues"])
-        # 화면은 여전히 «조회불가» — ⛔ 0% 로 떨어뜨리지 않는다.
-        assert _row(client)["status"] == "COMPANY_DATA_NOT_REGISTERED"
+        assert result["stored"] is True
+        assert result["certifications"] == 1
+
+        stored = CertificationRepository(db).find_by_policy(_policy_id(db, _CODE))
+        assert [c.valid_to for c in stored] == [None]  # ⛔ 지어낸 종료일이 없다
+        raw = CertificationRepository(db).execute("SELECT valid_to FROM certification")
+        assert [row["valid_to"] for row in raw] == [None]
+
+    @pytest.mark.parametrize(
+        ("resolution", "expected"),
+        [
+            (date(2026, 2, 28), "0"),  # 인증일자 하루 전 → 제외
+            (_FROM, "1000"),  # 인증일자 당일 → 인정
+            (date(2030, 5, 1), "1000"),  # 아주 뒤 → 여전히 인정 (끝이 없다)
+        ],
+    )
+    def test_it_keeps_counting_after_the_approval_date(
+        self, client: TestClient, db: Path, tmp_path: Path, resolution: date, expected: str
+    ) -> None:
+        _purchase(db, _WORKPLACE, resolution=resolution, amount="1000")
+        path = _company_file(
+            tmp_path / "no-end.xlsx",
+            [[_WORKPLACE, "합성사업장", "가나다", _FROM.isoformat(), None]],
+        )
+        _upload(client, path)
+        client.post("/purchases/rematch")
+
+        year = resolution.year
+        payload = client.get("/dashboard/summary", params={"year": year}).json()
+        row = next(r for r in payload["policies"] if r["policy_code"] == _CODE)
+        assert row["purchase_amount"] == expected

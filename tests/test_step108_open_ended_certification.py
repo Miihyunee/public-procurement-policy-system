@@ -219,12 +219,25 @@ class TestTheCalculationEndToEnd:
 class TestWhichPoliciesMayOmitTheEndDate:
     """§9 — 이 규칙은 **두 정책에만** 적용합니다."""
 
-    def test_only_the_two_confirmed_policies(self) -> None:
-        assert OPEN_ENDED_POLICY_CODES == frozenset({"SOCIAL_ENTERPRISE", "SOCIAL_COOPERATIVE"})
-        assert allows_open_ended("SOCIAL_COOPERATIVE") is True
-        assert allows_open_ended("SOCIAL_ENTERPRISE") is True
+    def test_only_the_confirmed_policies(self) -> None:
+        """명단에는 **고객이 확정한 정책만** 있다.
+
+        분류 A · 고객 확정 반영 (2026-09-05): *"종료(취소)일자가 없으면 그냥
+        사회적기업, 사회적협동조합과 같은 규칙으로 가면 된다"* — 장애인표준
+        사업장 자료도 「인증일자」만 있어 같은 규칙이 되었다. 그전까지 이
+        시험은 두 정책만 있기를 요구했다.
+
+        ⛔ 명단이 저절로 늘어나면 안 된다. 여기 없는 정책에서 종료일이 비면
+        여전히 오류이며, 그래야 빠진 값이 조용히 "영원히 유효" 가 되지 않는다.
+        """
+        assert OPEN_ENDED_POLICY_CODES == frozenset(
+            {"SOCIAL_ENTERPRISE", "SOCIAL_COOPERATIVE", "DISABLED_STANDARD_WORKPLACE"}
+        )
+        for confirmed in ("SOCIAL_COOPERATIVE", "SOCIAL_ENTERPRISE", "DISABLED_STANDARD_WORKPLACE"):
+            assert allows_open_ended(confirmed) is True, confirmed
+        # ⛔ 장애인기업(DISABLED)은 표준사업장과 **다른 정책**이며 명단에 없다.
         for other in ("WOMAN", "STARTUP", "DISABLED", "SMALL_BUSINESS", None):
-            assert allows_open_ended(other) is False
+            assert allows_open_ended(other) is False, other
 
     def _import(self, db: Path, policy_code: str) -> tuple[bool, list[str]]:
         importer = CompanyImporter(
