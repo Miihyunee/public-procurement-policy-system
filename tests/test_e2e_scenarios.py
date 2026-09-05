@@ -40,6 +40,7 @@ from procurement.database.bootstrap import init_db
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.importers import PurchaseImporter
 from procurement.models import Certification, Company, Policy
@@ -91,7 +92,13 @@ def _register_company(db_path: Path, business_no: str = BUSINESS_NO) -> int:
 
 
 def _register_policy(db_path: Path, fixture: PolicyFixture) -> int:
-    """정책과 목표율을 등록합니다."""
+    """정책과 목표율을 등록합니다.
+
+    ⚠️ STEP 93 — 목표비율의 정본은 **연도별** 값이다(DECISIONS §0.20).
+    ``Policy.target_rate`` 는 하위호환으로 남아 있을 뿐 계산에 쓰이지 않으므로,
+    이 시험들이 조회하는 연도(2026)에 같은 값을 함께 등록한다.
+    ⛔ 기대값은 바뀌지 않았다 — 값을 **어디에 두는지**만 바뀌었다.
+    """
     saved = PolicyRepository(db_path).insert(
         Policy(
             policy_code=fixture.policy_code,
@@ -101,6 +108,8 @@ def _register_policy(db_path: Path, fixture: PolicyFixture) -> int:
         )
     )
     assert saved.policy_id is not None
+    if fixture.target_rate is not None:
+        PolicyTargetRepository(db_path).upsert(2026, saved.policy_id, fixture.target_rate)
     return saved.policy_id
 
 
@@ -137,7 +146,11 @@ def _purchase_row(**overrides: object) -> dict[str, Any]:
 
 def _dashboard(db_path: Path) -> dict[str, Any]:
     """Dashboard API 응답을 정책코드로 조회 가능한 형태로 돌려줍니다."""
-    payload: dict[str, Any] = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+    payload: dict[str, Any] = (
+        TestClient(create_app(db_path, period_date_field="payment_date"))
+        .get("/dashboard/summary?year=2026")
+        .json()
+    )
     payload["by_code"] = {item["policy_code"]: item for item in payload["policies"]}
     return payload
 
@@ -260,9 +273,7 @@ class TestScenarioCStartupUsesContractDate:
     def prepared(self, db_path: Path, importer: PurchaseImporter) -> Path:
         company_id = _register_company(db_path)
         policy_id = _register_policy(db_path, self.POLICY)
-        _register_certification(
-            db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
-        )
+        _register_certification(db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30))
         importer.import_rows(
             [
                 # ① 계약일 유효 / 지급일 만료 후 → 계약일 기준이므로 인정
@@ -315,12 +326,8 @@ class TestScenarioDExpiredCertification:
     def prepared(self, db_path: Path, importer: PurchaseImporter) -> Path:
         company_id = _register_company(db_path)
         policy_id = _register_policy(db_path, self.POLICY)
-        _register_certification(
-            db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
-        )
-        importer.import_rows(
-            [_purchase_row(payment_date="2026-08-01", amount="5000000")]
-        )
+        _register_certification(db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30))
+        importer.import_rows([_purchase_row(payment_date="2026-08-01", amount="5000000")])
         return db_path
 
     def test_expired_purchase_is_excluded_from_policy(self, prepared: Path) -> None:
@@ -336,12 +343,8 @@ class TestScenarioDExpiredCertification:
         """유효기간 마지막 날(경계값)은 포함됩니다."""
         company_id = _register_company(db_path)
         policy_id = _register_policy(db_path, self.POLICY)
-        _register_certification(
-            db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30)
-        )
-        importer.import_rows(
-            [_purchase_row(payment_date="2026-06-30", amount="5000000")]
-        )
+        _register_certification(db_path, company_id, policy_id, date(2026, 1, 1), date(2026, 6, 30))
+        importer.import_rows([_purchase_row(payment_date="2026-06-30", amount="5000000")])
         item = _dashboard(db_path)["by_code"]["SMALL_BUSINESS"]
         assert item["purchase_amount"] == "5000000"
 
@@ -385,8 +388,15 @@ class TestScenarioEUnmatchedThenRematch:
     def test_step3_rematch_links_and_dashboard_reflects(
         self, db_path: Path, importer: PurchaseImporter
     ) -> None:
-        """③ 기업·인증정보 확보 후 재매칭하면 달성률에 반영됩니다."""
+        """③ 기업·인증정보 확보 후 재매칭하면 달성률에 반영됩니다.
+
+        ⚠️ **STEP 96 — 설정 보완.** 기업정보를 받지 못한 정책은 조회불가라
+        금액이 ``null`` 이다(§8). 이 시험은 "재매칭 전 0 → 후 반영" 을 보므로,
+        목록을 받았다는 사실을 먼저 기록해 처음의 0 이 **미해당**을 뜻하게 한다.
+        ⛔ 기대값은 바뀌지 않았다.
+        """
         policy_id = _register_policy(db_path, self.POLICY)
+        _register_company_data(db_path, self.POLICY.policy_code)
         importer.import_rows(
             [
                 _purchase_row(amount="5000000"),
@@ -486,8 +496,32 @@ class TestAllPoliciesTogether:
         PolicyRepository(db_path).insert(
             Policy(policy_code="GREEN", policy_name="녹색제품", target_rate=None)
         )
+        _register_company_data(db_path, "GREEN")
         importer.import_rows([_purchase_row(amount="1000000")])
 
         item = _dashboard(db_path)["by_code"]["GREEN"]
         assert item["status"] == "TARGET_RATE_NOT_SET"
         assert item["achievement_rate"] is None
+
+
+def _register_company_data(db_path: Path, *policy_codes: str) -> None:
+    """정책의 기업 목록을 **받았다는 사실**만 기록합니다(STEP 96 §8).
+
+    ⚠️ 기업정보를 받지 못한 정책은 이제 **조회불가**이므로 목표율 상태까지
+    가지 못합니다. 목표율 쪽을 보는 시험이라 앞단을 열어 두는 것입니다.
+    ⛔ 기업·인증을 만들지 않습니다 — 목록은 받았으나 우리 거래처가 없는 상태이며,
+    그것은 "모른다" 가 아니라 **"전부 미해당"** 입니다.
+    ⛔ 기대값은 바뀌지 않았습니다.
+    """
+    from procurement.database.policy_company_source_repository import (
+        PolicyCompanySourceRepository,
+    )
+
+    registry = PolicyCompanySourceRepository(db_path)
+    repository = PolicyRepository(db_path)
+    codes = policy_codes or tuple(policy.policy_code for policy in repository.find_active())
+    for code in codes:
+        policy = repository.find_by_policy_code(code)
+        if policy is None or policy.policy_id is None:
+            continue
+        registry.record(policy.policy_id, source="FILE", company_count=0, certification_count=0)

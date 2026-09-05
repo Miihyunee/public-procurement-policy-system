@@ -21,11 +21,73 @@ procurement.api.response
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, field_serializer
 
-from procurement.dashboard.models import DashboardSummary, PolicySummary
+from procurement.dashboard.models import (
+    DashboardSummary,
+    MissingResolutionDate,
+    PolicySummary,
+    ScopedAchievement,
+)
+from procurement.models.purchase import Purchase
+from procurement.reviews.response import PurchaseSourceResponseModel
+
+
+class ScopedAchievementResponseModel(BaseModel):
+    """구매유형 하나의 달성 결과 응답 모델(STEP 103).
+
+    여성기업처럼 목표가 유형별로 갈리는 정책을 위한 모델입니다.
+    ⛔ 정책 한 줄에 달성률 하나를 억지로 담지 않고, 유형마다 따로 내보냅니다 —
+    하나를 대표로 고르면 나머지가 화면에서 사라집니다.
+
+    Attributes:
+        scope: 구매유형 코드(``CONSTRUCTION`` · ``SERVICE`` · ``GOODS``).
+        scope_label: 화면 표시용 한글 이름(예: ``"공사"``).
+        purchase_amount: 그 유형에서 이 정책이 올린 실적(직렬화 시 문자열).
+        total_purchase_amount: 그 유형의 전체 구매금액 = **분모**.
+        target_rate: 그 유형의 목표 구매비율(%).
+        achievement_rate: 달성률(%). **분모가 0 이면 ``null``** — ⛔ 0% 나 100%
+            로 만들지 않습니다.
+        status / status_label: 달성 판정. 계산하지 못했으면 «계산 보류».
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    scope: str
+    scope_label: str
+    purchase_amount: Decimal
+    total_purchase_amount: Decimal
+    target_rate: Decimal
+    achievement_rate: Decimal | None
+    status: str
+    status_label: str
+
+    @field_serializer(
+        "purchase_amount",
+        "total_purchase_amount",
+        "target_rate",
+        "achievement_rate",
+        when_used="always",
+    )
+    def _serialize_decimal(self, value: Decimal | None) -> str | None:
+        return None if value is None else str(value)
+
+    @classmethod
+    def from_scoped_achievement(cls, item: ScopedAchievement) -> ScopedAchievementResponseModel:
+        """:class:`ScopedAchievement` 로부터 응답 모델을 만듭니다."""
+        return cls(
+            scope=item.scope,
+            scope_label=item.scope_label,
+            purchase_amount=item.purchase_amount,
+            total_purchase_amount=item.total_purchase_amount,
+            target_rate=item.target_rate,
+            achievement_rate=item.achievement_rate,
+            status=item.status.value,
+            status_label=item.status.label,
+        )
 
 
 class PolicySummaryResponseModel(BaseModel):
@@ -54,6 +116,10 @@ class PolicySummaryResponseModel(BaseModel):
         status: 달성 상태 코드(``NORMAL`` / ``WARNING`` / ``SHORTAGE`` /
             ``TARGET_RATE_NOT_SET``).
         status_label: 화면 표시용 한글 상태명(정상 / 주의 / 부족 / 목표율 미설정).
+        scoped_achievements: **구매유형별** 달성 결과. 여성기업처럼 목표가 유형별로
+            갈리는 정책만 채워지고 일반 정책은 빈 목록입니다. 값이 있으면
+            ``achievement_rate`` 는 ``null`` 이며 — 달성률이 하나가 아니기
+            때문입니다 — 화면은 이 목록을 보여 주어야 합니다.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -68,6 +134,9 @@ class PolicySummaryResponseModel(BaseModel):
     shortage_rate: Decimal | None
     status: str
     status_label: str
+    # ⚠️ tuple 이 아니라 list 입니다. ``model_dump()`` 는 tuple 을 그대로 두는데
+    #    JSON 은 배열이 되어, 두 표현이 어긋나면 직렬화 왕복이 깨집니다.
+    scoped_achievements: list[ScopedAchievementResponseModel] = []
 
     @field_serializer(
         "purchase_amount",
@@ -102,7 +171,97 @@ class PolicySummaryResponseModel(BaseModel):
             shortage_rate=summary.shortage_rate,
             status=summary.status.value,
             status_label=summary.status.label,
+            scoped_achievements=[
+                ScopedAchievementResponseModel.from_scoped_achievement(item)
+                for item in summary.scoped_achievements
+            ],
         )
+
+
+class MissingResolutionDateResponseModel(BaseModel):
+    """결의일자 미기재 안내 응답 모델.
+
+    .. warning::
+        ⛔ **달성률과 무관한 값입니다.** 분모·분자 어디에도 들어가지 않으며,
+        ``total_purchase_amount`` 에도 포함되지 않습니다. 화면이 "이만큼이 기간
+        산정에서 빠졌습니다" 라고 알려 주기 위한 **표시 전용** 값입니다.
+
+    Attributes:
+        applies: 이 안내가 지금 조회에 해당하는지. 기간 판정 기준일이
+            결의일자일 때만 ``true``. ``false`` 이면 화면은 아무것도 표시하지
+            않습니다.
+        count: 결의일자가 없는 구매 건수.
+        amount: 그 구매들의 금액 합계(직렬화 시 문자열).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    applies: bool
+    count: int
+    amount: Decimal
+
+    @field_serializer("amount", when_used="always")
+    def _serialize_amount(self, value: Decimal) -> str:
+        """``Decimal`` 을 문자열로 직렬화합니다."""
+        return str(value)
+
+    @classmethod
+    def from_missing(cls, missing: MissingResolutionDate) -> MissingResolutionDateResponseModel:
+        """DTO 로부터 응답 모델을 생성합니다."""
+        return cls(applies=missing.applies, count=missing.count, amount=missing.amount)
+
+
+class MissingResolutionDateListResponseModel(BaseModel):
+    """결의일자 미기재 구매 **목록** 응답 모델.
+
+    대시보드는 "결의일자가 비어 있는 구매 N건(M 원)" 이라고만 알려 줍니다. 그
+    숫자만으로는 **어떤 행인지** 알 수 없어 담당자가 무엇을 확인해야 할지
+    판단할 수 없으므로, 같은 모집단의 행을 그대로 돌려줍니다.
+
+    .. warning::
+        ⛔ **조회 전용입니다.** 결의일자를 채우거나 다른 날짜로 대체하지 않고,
+        어떤 행도 수정하지 않습니다.
+
+    .. warning::
+        ⛔ **판정하지 않습니다.** 이 행들은 "오류"·"무효"·"실적 불인정" 이
+        아니라 **결의일자가 입력되지 않은 구매**일 뿐이며, 어떻게 처리할지는
+        아직 정해지지 않았습니다.
+
+    항목은 검토 화면과 **같은 원본 모델**(:class:`PurchaseSourceResponseModel`)
+    을 씁니다. 같은 행을 두 화면이 다르게 보여 주지 않도록, 그리고 사업자번호
+    등의 노출 범위를 새로 만들지 않기 위해서입니다.
+
+    Attributes:
+        items: 결의일자가 없는 구매 행(``purchase_id`` 오름차순).
+        count: 행 수. ``len(items)`` 와 항상 같습니다.
+        amount: 그 행들의 금액 합계(직렬화 시 문자열).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[PurchaseSourceResponseModel]
+    count: int
+    amount: Decimal
+
+    @field_serializer("amount", when_used="always")
+    def _serialize_amount(self, value: Decimal) -> str:
+        """``Decimal`` 을 문자열로 직렬화합니다."""
+        return str(value)
+
+    @classmethod
+    def from_purchases(
+        cls, purchases: Sequence[Purchase]
+    ) -> MissingResolutionDateListResponseModel:
+        """구매 행 목록으로부터 응답 모델을 생성합니다.
+
+        건수·합계는 **목록에서 직접** 셉니다. 따로 세어 넣으면 목록과 숫자가
+        어긋날 수 있는데, 화면에서는 그 어긋남이 보이지 않습니다.
+        """
+        items = [PurchaseSourceResponseModel.from_purchase(row) for row in purchases]
+        total = Decimal("0")
+        for row in purchases:
+            total += row.amount
+        return cls(items=items, count=len(items), amount=total)
 
 
 class DashboardResponseModel(BaseModel):
@@ -113,12 +272,15 @@ class DashboardResponseModel(BaseModel):
     Attributes:
         total_purchase_amount: 기관 전체 구매액(직렬화 시 문자열).
         policies: 정책별 요약 응답 목록. 대상 정책이 없으면 빈 목록.
+        missing_resolution_date: 결의일자가 없어 기간 산정에서 빠진 건수·금액.
+            ⛔ **위 두 값과 무관합니다** — 계산에 들어가지 않습니다.
     """
 
     model_config = ConfigDict(frozen=True)
 
     total_purchase_amount: Decimal
     policies: list[PolicySummaryResponseModel]
+    missing_resolution_date: MissingResolutionDateResponseModel
 
     @field_serializer("total_purchase_amount", when_used="always")
     def _serialize_decimal(self, value: Decimal) -> str:
@@ -134,4 +296,7 @@ class DashboardResponseModel(BaseModel):
                 PolicySummaryResponseModel.from_policy_summary(item)
                 for item in summary.policy_summaries
             ],
+            missing_resolution_date=MissingResolutionDateResponseModel.from_missing(
+                summary.missing_resolution_date
+            ),
         )

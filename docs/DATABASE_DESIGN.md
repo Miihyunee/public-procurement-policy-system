@@ -4,9 +4,9 @@
 
 | Item | Value |
 |------|------|
-| Version | v1.1 |
+| Version | v1.2 |
 | Status | Draft |
-| Last Updated | 2026-08-04 |
+| Last Updated | 2026-08-12 |
 
 ---
 
@@ -128,6 +128,7 @@
 ### Related Tables
 
 - Company
+- ImportBatch
 
 ### Columns
 
@@ -140,12 +141,70 @@
 | contract_date | DATE | Yes | 계약일 (창업기업 판정 기준일) |
 | payment_date | DATE | Yes | 대금 지급일(지출완료) (일반 정책 판정 기준일) |
 | amount | NUMERIC | Yes | 구매금액 |
+| batch_id | INTEGER | No | ImportBatch 테이블 참조 (업로드 단위) |
 | created_at | DATETIME | Yes | 데이터 생성일시 |
 | updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
+> `batch_id`는 월별 누적 적재를 위해 v1.2 에서 추가하였다. **NULL 을 허용**하며,
+> NULL 인 행(배치 도입 이전 데이터)은 **계산에 계속 포함**된다.
+> 인덱스: `idx_purchase_batch (batch_id)`
 
 > `purchase_date`(단일 구매일)는 판정 기준 이원화를 위해 제거하고 `payment_date`로 대체하였다.
 > `contract_date`는 창업기업(계약일 기준) 판정을 위해 신규 추가하였다. (Issue #12)
 > 품목 수(`item_count`)는 자활용사촌 등 향후 정책에서 사용하므로 MVP 범위에 포함하지 않는다.
+
+---
+
+## ImportBatch
+
+### Purpose
+
+**한 번의 업로드 단위**를 저장한다.
+
+매월 데이터를 누적으로 올리는 운영 방식에서, 같은 기간을 다시 올렸을 때
+이전 업로드를 **대체**하기 위해 사용한다(D-25). 행을 물리적으로 삭제하지 않고
+상태로만 구분하므로, 무엇이 언제 대체되었는지 추적할 수 있다.
+
+### Primary Key
+
+- batch_id
+
+### Related Tables
+
+- Purchase (1 : N, 논리 참조)
+
+### Columns
+
+| Column | Type | Required | Description |
+|---------|------|----------|-------------|
+| batch_id | INTEGER | Yes | 내부 고유 ID (Primary Key) |
+| file_name | TEXT | Yes | 원본 파일명 |
+| file_hash | TEXT | No | 원본 파일 내용 해시 (같은 파일 재업로드 감지용) |
+| period_start | DATE | Yes | 대상 기간 시작일 |
+| period_end | DATE | Yes | 대상 기간 종료일 |
+| uploaded_at | DATETIME | Yes | 업로드 시각 |
+| row_count | INTEGER | Yes | 적재된 행 수 |
+| total_amount | NUMERIC | Yes | 적재된 금액 합계 |
+| status | TEXT | Yes | `ACTIVE` / `SUPERSEDED` |
+| superseded_by | INTEGER | No | 이 배치를 대체한 배치 ID |
+| created_at | DATETIME | Yes | 데이터 생성일시 |
+| updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
+인덱스: `idx_import_batch_period (period_start, period_end, status)`
+
+### 계산 대상 판정
+
+```text
+계산에 포함되는 purchase
+  = batch_id 가 NULL 이거나
+    batch_id 가 status='ACTIVE' 인 배치를 가리키는 행
+```
+
+> `status` 값은 **2개로 한정**한다. `FAILED`·`PARTIAL` 등은 실제로 필요해질 때 추가한다.
+>
+> `period_start` / `period_end` 는 **호출자가 지정**한다. 파일 내용에서 자동으로
+> 유추하지 않는다 — 어느 날짜 컬럼으로 기간을 잡을지가 **D-24 (미확정)** 에
+> 종속되기 때문이다.
 
 ---
 
@@ -197,19 +256,75 @@
 - **저장 형식**: Decimal 정밀도 보존을 위해 문자열(TEXT)로 저장한다(금액 저장 규약과 동일).
 - **제약**: 값이 있으면 0 보다 커야 한다(Calculator 의 목표율 > 0 규칙과 정합).
 - **미설정 정책 처리**: Dashboard 계산에서는 목표율이 없는 정책을 대상에서 제외한다(향후 조회 기능, #20-2).
-- **연도별 이력**: MVP 범위에서는 다루지 않으며, 필요 시 별도 History 테이블로 확장한다.
+
+> ⚠️ **2026-09-02(STEP 93) 이후 이 컬럼은 계산에 쓰이지 않는다.**
+> 목표비율의 정본은 아래 **policy_target** 테이블(연도 × 정책)이다
+> (`DECISIONS.md` §0.20). 이 컬럼은 기존 코드·테스트 호환을 위해 남겨 두었을
+> 뿐이며, ⛔ 신규 계산 경로는 이 값을 fallback 으로도 읽지 않는다.
+
+## Table: policy_target (연도별 정책 목표비율)
+
+목표비율을 **연도 × 정책** 단위로 관리한다. ⛔ 구매처(Company) 단위가 아니다 —
+목표비율은 *"기관 전체 지출 중 그 정책의 인증기업에 지출한 금액이 차지해야 하는
+비율"* 이기 때문이다.
+
+| 컬럼 | 타입 | 필수 | 설명 |
+|---------|------|----------|-------------|
+| policy_target_id | INTEGER | Yes | 내부 고유 ID (Primary Key) |
+| year | INTEGER | Yes | 대상 회계연도. 구매의 **결의일자 연도**와 맞춘다 |
+| policy_id | INTEGER | Yes | 정책 참조 (FK → policy) |
+| target_rate | TEXT | Yes | 목표 구매비율(%). 0 초과 100 이하 |
+| created_at | DATETIME | Yes | 데이터 생성일시 |
+| updated_at | DATETIME | Yes | 데이터 최종 수정일시 |
+
+- **제약**: `UNIQUE (year, policy_id)` — 한 연도의 한 정책에 목표비율은 **하나뿐**이다.
+- **저장 형식**: `policy.target_rate` 와 같이 문자열(TEXT). REAL 이면 `37.5` 가
+  부동소수 오차로 그대로 돌아오지 않는다.
+- **미설정**: 행이 **없는 것**이 미설정이다. ⛔ 0 으로 저장하지 않는다 —
+  0% 는 "설정하지 않음" 이 아니다.
+- **해제**: 행을 삭제한다.
+- **연도 간 독립**: ⛔ 어떤 연도의 값도 다른 연도로 넘어가지 않는다.
+- **값 제한 없음**: `37` · `42.5` 같은 임의의 값을 쓸 수 있다. 화면의 달성률
+  표시 구간(20/40/60/80/100)은 **표시 기준**이지 입력값 제한이 아니다.
+
+## Table: policy_company_source (정책별 기업정보 등록 여부)
+
+정책의 **기업 목록을 받았는가**를 기록한다. 이 기록이 없으면 그 정책은
+**조회불가**다 — ⛔ 미해당이나 0원이 아니다(`DECISIONS.md` §0.21).
+
+| 컬럼 | 타입 | 필수 | 설명 |
+|---------|------|----------|-------------|
+| policy_company_source_id | INTEGER | Yes | 내부 고유 ID (Primary Key) |
+| policy_id | INTEGER | Yes | 정책 참조 (FK → policy) |
+| source | TEXT | Yes | `FILE` / `API`. **표시·이력용**이며 판정에 쓰지 않는다 |
+| company_count | INTEGER | Yes | 확인한 기업 수 |
+| certification_count | INTEGER | Yes | 저장한 인증 수 |
+| source_label | TEXT | No | 사용자가 알아볼 출처 표시(파일명 등) |
+| registered_at | DATETIME | Yes | 최초 등록 시각 |
+| updated_at | DATETIME | Yes | 최종 갱신 시각 |
+
+- **제약**: `UNIQUE (policy_id)` — 정책당 현재 등록 상태는 하나다.
+- **`certification_count = 0` 도 등록완료다.** 목록을 받았는데 우리 거래처가
+  한 곳도 없을 수 있고, 그것은 "모른다" 가 아니라 **"전부 미해당"** 이다.
+- **판정 근거**: 이 기록이 있거나, 그 정책의 인증이 한 건이라도 있으면 판정
+  가능하다(둘의 합집합).
 
 ### evaluation_basis 허용 값
 
 정책별 판정 기준일 유형을 데이터로 관리하여, 계산 로직(Calculator)이 정책 코드를
 하드코딩하지 않고 이 값에 따라 분기하도록 한다.
 
-| 값 | 의미 | 적용 정책 (MVP) |
+| 값 | 의미 | 적용 정책 (현행) |
 |-----|------|-----------------|
-| PAYMENT_DATE | 대금 지급일이 인증 유효기간 내 | 중소기업, 여성기업, 장애인기업, 녹색제품 |
-| CONTRACT_DATE | 계약일이 인증 유효기간 내 | 창업기업 |
+| RESOLUTION_DATE | **결의일자**가 인증 유효기간 내 | 중소기업, 여성기업, 장애인기업 |
+| RESOLUTION_OR_CONTRACT_DATE | 결의일자 **또는** 계약일자가 인증 유효기간 내 | 창업기업 |
+| PAYMENT_DATE | 대금 지급일이 인증 유효기간 내 | 녹색제품(**비활성** — MVP 계산 제외) |
+| CONTRACT_DATE | 계약일이 인증 유효기간 내 | 현재 사용하는 활성 정책 없음 |
 
-> MVP에서는 위 두 값만 사용한다.
+> ⚠️ **위 표는 2026-08-31 · 2026-08-14 고객 확정을 반영한 현행 값이다.**
+> 인증 유효기간 판정 기준일은 **결의일자**이며(`DECISIONS.md` §0.12.1),
+> 창업기업만 결의일자 OR 계약일자다(2026-08-14 확정).
+> ⛔ 신고기준일(`issue_date`)은 판정에도 연도 귀속에도 쓰지 않는다.
 > 자활용사촌(기간 무관·거래 유무·품목 기준)을 위한 `VENDOR_EXISTENCE` 유형은 향후 정책 확장 시 정의한다.
 
 ---
@@ -290,3 +405,14 @@ Company, Certification, Purchase, Policy 테이블의 기본 컬럼은 정의되
 컬럼의 실제 스키마 반영(Model/Repository)은 Issue #13 이후에서 구현한다.
 
 인덱스(Index), 외래키(Foreign Key), 상세 제약조건(Constraint) 및 Dataset, AuditLog의 컬럼 정의는 다음 버전에서 보완한다.
+
+## v1.2 변경 이력 (Issue #26 — 기간 필터 · 월별 누적 적재)
+
+매월 데이터를 누적으로 올리는 운영 방식을 지원하기 위해 다음을 개정하였다.
+
+- **ImportBatch 테이블 신규 추가** — 업로드 단위, 대상 기간, 상태(`ACTIVE`/`SUPERSEDED`)
+- Purchase: `batch_id`(NULL 허용) 추가 + 인덱스 `idx_purchase_batch`
+- 계산 조회는 `find_for_calculation()` 을 사용하며, 대체된 배치의 행을 제외한다
+- 기존 `find_all()` 의 동작은 **변경하지 않았다**(하위 호환)
+
+Foreign Key 제약은 걸지 않는다. `purchase.company_id` 와 같은 기존 방식(논리 참조)을 유지한다.

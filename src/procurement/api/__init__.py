@@ -21,11 +21,13 @@ procurement.api
 from procurement.api.dashboard_api import DashboardApiService
 from procurement.api.response import (
     DashboardResponseModel,
+    MissingResolutionDateListResponseModel,
     PolicySummaryResponseModel,
 )
 
 __all__ = [
     "DashboardApiService",
     "DashboardResponseModel",
+    "MissingResolutionDateListResponseModel",
     "PolicySummaryResponseModel",
 ]

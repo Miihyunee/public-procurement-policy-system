@@ -878,3 +878,107 @@ class TestBusinessRuleMixedPolicies:
         by_code = {r.policy_code: r for r in results}
         assert by_code["SMALL_BUSINESS"].purchase_amount == Decimal("0")
         assert by_code["STARTUP"].purchase_amount == Decimal("7000000")
+
+
+class TestMultiPolicySameCompany:
+    """한 사업자가 여러 정책 인증을 동시에 보유한 경우를 검증합니다.
+
+    **확정 업무규칙 (2026-08-14 고객 협의 · ``DECISIONS.md`` §0.5.2)**
+
+    - 각 정책을 **독립적으로** 판정한다. 동일 거래가 여러 정책의 분자에
+      각각 포함될 수 있다.
+    - ``IF 여성기업 … ELSE IF 창업기업 …`` 같은 **우선순위 기반 배타 분류를
+      금지**한다.
+    - 전체 구매금액(분모)은 **실제 구매금액 기준으로 1회만** 계산한다.
+
+    기존 테스트는 정책마다 **다른 기업**을 두고 있어 이 규칙을 검증하지
+    못했습니다. 여기서는 **같은 기업이 두 정책 인증을 모두 보유**하는 상황을
+    고정합니다.
+    """
+
+    def test_same_company_counts_in_every_policy(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """여성기업 + 창업기업 인증을 함께 보유하면 두 정책 실적에 모두 잡힌다."""
+        both = _add_company(company_repo, "1000000001")
+        woman_policy = _add_policy(policy_repo, "WOMAN", "여성기업")
+        startup_policy = _add_policy(
+            policy_repo, "STARTUP", "창업기업", evaluation_basis="CONTRACT_DATE"
+        )
+        _add_certification(certification_repo, both, woman_policy)
+        _add_certification(certification_repo, both, startup_policy)
+        _add_purchase(purchase_repo, "200000", company_id=both)
+
+        assert calculator.calculate_policy_purchase(woman_policy) == Decimal("200000")
+        assert calculator.calculate_policy_purchase(startup_policy) == Decimal("200000")
+
+    def test_denominator_counts_the_purchase_only_once(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """분자에 두 번 잡혀도 분모는 1회만 계산한다.
+
+        PM 이 제시한 예시 그대로다::
+
+            전체 100만 · 사업자 A 20만(여성+창업)
+            → 여성 분자 20만 · 창업 분자 20만 · 분모 100만  (120만이 아님)
+        """
+        both = _add_company(company_repo, "1000000001")
+        other = _add_company(company_repo, "1000000002")
+        woman_policy = _add_policy(policy_repo, "WOMAN", "여성기업")
+        startup_policy = _add_policy(
+            policy_repo, "STARTUP", "창업기업", evaluation_basis="CONTRACT_DATE"
+        )
+        _add_certification(certification_repo, both, woman_policy)
+        _add_certification(certification_repo, both, startup_policy)
+        _add_purchase(purchase_repo, "200000", company_id=both)
+        _add_purchase(purchase_repo, "800000", company_id=other)
+
+        results = calculator.calculate_all(
+            {woman_policy: Decimal("5"), startup_policy: Decimal("10")}
+        )
+        by_code = {r.policy_code: r for r in results}
+
+        assert by_code["WOMAN"].purchase_amount == Decimal("200000")
+        assert by_code["STARTUP"].purchase_amount == Decimal("200000")
+        # 분모는 200,000 + 800,000 = 1,000,000. 1,200,000 이 되어서는 안 된다.
+        assert {r.total_purchase_amount for r in results} == {Decimal("1000000")}
+
+    def test_no_exclusive_classification_between_policies(
+        self,
+        calculator: ProcurementAchievementCalculator,
+        company_repo: CompanyRepository,
+        policy_repo: PolicyRepository,
+        certification_repo: CertificationRepository,
+        purchase_repo: PurchaseRepository,
+    ) -> None:
+        """정책을 하나 더 늘려도 먼저 잡힌 정책이 뒤 정책을 가리지 않는다.
+
+        우선순위 분기가 들어오면 세 정책 중 하나만 인정되어 이 테스트가 깨집니다.
+        """
+        company = _add_company(company_repo, "1000000001")
+        codes = [
+            ("SMALL_BUSINESS", "중소기업"),
+            ("WOMAN", "여성기업"),
+            ("DISABLED", "장애인기업"),
+        ]
+        policy_ids = {}
+        for code, name in codes:
+            policy_id = _add_policy(policy_repo, code, name)
+            _add_certification(certification_repo, company, policy_id)
+            policy_ids[code] = policy_id
+        _add_purchase(purchase_repo, "500000", company_id=company)
+
+        for code, policy_id in policy_ids.items():
+            assert calculator.calculate_policy_purchase(policy_id) == Decimal("500000"), (
+                f"{code} 가 다른 정책에 가려졌습니다. 배타적 분류가 들어갔는지 확인하세요."
+            )

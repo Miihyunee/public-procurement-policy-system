@@ -1,15 +1,24 @@
 # 문서 안내 (Documentation Map)
 
-> 최종 갱신: 2026-08-11 (문서 통폐합)
+> 최종 갱신: 2026-08-17
+
+## 처음 오셨다면
+
+**`PM_HANDOVER.md` 부터 읽으세요.** 현재 상태 · 결정 대기 목록 · 작업 원칙을
+한 문서에 정리해 두었습니다.
 
 ## 어디를 먼저 봐야 하나
 
 | 알고 싶은 것 | 문서 |
 |---|---|
-| **지금 프로젝트가 어디까지 왔나** | `PROJECT_STATUS_AND_ROADMAP.md` |
+| **프로젝트를 처음 이어받는다** | **`PM_HANDOVER.md`** ⭐ |
 | **무엇이 결정됐고 무엇이 안 됐나** | **`DECISIONS.md`** ⭐ |
+| **지금 무슨 작업 중인가** | `UPLOAD_PIPELINE_DESIGN.md` |
 | **고객에게 뭘 물어봐야 하나** | `CUSTOMER_DATA_QUESTIONS.md` |
 | **데이터를 어디서 어떻게 받나** | `DATA_ACQUISITION_PLAN.md` |
+
+> ⚠️ `PROJECT_STATUS_AND_ROADMAP.md` 는 2026-08-11 기준이라 현재와 다릅니다.
+> 현재 상태는 `PM_HANDOVER.md` 를 보세요.
 
 > ⭐ **`DECISIONS.md` 가 결정의 단일 출처다.** 여기 없는 결정은 결정된 것이 아니다.
 > 새 결정은 이 문서에만 추가한다.
@@ -20,8 +29,9 @@
 
 | 문서 | 내용 |
 |---|---|
-| `PROJECT_STATUS_AND_ROADMAP.md` | Git 실측 기준 현재 상태, Phase 0~5 로드맵 |
+| **`PM_HANDOVER.md`** | **현재 상태 · 결정 대기 · 작업 원칙 (진입점)** |
 | **`DECISIONS.md`** | **D(결정) · W(고객 확인) · C(문서 충돌) 통합 대장** |
+| `PROJECT_STATUS_AND_ROADMAP.md` | Phase 0~5 로드맵. ⚠️ 현황 부분은 2026-08-11 기준 |
 
 ## 2. 프로젝트 기반
 
@@ -41,7 +51,16 @@
 | `POLICY_GAP_ANALYSIS_2026.md` | 2026 정부권장정책 vs 현재 설계 전수 대조 |
 | `POLICY_DECISION_ANALYSIS.md` | 정책 범위·계산기준 확정 전 검증 (D-1~D-9) |
 
-## 4. 구매데이터 (현재 작업 중심)
+## 3.5 업로드 (현재 작업 중심)
+
+| 문서 | 내용 |
+|---|---|
+| `PURCHASE_TYPE_CLASSIFICATION_ANALYSIS.md` | **구매유형 수작업 분류 프로세스 분석** — 원본/작업본 실측 |
+| `UPLOAD_PIPELINE_DESIGN.md` | 업로드 파이프라인 설계 · 남은 결정 지점 |
+| `STANDARD_UPLOAD_FORMAT.md` | 표준 양식 컬럼 정의와 근거 |
+| `ELECTRON_ARCHITECTURE.md` | Electron 구조 · 보안 설정 · 미검증 항목 |
+
+## 4. 구매데이터
 
 | 문서 | 내용 | 단계 |
 |---|---|---|
@@ -66,6 +85,7 @@
 |---|---|
 | `ISSUE24-SPEC-real-data-e2e-validation.md` | Phase 4 — 실제 데이터 E2E 검증 |
 | `ISSUE49-SPEC-purchase-amount-validation.md` | **보류** — 음수/0 금액 (W-4 대기) |
+| `ISSUE26-SPEC-period-filter-and-import-batch.md` | 📜 **역사적 설계 문서** — 기간 필터 · Import Batch. **구현 완료**되었으며 현재 상태는 `DECISIONS.md` 가 정본 |
 
 ---
 

@@ -63,7 +63,6 @@ class TestCreateTable:
             "company_id",
             "policy_id",
             "valid_from",
-            "valid_to",
             "created_at",
             "updated_at",
         ):
@@ -71,15 +70,31 @@ class TestCreateTable:
         # 선택 항목은 NULL 허용
         assert cols["certificate_number"]["notnull"] == 0
         assert cols["issuing_agency"]["notnull"] == 0
+        # 분류 ② 요구사항 변경 (STEP 108) — 🟢 2026-09-04 고객 확정:
+        # "사회적기업과 사회적협동조합은 종료일이 없으며 계속 유효한 것으로
+        # 판단한다." 그래서 종료일은 NOT NULL 이 아니게 되었습니다.
+        assert cols["valid_to"]["notnull"] == 0
 
     def test_columns_match_design(self, repo: CertificationRepository) -> None:
-        """DATABASE_DESIGN.md 정의 컬럼과 정확히 일치해야 합니다."""
+        """DATABASE_DESIGN.md 정의 컬럼과 정확히 일치해야 합니다.
+
+        .. note::
+            분류 A · 고객 확정 반영 (2026-09-05). *"기존 인증기업 데이터는
+            이력으로 보관하고, 새 파일이 올라오면 그 파일을 최신으로 선택한다"*
+            를 반영하면서 ``policy_company_source_id`` 가 더해졌습니다 —
+            이 인증이 **어느 등록 버전에서 왔는지**를 가리키며, 계산은 활성
+            버전의 인증만 봅니다.
+
+            ⛔ 컬럼을 마음대로 늘리지 않는다는 감시는 그대로입니다. 늘어난
+            것은 이 하나뿐입니다.
+        """
         names = [row["name"] for row in repo.execute("PRAGMA table_info(certification)")]
         assert names == [
             "certification_id",
             "company_id",
             "policy_id",
             "certificate_number",
+            "policy_company_source_id",
             "valid_from",
             "valid_to",
             "issuing_agency",
@@ -210,12 +225,25 @@ class TestCount:
 class TestRequiredValidation:
     """필수값 검증(None 금지)을 확인합니다."""
 
-    @pytest.mark.parametrize("field", ["company_id", "policy_id", "valid_from", "valid_to"])
+    @pytest.mark.parametrize("field", ["company_id", "policy_id", "valid_from"])
     def test_none_required_field_raises(self, repo: CertificationRepository, field: str) -> None:
         cert = _sample()
         setattr(cert, field, None)
         with pytest.raises(CertificationValidationError):
             repo.insert(cert)
+
+    def test_valid_to_is_not_required(self, repo: CertificationRepository) -> None:
+        """종료일은 필수가 아니다 — 없으면 **계속 유효**한 인증이다.
+
+        분류 ② 요구사항 변경 (STEP 108). 🟢 2026-09-04 고객 확정:
+        *"사회적기업과 사회적협동조합은 종료일이 없으며 계속 유효한 것으로
+        판단한다."* ⛔ 없는 종료일을 지어내어 채우지 않습니다.
+        """
+        cert = _sample()
+        cert.valid_to = None
+        stored = repo.insert(cert)
+        assert stored.valid_to is None
+        assert repo.count() == 1
 
     def test_validation_failure_persists_nothing(self, repo: CertificationRepository) -> None:
         cert = _sample()

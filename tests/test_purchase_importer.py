@@ -21,7 +21,11 @@ from procurement.app import create_app
 from procurement.database.bootstrap import init_db
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.policy_company_source_repository import (
+    PolicyCompanySourceRepository,
+)
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.importers import ImportStatus, PurchaseImporter
 from procurement.models import Certification, Company, Policy
@@ -90,9 +94,7 @@ class TestImportNormalValues:
         assert purchase.payment_date == date(2026, 3, 15)
         assert purchase.amount == Decimal("3000000")  # 콤마·단위 제거
 
-    @pytest.mark.parametrize(
-        "value", ["2026-03-01", "20260301", "2026/03/01", "2026.03.01"]
-    )
+    @pytest.mark.parametrize("value", ["2026-03-01", "20260301", "2026/03/01", "2026.03.01"])
     def test_accepts_date_formats(
         self, importer: PurchaseImporter, db_path: Path, value: str
     ) -> None:
@@ -148,12 +150,58 @@ class TestImportFailures:
         assert any("101811629" in message for message in report.rows[0].messages)
 
     def test_missing_required_column(self, importer: PurchaseImporter) -> None:
-        """필수 키가 아예 없으면 실패합니다."""
+        """필수 키가 아예 없으면 실패합니다 — 사업자등록번호."""
+        row = _row()
+        del row["business_no"]
+        report = importer.import_rows([row])
+        assert report.failed_count == 1
+        assert any("사업자등록번호" in message for message in report.rows[0].messages)
+
+    def test_a_missing_payment_date_no_longer_fails(self, importer: PurchaseImporter) -> None:
+        """지급일 키가 없어도 **적재된다** — 🟢 2026-09-02 PM 확정(STEP 87).
+
+        .. note::
+            **기대값이 바뀐 이유** — 이 시험은 ``payment_date`` 키를 지우면
+            실패하는 것을 잠그고 있었습니다. PM 이 *"실적 산정 및 연도 귀속
+            기준은 결의일자"* 이며 *"원본에 존재하지 않는 날짜 때문에 정상
+            거래를 미적재시키지 않는다"* 로 확정했으므로, 이제는 **적재되는지**
+            를 잠급니다. ⛔ 필수 키 검사 자체를 지운 것이 아니라 위 시험이
+            사업자등록번호로 그대로 남아 있습니다.
+        """
         row = _row()
         del row["payment_date"]
         report = importer.import_rows([row])
-        assert report.failed_count == 1
-        assert any("지급일" in message for message in report.rows[0].messages)
+
+        assert report.failed_count == 0
+        assert report.stored_count == 1
+
+    def test_a_missing_contract_date_no_longer_fails(self, importer: PurchaseImporter) -> None:
+        """계약일자도 마찬가지다(사유는 위와 같음)."""
+        row = _row()
+        del row["contract_date"]
+        report = importer.import_rows([row])
+
+        assert report.failed_count == 0
+        assert report.stored_count == 1
+
+    def test_a_row_with_neither_date_is_stored(
+        self, importer: PurchaseImporter, db_path: Path
+    ) -> None:
+        """⭐ 고객 원본과 같은 모습 — 두 날짜가 모두 없고 결의일자만 있다.
+
+        ⛔ 없는 날짜를 다른 날짜로 채우지 않는다는 것까지 확인한다.
+        """
+        row = _row()
+        del row["payment_date"]
+        del row["contract_date"]
+        row["resolution_date"] = "2026-03-05"
+        report = importer.import_rows([row])
+
+        assert report.stored_count == 1
+        stored = PurchaseRepository(db_path).find_all()[0]
+        assert stored.contract_date is None
+        assert stored.payment_date is None
+        assert stored.resolution_date == date(2026, 3, 5)
 
     def test_invalid_date(self, importer: PurchaseImporter) -> None:
         report = importer.import_rows([_row(contract_date="2026년 3월 1일")])
@@ -234,9 +282,7 @@ class TestImportWarnings:
     ) -> None:
         """계약일이 지급일보다 늦어도 거부하지 않습니다(선지급 가능)."""
         _add_company(db_path)
-        report = importer.import_rows(
-            [_row(contract_date="2026-05-01", payment_date="2026-03-15")]
-        )
+        report = importer.import_rows([_row(contract_date="2026-05-01", payment_date="2026-03-15")])
         assert report.stored_count == 1
         assert any("계약일" in message for message in report.rows[0].messages)
 
@@ -354,6 +400,11 @@ class TestImportToDashboardEndToEnd:
             )
         )
         assert policy.policy_id is not None
+        # ⚠️ STEP 93 — 목표비율의 정본은 **연도별** 값이다(DECISIONS §0.20).
+        #    위 Policy.target_rate 는 하위호환으로 남아 있을 뿐 계산에 쓰이지
+        #    않으므로, 이 시험이 조회하는 연도(2026)에 같은 값을 등록한다.
+        #    ⛔ 기대값은 바뀌지 않았다 — 값을 **어디에 두는지**만 바뀌었다.
+        PolicyTargetRepository(db_path).upsert(2026, policy.policy_id, Decimal("50"))
         CertificationRepository(db_path).insert(
             Certification(
                 company_id=company_id,
@@ -374,7 +425,11 @@ class TestImportToDashboardEndToEnd:
         assert report.stored_count == 2
         assert report.matched_count == 1
 
-        payload = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+        payload = (
+            TestClient(create_app(db_path, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         assert payload["total_purchase_amount"] == "10000000"
 
         item = {p["policy_code"]: p for p in payload["policies"]}["SMALL_BUSINESS"]
@@ -383,7 +438,13 @@ class TestImportToDashboardEndToEnd:
         assert item["status"] == "SHORTAGE"
 
     def test_rematch_updates_dashboard(self, importer: PurchaseImporter, db_path: Path) -> None:
-        """기업정보가 나중에 들어와도 재매칭 후 달성률에 반영됩니다."""
+        """기업정보가 나중에 들어와도 재매칭 후 달성률에 반영됩니다.
+
+        ⚠️ **STEP 96 — 설정 보완.** 기업정보를 받지 못한 정책은 이제 조회불가라
+        금액이 ``null`` 이다(§8). 이 시험은 "재매칭 전 0 → 후 반영" 을 보므로,
+        목록을 받았다는 사실을 먼저 기록해 0 이 **미해당**을 뜻하게 한다.
+        ⛔ 기대값은 바뀌지 않았다.
+        """
         policy = PolicyRepository(db_path).insert(
             Policy(
                 policy_code="SMALL_BUSINESS",
@@ -393,12 +454,21 @@ class TestImportToDashboardEndToEnd:
             )
         )
         assert policy.policy_id is not None
+        # ⚠️ STEP 93 — 목표비율의 정본은 연도별 값이다(DECISIONS §0.20).
+        PolicyTargetRepository(db_path).upsert(2026, policy.policy_id, Decimal("50"))
+        PolicyCompanySourceRepository(db_path).record(
+            policy.policy_id, source="FILE", company_count=0, certification_count=0
+        )
 
         # ① 구매데이터 먼저 — 기업이 없어 미매칭
         importer.import_rows(
             [_row(amount="5000000"), _row(business_no="9999999999", amount="5000000")]
         )
-        before = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+        before = (
+            TestClient(create_app(db_path, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         assert {p["policy_code"]: p for p in before["policies"]}["SMALL_BUSINESS"][
             "purchase_amount"
         ] == "0"
@@ -416,7 +486,11 @@ class TestImportToDashboardEndToEnd:
 
         # ③ 재매칭 → 달성률 반영
         assert importer.rematch() == 1
-        after = TestClient(create_app(db_path)).get("/dashboard/summary").json()
+        after = (
+            TestClient(create_app(db_path, period_date_field="payment_date"))
+            .get("/dashboard/summary?year=2026")
+            .json()
+        )
         item = {p["policy_code"]: p for p in after["policies"]}["SMALL_BUSINESS"]
         assert item["purchase_amount"] == "5000000"
         assert item["achievement_rate"] == "100.00"

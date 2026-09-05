@@ -83,6 +83,233 @@
   button.control { cursor: pointer; font-family: inherit; }
   button.control:hover { border-color: var(--accent); color: var(--accent); }
   .control-label { color: var(--muted); }
+  .control-input {
+    background: transparent; border: 0; color: var(--text);
+    font-size: 13px; font-family: inherit; outline: none;
+  }
+  .control-input option { background: var(--card); color: var(--text); }
+
+  /* -------------------------------------------------------- 구매유형 검토 */
+  .rv { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 10px; }
+  .rv-src { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; }
+  .rv-src div { display: flex; gap: 6px; }
+  .rv-key { color: var(--muted); }
+  .rv-desc { font-size: 14.5px; font-weight: 600; margin-bottom: 8px; }
+  .rv-head {
+    font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px;
+  }
+  .rv-pager { justify-content: center; align-items: center; gap: 12px; }
+  .rv-current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  /* 카드 자체에 포커스가 올 수 있다(키보드 이동). 지금 어느 행에 있는지
+     보이기만 하면 되므로 색으로 업무 의미를 만들지 않는다 — 진행률 구간색과
+     무관한 표시다. */
+  .rv:focus { outline: none; }
+  .rv:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  /* 키보드로 옮겨 다닐 때 지금 어디에 있는지 분명하게. 마우스 클릭에는
+     테두리가 생기지 않도록 :focus 가 아니라 :focus-visible 을 쓴다. */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+  .rv-danger { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .rv-trace { margin: 8px 0 4px; font-size: 13px; overflow-x: auto; }
+  .rv-trace table { border-collapse: collapse; width: 100%; }
+  .rv-trace th, .rv-trace td { padding: 4px 8px; text-align: left; white-space: nowrap; }
+  /*
+    긴 자유 텍스트 열(적요·거래처·사유)만 줄바꿈을 허용한다. 전부 nowrap 이면
+    표의 최소 폭이 내용 길이만큼 늘어나(실측 1,296px) 좁은 화면에서 담당자가
+    표 안에서 한참 옆으로 밀어야 한다.
+    ⛔ 잘라내지 않는다 — 줄을 바꿔 **전부 보여준다**(말줄임표·ellipsis 없음).
+    ⚠️ 숫자·날짜·행 번호는 위 기본값(nowrap)을 그대로 둔다. `-113,400,000`
+       같은 값이 줄바꿈되면 읽다가 오해하기 쉽다.
+    min-width 는 너무 잘게 쪼개져 한 글자씩 흐르는 것을 막고, max-width 는
+    한 열이 표를 독차지하지 않게 한다.
+  */
+  .rv-trace td.rv-text {
+    white-space: normal; overflow-wrap: anywhere; min-width: 10ch; max-width: 24ch;
+  }
+  /*
+    기간 열(`2026-04-01 ~ 2026-04-30`)만 줄바꿈을 허용한다. 이것까지 열어야
+    768px 화면에서 표가 상자 안에 들어온다(실측 760 → 690px).
+    ⚠️ `overflow-wrap` · `word-break` 를 **쓰지 않는다.** 그래서 끊기는 자리는
+       `~` 앞뒤의 기존 공백뿐이고, 날짜 하나(2026-04-01)는 절대 쪼개지지 않는다.
+    ⛔ 날짜 문자열을 JS 에서 가공해 줄바꿈을 심지 않는다 — 값은 그대로 둔다.
+  */
+  .rv-trace td.rv-period { white-space: normal; }
+  /*
+    480px 이하(휴대폰 세로)에서만 업로드 이력 표를 더 좁힌다.
+
+    실측한 원인은 "어느 한 열이 넓다" 가 아니라 **nowrap 인 일곱 열의 합**이다
+    (480px 기준 628px 중 491px). 그중 두 가지만 손대면 628 → 402px 이 된다.
+      · 업로드일시 154px — 값이 `2026-08-22 07:56:25` 라 날짜와 시각 사이에
+        **이미 공백이 있다.** 기간 열과 **같은 방법**으로 그 공백에서만 끊는다.
+      · 헤더 문구 — `설명 안 됨`(77px)·`미적재`(55px) 처럼 값(`0`·`30`)보다
+        헤더가 열 폭을 정하는 칸이 있다. 헤더도 제 공백에서만 끊게 둔다.
+    남은 20px 은 칸 여백(8 → 4px)과 상세 버튼 좌우 여백(11 → 6px)이다.
+    ⚠️ 버튼의 위아래 여백(7px)은 그대로 둔다 — 손가락으로 누르는 높이(34px)가
+       줄면 안 된다.
+
+    ⛔ 정보를 지우거나 숨겨서 줄인 것이 아니다. 열 9개·값 전부 그대로이고
+       잘림·말줄임표는 어느 폭에서도 0건이다.
+    ⛔ `overflow-wrap` · `word-break` 를 쓰지 않는다 — 날짜·시각·숫자가
+       한복판에서 쪼개지면 오히려 읽다가 오해한다.
+    ⚠️ 480px 초과(768px 포함)에는 적용되지 않는다. STEP 29 결과는 그대로다.
+    ⚠️ 미적재 표(`#upload-trace-rows`)에는 적용되지 않는다 — 이력 표만 고른다.
+  */
+  @media (max-width: 480px) {
+    #history-table td.rv-stamp { white-space: normal; }
+    #history-table th { white-space: normal; }
+    #history-table th, #history-table td { padding: 4px 4px; }
+    #history-table .control { padding: 7px 6px; }
+  }
+  /*
+    미적재 표(`table.rv-reject`)의 480px 이하 규칙. 이력 표와 **같은 방법**이다.
+
+    실측한 원인은 두 가지였다(480px, 표 534px).
+      · 예산과목 — 값이 비면 68px 이지만 실제 값(`일반운영비-공공요금및제세-
+        시설장비유지비`)이 들어오면 **272px** 로 표를 혼자 밀어낸다. 이건 폭이
+        아니라 규칙 문제라 위에서 `rv-text` 로 고쳤다(모든 폭에 적용).
+      · 헤더가 값보다 넓은 열 — `업로드`(값 `#2`)·`원본 행`(값 `152`)·
+        `예산과목`. 셋을 합쳐 182px 로 표의 34% 였다. 헤더**만** 줄바꿈한다.
+    남은 것은 칸 여백(8 → 4px)이다.
+
+    ⛔ 값 셀은 건드리지 않는다 — 금액 `-113,400,000` 은 `nowrap` 그대로다.
+       (실측: 줄바꿈을 허용해도 공백이 없어 폭이 1px 도 줄지 않는다. 즉 얻는
+       것 없이 쪼개질 위험만 생긴다.)
+    ⛔ `word-break` 를 쓰지 않는다. ⛔ `min-width: 10ch` 를 완화하지 않는다.
+    ⚠️ 480px 초과에는 적용되지 않는다 — 768px 결과(690/690)는 그대로다.
+    ⚠️ 이력 표(`#history-table`)는 이 규칙의 대상이 아니다. 선택자가 다르다.
+    ⚠️ 헤더가 줄바꿈되면 `예산과목` 이 세로로 흐르고 헤더 줄 높이가 28 → 67px
+       이 된다. 값이 아니라 제목이고, 480px 이하에서만 그렇다.
+  */
+  @media (max-width: 480px) {
+    .rv-reject th { white-space: normal; }
+    .rv-reject th, .rv-reject td { padding: 4px 4px; }
+  }
+  .rv-trace th { color: var(--muted); font-weight: 600; }
+  .rv-trace td.num { text-align: right; }
+  .rv-keys { margin-top: 10px; }
+  .rv-keys kbd {
+    border: 1px solid var(--line); border-radius: 5px; padding: 0 6px;
+    font-family: inherit; font-size: 12px;
+  }
+  .rv-cond { color: var(--accent); font-weight: 600; }
+  .rv-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50;
+  }
+  .rv-modal[hidden] { display: none; }
+  .rv-modal-box {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; max-width: 760px; width: 100%; max-height: 80vh; overflow: auto;
+  }
+  .rv-modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .rv-hist-row {
+    display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline;
+    padding: 6px 0; border-top: 1px dashed var(--line); font-size: 13px;
+  }
+  .rv-hist-when { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rv-hist-act {
+    border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 12px;
+  }
+  .rv-hist-type { font-weight: 600; }
+  .control-grow { flex: 1 1 260px; }
+  .rv-past {
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 8px; font-size: 12.5px;
+  }
+  .rv-block {
+    margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px;
+  }
+  .rv-cand { display: flex; gap: 10px; align-items: baseline; margin-top: 4px; }
+  /* 접히는 블록. 기본은 닫힘 — 정보를 지우는 것이 아니라 필요할 때 펼친다.
+     기존 색·테두리 체계를 그대로 쓰고 새 색을 만들지 않는다. */
+  .rv-fold {
+    margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px;
+  }
+  .rv-fold > summary {
+    cursor: pointer; color: var(--muted); font-size: 12px; list-style: none;
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+  }
+  .rv-fold > summary::-webkit-details-marker { display: none; }
+  .rv-fold > summary::before { content: "▶"; font-size: 9px; color: var(--muted); }
+  .rv-fold[open] > summary::before { content: "▼"; }
+  .rv-fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* 상태 줄 — 지금 어떤 상태이고 무엇이 골라져 있는지 카드 맨 위에서 보인다. */
+  .rv-state { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; margin-top: 8px; }
+  .rv-state div { display: flex; gap: 6px; }
+  .rv-score { font-variant-numeric: tabular-nums; color: var(--accent); }
+  .rv-why { color: var(--muted); font-size: 12.5px; }
+  .rv-pick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+  .rv-opt {
+    cursor: pointer; font-family: inherit; font-size: 13px; padding: 7px 14px;
+    border-radius: 999px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text);
+  }
+  .rv-opt:hover { border-color: var(--accent); color: var(--accent); }
+  .rv-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .rv-note { flex: 1 1 200px; min-width: 160px; }
+  /*
+    휴대폰 세로(480px 이하)의 확정 선택줄(`.rv-block .rv-pick`).
+
+    360px 에서 이 줄이 **네 줄**로 흩어져 있었다(실측 155px, 카드 694px).
+      [공사 용역 물품] / [판단 보류] / [메모] / [확정]
+    원인은 두 가지였다.
+      · 유형 버튼이 제 글자 폭(56·56·56·86px)이라 3+1 로 어정쩡하게 끊겼다.
+      · 메모의 기준 폭 200px 이 남은 자리(252px)에서 확정 버튼과 함께 서지
+        못해, 메모와 확정이 각각 한 줄씩 차지했다.
+
+    그래서 480px 이하에서만 두 가지를 바꾼다.
+      · 버튼에 **공통 기준 폭**을 줘 한 줄에 몇 개가 들어갈지가 화면 폭으로
+        정해지게 한다. 6.5em(≈85px)은 480px 에서는 넷이 한 줄에(87px 씩),
+        360px 에서는 둘씩 두 줄에(122px 씩) 놓이는 값이다 — 실측으로 고른
+        범위 6.2~6.5em 의 가운데다. ⚠️ 6.8em 부터는 480px 이 3+1 로 깨진다.
+      · 메모의 기준 폭을 min-width 와 같은 160px 로 낮춰 확정 버튼과 한 줄에
+        선다(메모는 여전히 `flex-grow: 1` 로 남은 자리를 다 쓴다).
+    실측 360px: 155 → 118px, 카드 694 → 657px. 480px·768px 은 변화 없다.
+
+    ⛔ 버튼을 지우거나 숨기거나 라벨을 줄이지 않았다 — 6개 요소 그대로다.
+    ⛔ 버튼을 **축소하지 않는다.** `flex-grow` 로 넓어질 뿐이고, 위아래
+       padding 7px 을 건드리지 않아 터치 높이 34px 이 그대로다.
+    ⚠️ `.rv-block` 안의 선택줄만 고른다. 이력 보기 · 확정 취소 줄도 같은
+       `.rv-pick` 이지만 그 줄에는 `.rv-opt` 도 `.rv-note` 도 없다.
+  */
+  @media (max-width: 480px) {
+    .rv-pick .rv-opt { flex: 1 1 6.5em; }
+    .rv-pick .rv-note { flex: 1 1 160px; }
+  }
+  .rv-tag {
+    display: inline-block; font-size: 11.5px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); margin-left: 8px;
+  }
+  .rv-tag-warn { border-color: var(--accent); color: var(--accent); }
+  .rv-done { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+
+  /* -------------------------------------------------------- 업로드 */
+  .upload-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .upload-file {
+    margin-top: 10px; font-size: 12.5px; color: var(--muted);
+    word-break: break-all;
+  }
+  .upload-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .upload-stat {
+    border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px;
+    font-size: 12.5px; background: var(--card);
+  }
+  .upload-stat b { font-size: 15px; }
+  .upload-issues {
+    margin-top: 12px; max-height: 260px; overflow: auto;
+    border: 1px solid var(--line); border-radius: 10px;
+  }
+  .upload-issues table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .upload-issues th, .upload-issues td {
+    text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .upload-issues td.msg { white-space: normal; }
+  .upload-issues th { color: var(--muted); font-weight: 600; position: sticky; top: 0;
+    background: var(--card); }
+  .upload-issues tr:last-child td { border-bottom: 0; }
+  .sev-error { color: #e11d48; font-weight: 700; }
+  .sev-warning { color: #d97706; font-weight: 700; }
 
   /* ------------------------------------------------------------ 알림 */
   .notice, .error {
@@ -94,6 +321,15 @@
 
   /* ------------------------------------------------------------ 레이아웃 */
   .row { display: grid; gap: 14px; margin-top: 14px; }
+  /*
+    ⚠️ grid 칸은 기본이 `min-width: auto` 라, 안에 줄바꿈되지 않는 넓은 표가
+    하나라도 있으면 **칸 자체가 그 표만큼 넓어진다**. 그러면 표에 걸어 둔
+    `overflow-x: auto` 가 일할 기회를 잃고, 대신 화면 전체에 가로 스크롤이
+    생긴다(실측: 미적재 행 표 때문에 문서 폭이 어느 화면에서나 1354px 로 고정).
+    칸이 줄어들 수 있게 열어 주면, 넘치는 표는 제 안에서 스크롤된다.
+    ⛔ `overflow-x: hidden` 으로 덮지 않는다 — 그러면 표를 볼 방법이 사라진다.
+  */
+  .row > * { min-width: 0; }
   .row-kpi { grid-template-columns: 2fr 1fr; }
   .row-mid { grid-template-columns: 1.6fr 1fr; }
   .row-bottom { grid-template-columns: 320px 1fr; }
@@ -109,6 +345,24 @@
   /* 나란히 놓인 카드의 높이가 달라도 내부 여백이 비지 않도록 늘린다. */
   .card > .kpi-grid, .card > .policy-grid { flex: 1 1 auto; }
   .card-title { font-size: 15px; font-weight: 700; margin: 0; }
+
+  /* ------------------------------------------- 월별 적재 현황 (STEP 119) */
+  /* 색만으로 알리지 않는다 — ●/○ 기호와 「완료/미업로드」 글자를 함께 둔다. */
+  .months {
+    display: grid; grid-template-columns: repeat(6, 1fr);
+    gap: 8px; margin-top: 16px;
+  }
+  @media (max-width: 720px) { .months { grid-template-columns: repeat(3, 1fr); } }
+  .month {
+    background: var(--card-soft); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 6px; text-align: center;
+  }
+  .month-name { font-size: 12.5px; font-weight: 600; }
+  .month-mark { font-size: 15px; line-height: 1.3; }
+  .month-state { font-size: 11px; color: var(--muted); }
+  .month.is-uploaded { border-color: var(--normal); }
+  .month.is-uploaded .month-mark { color: var(--normal); }
+  .month.is-missing .month-mark { color: var(--unset); }
   .card-sub { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
   .card-head { display: flex; align-items: flex-start; gap: 10px; }
 
@@ -173,6 +427,16 @@
     background: var(--chip-bg); border: 1px solid var(--line); color: var(--muted);
   }
   .chip-ready { color: var(--accent); border-color: var(--accent); }
+  /* 구매유형별 달성률 표 (여성기업) — 정책 카드 안에 들어간다. */
+  .scoped { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .scoped-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .scoped .kv th { font-weight: 500; white-space: nowrap; }
+  .scoped .kv td { text-align: right; }
+
+  /* 목표비율 관리 — 분모 기준마다 입력칸을 한 줄씩 둔다. */
+  .scoped-input { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .scoped-input .scoped-title { min-width: 8em; }
+
   .policy-value { font-size: 25px; font-weight: 700; letter-spacing: -.02em; margin-top: 10px; }
   .policy-state { font-size: 12px; margin-top: 1px; }
   .st-NORMAL { color: var(--normal); }
@@ -239,13 +503,81 @@
     <section class="card">
       <h2 class="card-title">정책별 달성률</h2>
       <p class="card-sub">목표율이 등록되고 계산이 가능한 정책만 표시합니다</p>
+      <div id="summary-error" class="error" hidden></div>
       <div id="chart-achievement"></div>
+      <!-- 결의일자가 비어 있어 결의일자 기준 집계에 들어가지 못한 행을 알린다.
+           ⛔ 판정하지 않는다 — "제외"·"무효"·"오류" 가 아니라 **사실만** 적는다.
+           STEP 60 — 안내 아래에서 해당 행 목록을 펼쳐 볼 수 있다. -->
+      <p class="foot-note" id="missing-resolution-note" hidden></p>
+      <details class="rv-fold" id="missing-resolution-fold" hidden>
+        <summary id="missing-resolution-summary"></summary>
+        <!-- STEP 61 — 내려받기 링크. 기존 미적재/검토 CSV 와 **같은 방식**이라
+             누른다고 화면 조회가 달라지거나 데이터가 바뀌지 않는다.
+             ⛔ 데이터를 바꾸는 조작이 아니므로 확인창을 두지 않는다. -->
+        <a id="missing-resolution-csv" class="control"
+           download="missing-resolution-date.csv"
+           aria-label="결의일자 미기재 구매 CSV 내려받기">CSV 내려받기</a>
+        <div id="missing-resolution-rows" class="rv-trace"></div>
+      </details>
     </section>
 
     <section class="card">
       <h2 class="card-title">데이터 적재 현황</h2>
       <table class="kv"><tbody id="status-table"></tbody></table>
       <p class="foot-note" id="status-note"></p>
+    </section>
+
+    <!--
+      월별 지출데이터 적재 현황 (STEP 119 §5).
+
+      ⭐ 월별 «달성률» 이 아니라 «올렸는가» 다. 담당자가 「올해 몇 월까지
+         올라왔지?」 를 한눈에 보기 위한 자리다.
+      ⛔ 추이 그래프를 만들지 않는다 — 고객이 요청하지 않았다.
+    -->
+    <section class="card">
+      <h2 class="card-title">월별 지출데이터 적재 현황</h2>
+      <div class="months" id="upload-months"></div>
+      <p class="foot-note" id="upload-months-note"></p>
+    </section>
+  </div>
+
+  <!--
+    2-B. 목표비율 관리 — 연도 × 정책.
+
+    「정책별 달성률」 바로 아래에 둔다. 목표비율이 없어 달성률이 안 나온다는
+    사실을 보는 그 자리에서 바로 입력할 수 있어야 하기 때문이다.
+
+    ⛔ 기업(구매처)을 고르는 칸이 없다. 목표비율의 축은 **연도 × 정책** 뿐이다
+       (DECISIONS §0.20). 거래처 단위로 목표를 나누지 않는다.
+    ⛔ 정책 목록을 화면이 들고 있지 않는다. 서버(/policy-targets)가 준다.
+    ⛔ 목표비율을 20/40/60/80/100 으로 제한하지 않는다 — 그것은 달성률 **표시
+       구간**이지 입력값 제한이 아니다.
+  -->
+  <div class="row" style="margin-top:16px">
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">목표비율 관리</h2>
+          <p class="card-sub">
+            연도별로 정책마다 목표비율을 정합니다. 기관 전체 지출 중 그 정책의
+            인증기업에 지출해야 하는 비율입니다
+          </p>
+        </div>
+        <span class="control">
+          <span class="control-label">연도</span>
+          <select id="pt-year" class="control-input"
+                  aria-label="목표비율 대상 연도"></select>
+        </span>
+        <button id="pt-save" class="control" type="button">저장</button>
+      </div>
+
+      <div id="pt-notice" class="notice" hidden></div>
+      <div id="pt-error" class="error" hidden></div>
+      <table class="kv"><tbody id="pt-rows"></tbody></table>
+      <p class="foot-note">
+        비워 두면 <b>미설정</b>입니다 — 0% 가 아니며 그 정책의 달성률은
+        계산하지 않습니다. 연도마다 따로 관리되어 다른 연도 값은 바뀌지 않습니다.
+      </p>
     </section>
   </div>
 
@@ -264,12 +596,508 @@
     </section>
   </div>
 
+  <!--
+    3-B. 미매칭 기업 — "기업 미매칭 N건" 총계를 사업자번호 단위로 펼친 것.
+    ⛔ 조회 전용이다. 여기서 기업을 만들거나 연결하지 않는다.
+  -->
+  <div class="row" style="margin-top:16px">
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">미매칭 기업</h2>
+          <p class="card-sub">
+            기업정보가 없어 연결되지 않은 구매를 사업자등록번호별로 묶은 것입니다
+          </p>
+        </div>
+      </div>
+
+      <div class="upload-actions" style="margin-top:12px">
+        <label class="control control-grow">
+          <span class="control-label">검색</span>
+          <input id="unmatched-search" class="control-input" type="search"
+                 placeholder="사업자등록번호 · 거래처명" aria-label="미매칭 기업 검색" />
+        </label>
+        <label class="control">
+          <span class="control-label">정렬</span>
+          <select id="unmatched-sort" class="control-input" aria-label="미매칭 기업 정렬 기준">
+            <option value="amount">미매칭 금액</option>
+            <option value="count">미매칭 건수</option>
+            <option value="business_no">사업자등록번호</option>
+          </select>
+        </label>
+        <label class="control">
+          <span class="control-label">방향</span>
+          <select id="unmatched-direction" class="control-input" aria-label="정렬 방향">
+            <option value="desc">내림차순</option>
+            <option value="asc">오름차순</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="unmatched-error" class="error" hidden></div>
+      <div id="unmatched-notice" class="notice" hidden></div>
+      <div id="unmatched-rows" class="rv-trace"></div>
+      <div class="upload-actions" style="margin-top:8px">
+        <button id="unmatched-prev" class="control" type="button"
+                aria-label="미매칭 기업 이전 쪽">← 이전 쪽</button>
+        <span id="unmatched-page-info" class="card-sub"></span>
+        <button id="unmatched-next" class="control" type="button"
+                aria-label="미매칭 기업 다음 쪽">다음 쪽 →</button>
+      </div>
+
+      <!--
+        재매칭 — 데이터를 바꾸는 유일한 조작이다. ⛔ 확인창을 먼저 띄운다.
+        ⛔ 기업 등록 버튼을 두지 않는다 — 등록 기능 자체가 아직 없다.
+      -->
+      <div class="upload-actions" style="margin-top:12px">
+        <button id="unmatched-rematch" class="control" type="button"
+                aria-label="미매칭 구매를 기업정보와 다시 연결">기업정보와 다시 연결</button>
+        <span class="card-sub">기업정보가 등록된 경우에만 연결됩니다</span>
+      </div>
+      <div id="rematch-result" class="notice" hidden></div>
+
+      <!-- 재매칭 확인 — ⛔ 확인 전에는 아무것도 바뀌지 않는다 -->
+      <div id="rematch-modal" class="rv-modal" role="alertdialog" aria-modal="true"
+           aria-label="재매칭 확인" hidden>
+        <div id="rematch-box" class="rv-modal-box"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- 4. 구매실적 업로드 (데스크톱 앱 전용) -->
+  <div class="row" style="margin-top:16px">
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">구매실적 업로드</h2>
+          <p class="card-sub">표준 양식을 내려받아 채운 뒤 올리면 전체 행을 검증합니다</p>
+        </div>
+      </div>
+
+      <!--
+        🟢 2026-09-05 고객 확정 — 지출데이터는 월별로 올리고 한 해로 쌓는다.
+        같은 달을 다시 올릴 때는 되묻고, 승인하면 그 달만 교체한다(STEP 120 §5).
+
+        ⛔ 안내문일 뿐 판정하지 않는다. 실제 교체 여부는 백엔드가 정한다.
+      -->
+      <div class="notice" id="upload-monthly-guide">
+        지출데이터는 <strong>월별로 업로드</strong>할 수 있습니다.
+        대상 연도와 월을 고르고 올리면 그 달 데이터가 한 해에 쌓입니다.
+        이미 등록된 월을 다시 올리면 되묻고, 승인하시면
+        <strong>기존 그 달 데이터를 삭제하고 새 데이터로 교체</strong>합니다.
+        다른 달과 다른 연도는 그대로 둡니다.
+      </div>
+
+      <div class="upload-actions">
+        <button id="upload-template" class="control" type="button">표준 양식 다운로드</button>
+        <button id="upload-pick" class="control" type="button">파일 선택</button>
+        <span class="control">
+          <span class="control-label">대상 연도</span>
+          <select id="upload-year" aria-label="업로드 대상 연도 선택"></select>
+        </span>
+        <span class="control">
+          <span class="control-label">대상 월</span>
+          <select id="upload-month" aria-label="업로드 대상 월 선택"></select>
+        </span>
+        <button id="upload-run" class="control" type="button" disabled>검증만</button>
+        <button id="upload-save" class="control" type="button" disabled>검증 후 저장</button>
+      </div>
+
+      <div id="upload-file" class="upload-file">선택된 파일이 없습니다.</div>
+      <div id="upload-notice" class="notice" hidden></div>
+      <div id="upload-error" class="error" hidden></div>
+      <div id="upload-summary" class="upload-summary" hidden></div>
+
+      <!--
+        원본 대비 적재/미적재. ⛔ "제외되었습니다" 라고 쓰지 않는다 —
+        금액 0 이하 행의 처리 방식은 고객 확인 대기(Q5-8)다.
+      -->
+      <div id="upload-trace" class="notice" hidden></div>
+      <div id="upload-trace-actions" class="upload-actions" hidden>
+        <button id="upload-trace-show" class="control" type="button">미적재 행 확인</button>
+        <a id="upload-trace-csv" class="control" href="/imports/trace.csv"
+           download="import-rejections.csv">미적재 CSV 내려받기</a>
+      </div>
+      <div id="rejection-panel" hidden>
+        <div class="upload-actions">
+          <span class="control">
+            <span class="control-label">검색</span>
+            <input id="rejection-search" class="control-input" type="text"
+                   placeholder="적요 · 거래처 · 행 번호"
+                   aria-label="미적재 행 검색 — 적요, 거래처명, 사업자번호, 원본 행 번호" />
+          </span>
+          <span class="control">
+            <span class="control-label">기간</span>
+            <select id="rejection-period" class="control-input" aria-label="미적재 행 기간">
+              <option value="">전체</option>
+            </select>
+          </span>
+          <span class="control">
+            <span class="control-label">사유</span>
+            <select id="rejection-reason" class="control-input" aria-label="미적재 사유 필터">
+              <option value="ALL">전체</option>
+            </select>
+          </span>
+          <span class="control">
+            <span class="control-label">정렬</span>
+            <select id="rejection-sort" class="control-input" aria-label="미적재 행 정렬 기준">
+              <option value="row_number">원본 행 번호</option>
+              <option value="amount">금액</option>
+              <option value="description">적요</option>
+              <option value="company_name">거래처명</option>
+              <option value="reason">사유</option>
+            </select>
+          </span>
+          <span class="control">
+            <span class="control-label">방향</span>
+            <select id="rejection-direction" class="control-input" aria-label="정렬 방향">
+              <option value="asc">오름차순</option>
+              <option value="desc">내림차순</option>
+            </select>
+          </span>
+        </div>
+        <div id="upload-trace-rows" class="rv-trace"></div>
+        <div class="upload-actions rv-pager">
+          <button id="rejection-prev" class="control" type="button"
+                  aria-label="미적재 행 이전 쪽">← 이전 쪽</button>
+          <span id="rejection-page-info" class="card-sub"></span>
+          <button id="rejection-next" class="control" type="button"
+                  aria-label="미적재 행 다음 쪽">다음 쪽 →</button>
+        </div>
+      </div>
+
+      <div id="upload-issues" class="upload-issues" hidden></div>
+    </section>
+
+    <!--
+      기업정보 등록 — **정책별로** 목록을 받는다(STEP 96 §2).
+
+      ⭐ 기업정보는 지출 원본에 들어 있지 않다. 정책마다 **별개의 기업 목록**을
+         받아, 사업자등록번호로 지출과 맞춰 본다.
+      ⛔ 정책 목록을 화면이 들고 있지 않는다. 서버(/companies/registration)가 준다.
+      ⛔ 파일 내용을 보고 정책을 추론하지 않는다 — 사용자가 고른 정책으로 저장한다.
+      ⛔ 조회(API) 선택지는 **실제로 구현된 정책에만** 나온다.
+      ⛔ 목록을 받지 못한 정책은 "미해당" 이 아니라 **조회불가**다.
+    -->
+    <div class="row" style="margin-top:16px">
+      <section class="card" style="flex:1 1 100%">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">기업정보 등록</h2>
+            <p class="card-sub">
+              정책마다 기업 목록을 받습니다. 목록을 받지 못한 정책은
+              <b>조회불가</b>이며 — 해당 기업이 없다는 뜻이 아닙니다
+            </p>
+          </div>
+          <button id="cr-reload" class="control" type="button">새로고침</button>
+        </div>
+        <div id="cr-notice" class="notice" hidden></div>
+        <div id="cr-error" class="error" hidden></div>
+        <table class="kv"><tbody id="cr-rows"></tbody></table>
+        <p class="foot-note">
+          파일은 <b>사업자등록번호 · 기업명 · 대표자명 · 유효시작일 · 유효종료일</b>
+          다섯 칸이면 됩니다. 어느 정책인지는 위에서 고른 값으로 정해지므로
+          <b>인증종류 칸은 필요하지 않습니다</b>.
+        </p>
+      </section>
+    </div>
+
+    <!--
+      기업정보 확인 방식 — 파일 업로드 / 조회 두 가지를 **사용자가 고른다.**
+
+      ⛔ 화면은 "어디서 가져올지" 만 고르게 한다. 가져온 뒤의 기업 매칭 ·
+         인증 판정 · 실적 계산은 **방식과 무관하게 하나**이며 화면이 관여하지
+         않는다.
+      ⛔ 화면이 기본값을 정해 두고 자동으로 실행하지 않는다.
+    -->
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">기업정보 확인 방식</h2>
+          <p class="card-sub">
+            기업정보를 <b>파일로 올릴지</b>, <b>조회로 가져올지</b> 고릅니다.
+            어느 쪽을 고르든 저장되는 자리와 판정 방식은 같습니다
+          </p>
+        </div>
+      </div>
+
+      <div class="upload-actions" role="radiogroup" aria-label="기업정보 확인 방식">
+        <label class="control">
+          <input type="radio" name="company-source" id="company-source-file"
+                 value="FILE" checked />
+          <span class="control-label">파일 업로드</span>
+        </label>
+        <label class="control">
+          <input type="radio" name="company-source" id="company-source-api"
+                 value="API" />
+          <span class="control-label">조회</span>
+        </label>
+      </div>
+
+      <div id="company-file-panel">
+        <div class="upload-actions">
+          <button id="company-pick" class="control" type="button">파일 선택</button>
+          <button id="company-run" class="control" type="button" disabled>검증만</button>
+          <button id="company-save" class="control" type="button" disabled>검증 후 저장</button>
+        </div>
+        <div id="company-file" class="upload-file">선택된 파일이 없습니다.</div>
+      </div>
+
+      <!--
+        조회 방식. ⛔ 기준일자에 기본값을 넣지 않는다 — 어느 날짜로 조회할지는
+        업무 판단이며 화면이 오늘 날짜 등을 임의로 채우지 않는다.
+      -->
+      <div id="company-api-panel" hidden>
+        <div class="upload-actions">
+          <span class="control">
+            <span class="control-label">조회 출처</span>
+            <select id="company-api-source" class="control-input"
+                    aria-label="기업정보 조회 출처"></select>
+          </span>
+          <span class="control">
+            <span class="control-label">기준일자</span>
+            <input id="company-api-date" class="control-input" type="date"
+                   aria-label="기업정보 조회 기준일자" />
+          </span>
+          <button id="company-sync" class="control" type="button">조회 후 저장</button>
+        </div>
+        <span class="control" style="display:block">
+          <span class="control-label">사업자등록번호</span>
+          <input id="company-api-numbers" class="control-input" type="text"
+                 placeholder="쉼표 또는 줄바꿈으로 구분"
+                 aria-label="조회할 사업자등록번호 목록" />
+        </span>
+      </div>
+
+      <div id="company-notice" class="notice" hidden></div>
+      <div id="company-error" class="error" hidden></div>
+      <div id="company-summary" class="upload-summary" hidden></div>
+      <div id="company-issues" class="upload-issues" hidden></div>
+    </section>
+
+    <!--
+      업로드 이력 — 매월 파일을 올리는 운영을 전제로, 어느 달이 언제 올라왔고
+      지금 무엇이 쓰이는지 보여 준다. ⛔ 삭제·복구 기능은 만들지 않는다.
+    -->
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">업로드 이력</h2>
+          <p class="card-sub">
+            매월 올린 원본 파일과 그 결과입니다. 같은 기간을 다시 올리면
+            이전 업로드는 <b>대체됨</b> 으로 남고 기록은 지워지지 않습니다
+          </p>
+        </div>
+        <span class="control">
+          <span class="control-label">기간</span>
+          <select id="history-period" class="control-input" aria-label="업로드 이력 기간">
+            <option value="">전체 기간</option>
+          </select>
+        </span>
+        <button id="history-reload" class="control" type="button"
+                aria-label="업로드 이력 새로고침">새로고침</button>
+      </div>
+      <div id="history-error" class="error" hidden></div>
+      <div id="history-table" class="rv-trace"></div>
+      <div id="history-detail" class="notice" hidden></div>
+    </section>
+  </div>
+
+  <!-- 5. 구매유형 검토 (DB-2) -->
+  <div class="row" style="margin-top:16px">
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">구매유형 검토</h2>
+          <p class="card-sub">
+            원본을 보고 담당자가 직접 확정합니다. 원본 데이터는 수정되지 않습니다
+          </p>
+        </div>
+        <!-- 확정·Undo 로 숫자가 바뀌면 스크린리더가 읽을 수 있게 한다. -->
+        <div id="review-progress" class="card-sub" role="status" aria-live="polite"></div>
+      </div>
+
+      <!--
+        원본 → 검토 대상 대조. ⛔ "제외되었습니다" 라고 쓰지 않는다.
+        금액 0 이하 행의 처리 방식은 고객 확인 대기(Q5-8)이므로, 사실만 적는다.
+      -->
+      <div id="review-trace" class="notice" hidden></div>
+      <div id="review-trace-rows" class="rv-trace" hidden></div>
+
+      <!--
+        ⛔ 어떤 조건도 "먼저 보라" 는 뜻이 아니다. 담당자가 직접 고른다.
+        검색·필터·정렬·페이지는 전부 서버가 처리하고, 해당 페이지만 내려온다.
+      -->
+      <div class="upload-actions">
+        <span class="control">
+          <span class="control-label">기간</span>
+          <!--
+            선택지는 백엔드가 준다(/imports/periods). ⛔ 화면이 달을 계산하거나
+            만들어 내지 않는다. 값은 그 기간의 **현재 배치 ID** 다.
+          -->
+          <select id="review-period" class="control-input" aria-label="검토 대상 기간">
+            <option value="">전체</option>
+          </select>
+        </span>
+        <span class="control control-grow">
+          <span class="control-label">검색</span>
+          <input id="review-search" class="control-input" type="search"
+                 placeholder="적요 · 거래처명 · 사업자등록번호 (띄어쓰기 무시)"
+                 aria-label="적요 · 거래처명 · 사업자등록번호로 검색" />
+        </span>
+        <!--
+          정책 필터 (STEP 123) — 담당자가 「여성기업 건만」 골라 볼 수 있게 한다.
+          ⛔ 화면이 매칭하지 않는다. 정책 코드를 그대로 보내면 백엔드가 실적
+             합산과 **같은 판정**으로 좁혀 준다.
+        -->
+        <span class="control">
+          <span class="control-label">정책</span>
+          <select id="review-policy" class="control-input"
+                  aria-label="정책으로 검토 대상 좁히기">
+            <option value="">전체</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">상태</span>
+          <select id="review-status" class="control-input">
+            <option value="ALL">전체</option>
+            <option value="PENDING">PENDING</option>
+            <option value="CONFIRMED">CONFIRMED</option>
+            <option value="REOPENED">REOPENED</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">확정 여부</span>
+          <select id="review-decision" class="control-input">
+            <option value="ALL">전체</option>
+            <option value="UNDECIDED">미확정</option>
+            <option value="DECIDED">확정</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">과거 이력</span>
+          <select id="review-history" class="control-input">
+            <option value="ALL">전체</option>
+            <option value="HAS_HISTORY">이력 있음</option>
+            <option value="NO_HISTORY">이력 없음</option>
+            <option value="MIXED">과거 유형 혼재</option>
+            <option value="AGREES">1순위 = 과거 최다</option>
+            <option value="DIFFERS">1순위 ≠ 과거 최다</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">후보 수</span>
+          <select id="review-candidates" class="control-input">
+            <option value="ALL">전체</option>
+            <option value="NONE">0개</option>
+            <option value="ONE">1개</option>
+            <option value="MANY">2개 이상</option>
+          </select>
+        </span>
+      </div>
+
+      <div class="upload-actions">
+        <span class="control">
+          <span class="control-label">정렬</span>
+          <select id="review-sort" class="control-input">
+            <option value="purchase_id">구매 ID</option>
+            <option value="resolution_date">결의일자</option>
+            <option value="issue_date">신고기준일</option>
+            <option value="amount">금액</option>
+            <option value="description">적요</option>
+            <option value="status">상태</option>
+            <option value="candidate_count">후보 수</option>
+            <option value="score_gap">1·2순위 점수차</option>
+            <option value="has_history">과거 확정 건수</option>
+            <option value="dominant_ratio">과거 최다 유형 비율</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">방향</span>
+          <select id="review-direction" class="control-input">
+            <option value="asc">오름차순</option>
+            <option value="desc">내림차순</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">페이지 크기</span>
+          <select id="review-page-size" class="control-input">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </span>
+        <span class="control">
+          <span class="control-label">확정자</span>
+          <!-- 비워 두면 이력에 담당자가 남지 않는다. ⛔ 가짜 이름을 채우지 않는다. -->
+          <input id="review-actor" class="control-input" type="text"
+                 placeholder="이름 (비우면 이력에 남지 않음)"
+                 aria-label="확정자 이름 — 비워 두면 변경 이력에 담당자가 기록되지 않습니다" />
+        </span>
+        <button id="review-reload" class="control" type="button">새로고침</button>
+        <button id="review-export" class="control" type="button"
+                aria-label="지금 조건의 검토 내역 CSV 내려받기">검토 CSV 내려받기</button>
+        <!--
+          변경 이력 CSV — 확정 → 취소 → 재확정이 **각각 한 줄**로 남는다.
+          위 "검토 CSV" 는 지금 상태 한 줄이므로 서로 다른 표다.
+        -->
+        <button id="review-export-history" class="control" type="button"
+                aria-label="지금 기간의 검토 변경 이력 CSV 내려받기">이력 CSV 내려받기</button>
+      </div>
+
+      <div id="review-notice" class="notice" hidden></div>
+      <div id="review-error" class="error" hidden></div>
+      <div id="review-list" class="upload-summary"></div>
+
+      <div class="upload-actions rv-pager">
+        <button id="review-prev-target" class="control" type="button"
+                aria-label="이전 검토 대상으로 이동 (단축키 P)">↑ 이전 대상 (P)</button>
+        <span id="review-cursor-info" class="card-sub"></span>
+        <button id="review-next-target" class="control" type="button"
+                aria-label="다음 검토 대상으로 이동 (단축키 N)">다음 대상 (N) ↓</button>
+      </div>
+
+      <div class="upload-actions rv-pager">
+        <button id="review-prev" class="control" type="button" aria-label="이전 쪽">← 이전 쪽</button>
+        <span id="review-page-info" class="card-sub"></span>
+        <button id="review-next" class="control" type="button" aria-label="다음 쪽">다음 쪽 →</button>
+      </div>
+
+      <p class="card-sub rv-keys">
+        키보드: <kbd>↓</kbd><kbd>↑</kbd> 또는 <kbd>N</kbd><kbd>P</kbd> 대상 이동 ·
+        <kbd>Enter</kbd> 카드 안으로 · <kbd>Tab</kbd> 확정 컨트롤 이동 ·
+        <kbd>Esc</kbd> 창 닫기
+        <span class="rv-key">— 입력창·선택상자에 있을 때는 동작하지 않습니다.
+        ↑↓ 는 목록에 포커스가 있을 때만 움직입니다. 확정 단축키는 없습니다 —
+        확정은 담당자가 버튼으로 직접 합니다.</span>
+      </p>
+
+      <!-- 변경 이력 — 현재 값과 과거 기록을 분리해서 보여준다 -->
+      <div id="review-modal" class="rv-modal" role="dialog" aria-modal="true"
+           aria-label="검토 변경 이력" hidden>
+        <div id="review-history-box" class="rv-modal-box"></div>
+      </div>
+
+      <!-- 확정 취소 확인 — ⛔ 확인 전에는 아무것도 바뀌지 않는다 -->
+      <div id="review-undo-modal" class="rv-modal" role="alertdialog" aria-modal="true"
+           aria-label="확정 취소 확인" hidden>
+        <div id="review-undo-box" class="rv-modal-box"></div>
+      </div>
+    </section>
+  </div>
+
   <footer id="footer-note"></footer>
 </div>
 
 <script>
 (function () {
   "use strict";
+
+  // 표시 전용 구간 색(낮은 구간 → 높은 구간). 기존 상태 색과 별개 체계다.
+  var LEVEL_COLOR = [
+    "#e11d48", "#f97316", "#eab308", "#84cc16", "#22c55e", "#14b8a6"
+  ];
 
   var THEME_KEY = "procurement.dashboard.theme";
   var SVG_NS = "http://www.w3.org/2000/svg";
@@ -317,8 +1145,15 @@
 
   function fetchJson(url) {
     return fetch(url, { headers: { "Accept": "application/json" } }).then(function (res) {
-      if (!res.ok) { throw new Error(url + " 응답 오류 (HTTP " + res.status + ")"); }
-      return res.json();
+      if (res.ok) { return res.json(); }
+      // 서버가 이유(detail)를 주면 그대로 보여준다. 503(연도 귀속 기준일 미확정)
+      // 같은 상태를 "HTTP 503" 으로만 표시하면 사용자가 원인을 알 수 없다.
+      return res.json().then(function (body) {
+        var detail = body && body.detail ? String(body.detail) : "";
+        throw new Error(detail || (url + " 응답 오류 (HTTP " + res.status + ")"));
+      }, function () {
+        throw new Error(url + " 응답 오류 (HTTP " + res.status + ")");
+      });
     });
   }
 
@@ -387,9 +1222,12 @@
       ? Math.round((status.matched_purchase_count / status.purchase_count) * 1000) / 10
       : null;
 
+    // ⚠️ 이 타일은 **적재된 전부**다 — 대체된 배치와 조회 연도 밖의 행까지
+    //    들어 있어, 달성률 분모(정책 카드의 "계산 대상 전체 구매액")와 다르다.
+    //    라벨에 그 사실을 적어 두 숫자를 같은 것으로 읽지 않게 한다.
     grid.appendChild(kpiTile(
-      ICON.amount, amount.value, amount.unit, "총 구매금액",
-      numberFormat(status.purchase_total_amount) + " 원"));
+      ICON.amount, amount.value, amount.unit, "적재된 구매금액 합계",
+      numberFormat(status.purchase_total_amount) + " 원 · 연도 무관"));
     grid.appendChild(kpiTile(
       ICON.count, numberFormat(status.purchase_count), "건", "구매 건수",
       status.earliest_payment_date
@@ -405,6 +1243,54 @@
       numberFormat(status.policy_with_target_rate_count) + " / " + numberFormat(status.policy_count),
       "종", "목표율 설정 정책",
       status.policy_with_target_rate_count === 0 ? "공식 근거 확정 전까지 미등록" : ""));
+  }
+
+  /**
+   * 날짜 컬럼명을 화면에 쓸 말로 바꾼다. ⛔ **표시 전용**이다.
+   *
+   * 업무규칙을 정하지 않으며, 서버가 준 값을 사람이 읽는 말로만 옮긴다.
+   * 모르는 값이 오면 지어내지 않고 받은 값을 그대로 보여준다.
+   */
+  var DATE_FIELD_LABEL = {
+    resolution_date: "결의일자",
+    payment_date: "지급일",
+    contract_date: "계약일자"
+  };
+
+  function dateFieldLabel(field) {
+    return DATE_FIELD_LABEL[field] || field || "-";
+  }
+
+  // ------------------------------------------------- 월별 적재 현황 (STEP 119)
+  //
+  // ⭐ 월별 «달성률» 이 아니다. 「올해 몇 월 데이터까지 올라왔는가」 하나만
+  //    보여준다.
+  // ⛔ 화면이 스스로 판정하지 않는다 — 백엔드가 준 uploaded 를 그릴 뿐이다.
+  //    (백엔드는 계산과 같은 데이터를 결의일자로 가른다.)
+  function renderUploadMonths(payload) {
+    var box = el("upload-months");
+    box.replaceChildren();
+    if (!payload || !payload.months) {
+      text(el("upload-months-note"), "월별 적재 현황을 불러오지 못했습니다.");
+      return;
+    }
+
+    var done = 0;
+    payload.months.forEach(function (item) {
+      var cell = make("div", "month " + (item.uploaded ? "is-uploaded" : "is-missing"));
+      cell.appendChild(make("div", "month-name", item.month + "월"));
+      cell.appendChild(make("div", "month-mark", item.uploaded ? "●" : "○"));
+      cell.appendChild(make("div", "month-state", item.uploaded ? "업로드 완료" : "미업로드"));
+      // 색만으로 알리지 않는다 — 읽어 주는 도구를 위해 문장으로도 남긴다.
+      cell.setAttribute("aria-label",
+        item.month + "월 " + (item.uploaded ? "업로드 완료" : "미업로드"));
+      box.appendChild(cell);
+      if (item.uploaded) { done += 1; }
+    });
+
+    text(el("upload-months-note"),
+      payload.year + "년 — 열두 달 중 " + done + "개월치가 올라와 있습니다. "
+      + "대시보드의 실적은 올라온 달의 누적입니다.");
   }
 
   // ------------------------------------------------------------ 적재 현황 표
@@ -426,7 +1312,11 @@
       ["계약일 범위", range(status.earliest_contract_date, status.latest_contract_date)],
       ["기업 수", numberFormat(status.company_count) + " 건"],
       ["인증 정보", numberFormat(status.certification_count) + " 건"],
-      ["등록 정책", numberFormat(status.policy_count) + " 종"]
+      ["등록 정책", numberFormat(status.policy_count) + " 종"],
+      ["업로드 배치 (사용 / 대체)",
+        numberFormat(status.active_batch_count) + " / "
+        + numberFormat(status.superseded_batch_count) + " 건"],
+      ["계산 대상 구매", numberFormat(status.calculation_target_count) + " 건"]
     ];
 
     var tbody = el("status-table");
@@ -438,9 +1328,69 @@
       tbody.appendChild(tr);
     });
 
-    text(el("status-note"), status.purchase_count === 0
-      ? "업로드된 구매 데이터가 없습니다. 데이터를 적재하기 전까지 달성률은 계산되지 않습니다."
-      : "선택한 연도(" + (status.requested_year || "-") + ")는 아직 조회 조건으로 사용되지 않습니다.");
+    var note;
+    if (status.purchase_count === 0) {
+      note = "업로드된 구매 데이터가 없습니다. 데이터를 적재하기 전까지 달성률은 계산되지 않습니다.";
+    } else if (!status.period_filter_available) {
+      note = "연도 귀속 기준일이 확정되지 않아 선택한 연도("
+        + (status.requested_year || "-") + ")가 조회 조건으로 사용되지 않습니다.";
+    } else {
+      // ⚠️ 이 날짜는 **연도를 나누는 기준**일 뿐, 인증 유효기간을 판정하는
+      //    기준일이 아니다. 둘은 다른 개념이며 후자는 정책마다 다르다
+      //    (일반 3정책=지급일 · 창업기업=결의일자 또는 계약일자).
+      //    W-1-2 가 미확정이라 한 문장으로 뭉뚱그리면 확정된 것처럼 읽힌다.
+      note = "달성률은 " + (status.requested_year || "-")
+        + "년 구매를 대상으로 계산됩니다(연도는 "
+        + dateFieldLabel(status.period_date_field) + "로 나눕니다). "
+        + "인증 유효기간 판정 기준일은 정책마다 다릅니다.";
+    }
+    if (status.superseded_batch_count > 0) {
+      note += " 재업로드로 대체된 배치 " + status.superseded_batch_count
+        + "건의 " + numberFormat(status.purchase_count - status.calculation_target_count)
+        + "행은 계산에서 제외됩니다.";
+    }
+    text(el("status-note"), note);
+  }
+
+  /**
+   * 구매유형별 달성 결과 표 (여성기업).
+   *
+   * ⛔ 숫자를 새로 만들지 않는다 — 서버가 준 값을 그대로 적는다.
+   * 분모를 구하지 못한 유형(담당자가 그 유형으로 확정한 구매가 아직 없는
+   * 경우)은 달성률 자리에 "계산 보류" 라고 적는다. 0% 가 아니다.
+   */
+  function scopedTable(items) {
+    var wrap = make("div", "scoped");
+    wrap.appendChild(make("div", "scoped-title", "구매유형별 달성률"));
+
+    var table = document.createElement("table");
+    table.className = "kv";
+    var head = document.createElement("tr");
+    ["유형", "목표", "실적", "유형 전체", "달성률"].forEach(function (label) {
+      head.appendChild(make("th", null, label));
+    });
+    table.appendChild(head);
+
+    items.forEach(function (scoped) {
+      var tr = document.createElement("tr");
+      tr.appendChild(make("th", null, scoped.scope_label));
+      tr.appendChild(make("td", null, scoped.target_rate + "%"));
+      tr.appendChild(make("td", null, numberFormat(scoped.purchase_amount) + " 원"));
+      tr.appendChild(make("td", null, numberFormat(scoped.total_purchase_amount) + " 원"));
+
+      var rate = make("td", null,
+        scoped.achievement_rate === null
+          ? scoped.status_label
+          : scoped.achievement_rate + "%");
+      if (scoped.achievement_rate !== null) {
+        rate.style.color = levelColor(levelOf(scoped.achievement_rate));
+      }
+      tr.appendChild(rate);
+      table.appendChild(tr);
+    });
+
+    wrap.appendChild(table);
+    return wrap;
   }
 
   // ------------------------------------------------------------ 정책 카드
@@ -469,10 +1419,11 @@
       state.className += " st-TARGET_RATE_NOT_SET";
       text(state, item.status_label);
     } else {
-      value.className += " st-" + item.status;
+      var level = levelOf(item.achievement_rate);
       text(value, item.achievement_rate + "%");
-      state.className += " st-" + item.status;
-      text(state, "달성률 · " + item.status_label);
+      value.style.color = levelColor(level);
+      text(state, "달성률 · " + (level ? level.label : item.status_label));
+      state.style.color = levelColor(level);
     }
     card.appendChild(value);
     card.appendChild(state);
@@ -482,12 +1433,25 @@
       ["목표 구매비율", item.target_rate === null ? "미설정" : item.target_rate + "%"],
       ["정책 구매액", item.purchase_amount === null
         ? "미계산" : numberFormat(item.purchase_amount) + " 원"],
+      // 분모를 함께 보여준다. 위 KPI 타일(적재된 구매금액 합계)은 적재된 전부라
+      // 대체된 배치와 다른 해까지 들어 있어 이 값과 다르다. 분모가 화면에
+      // 없으면 담당자가 타일 숫자로 비율을 가늠하게 되고, 그 비율은 틀린다.
+      // ⛔ 새로 계산하지 않는다 — 서버가 준 값을 그대로 적는다.
+      ["계산 대상 전체 구매액", item.total_purchase_amount === null
+        ? "미계산" : numberFormat(item.total_purchase_amount) + " 원"],
       ["부족률", item.shortage_rate === null ? "-" : item.shortage_rate + "%"]
     ].forEach(function (pair) {
       dl.appendChild(make("dt", null, pair[0]));
       dl.appendChild(make("dd", null, pair[1]));
     });
     card.appendChild(dl);
+
+    // 달성률이 **여럿**인 정책(여성기업: 공사 3% · 용역 5% · 물품 5%)은
+    // 위의 한 줄로 표현할 수 없다. 유형마다 목표·실적·달성률을 따로 적는다.
+    // ⛔ 이걸 그리지 않으면 서버가 낸 세 결과가 화면에서 사라진다.
+    if (item.scoped_achievements && item.scoped_achievements.length > 0) {
+      card.appendChild(scopedTable(item.scoped_achievements));
+    }
 
     var reason = "";
     if (onHold) { reason = display.note; }
@@ -508,6 +1472,24 @@
     }
     summary.policies.forEach(function (item) {
       container.appendChild(policyCard(item, displayMap[item.policy_code]));
+    });
+  }
+
+  /** 계산 결과가 없을 때 — 정책과 개발 상태만 표시한다(숫자를 지어내지 않는다). */
+  function renderPoliciesWithoutCalculation(displayMap) {
+    var container = el("policy-cards");
+    clear(container);
+    Object.keys(displayMap).forEach(function (code) {
+      var display = displayMap[code];
+      var card = make("div", "policy");
+      var head = make("div", "policy-head");
+      head.appendChild(make("span", "policy-name", code));
+      head.appendChild(make("span", "chip", display.development_label));
+      card.appendChild(head);
+      card.appendChild(make("div", "policy-value st-TARGET_RATE_NOT_SET", "\u2014"));
+      card.appendChild(make("div", "policy-state st-TARGET_RATE_NOT_SET", "계산 불가"));
+      if (display.note) { card.appendChild(make("p", "note", display.note)); }
+      container.appendChild(card);
     });
   }
 
@@ -556,7 +1538,8 @@
 
     var tbody = document.createElement("tbody");
     rows.forEach(function (item, index) {
-      var color = cssVar("--" + item.status.toLowerCase()) || cssVar("--accent");
+      var level = levelOf(item.achievement_rate);
+      var color = levelColor(level);
       var tr = document.createElement("tr");
       tr.appendChild(make("td", "idx", ("0" + (index + 1)).slice(-2)));
       tr.appendChild(make("td", null, item.policy_name));
@@ -572,6 +1555,7 @@
 
       var valCell = make("td", "val");
       var pill = make("span", "pill", item.achievement_rate + "%");
+      pill.title = level ? level.label : "";
       pill.style.color = color;
       valCell.appendChild(pill);
       tr.appendChild(valCell);
@@ -580,11 +1564,30 @@
     });
     table.appendChild(tbody);
     container.appendChild(table);
+    container.appendChild(buildLevelLegend());
 
     if (skipped) {
       container.appendChild(make("p", "foot-note",
         "표시 제외 " + skipped + "종 — 목표율 미설정 또는 계산 보류."));
     }
+  }
+
+  /** 표시 구간 범례. 법정 기준이 아님을 함께 밝힌다. */
+  function buildLevelLegend() {
+    var wrap = make("div");
+    if (!levels) { return wrap; }
+    var row = make("div", "legend");
+    levels.items.forEach(function (item, index) {
+      var span = make("span");
+      var dot = make("i");
+      dot.style.background = LEVEL_COLOR[index];
+      span.appendChild(dot);
+      span.appendChild(document.createTextNode(item.label));
+      row.appendChild(span);
+    });
+    wrap.appendChild(row);
+    wrap.appendChild(make("p", "foot-note", levels.notice));
+    return wrap;
   }
 
   // ------------------------------------------------- 차트 2 · 적재 건수
@@ -697,45 +1700,3201 @@
   // ------------------------------------------------------------------ 로드
   var lastData = null;
 
-  function draw(status, summary, displayMap) {
+  //: 서버가 내려준 표시 구간표. 경계값을 화면에 하드코딩하지 않는다.
+  var levels = null;
+
+  /** 달성률을 표시 구간으로 변환한다(서버가 준 경계만 사용). */
+  function levelOf(rate) {
+    if (!levels) { return null; }
+    if (rate === null || rate === undefined) {
+      return { code: levels.not_calculated_code, label: levels.not_calculated_label,
+               index: null };
+    }
+    var value = parseFloat(rate);
+    var picked = levels.items[0];
+    var index = 0;
+    levels.items.forEach(function (item, i) {
+      if (value >= parseFloat(item.min_rate)) { picked = item; index = i; }
+    });
+    return { code: picked.code, label: picked.label, index: index };
+  }
+
+  function levelColor(level) {
+    if (!level || level.index === null) { return cssVar("--unset"); }
+    return LEVEL_COLOR[level.index] || cssVar("--accent");
+  }
+
+  /**
+   * 결의일자가 비어 있어 결의일자 기준 집계에 들어가지 못한 행을 알린다.
+   *
+   * ⛔ 이 문구는 **달성률과 무관**하다. 여기 적힌 건수·금액은 분모에도
+   *    분자에도 들어가 있지 않으며, 화면에서 어떤 계산에도 쓰이지 않는다.
+   * ⛔ "제외"·"무효"·"오류 데이터" 같은 판정 표현을 쓰지 않는다.
+   *    비어 있다는 사실만 적고, 어떻게 할지는 사람이 정한다.
+   *
+   * 0 건이면 아무것도 표시하지 않는다 — 없는 문제를 만들지 않기 위해서다.
+   */
+  function renderMissingResolutionDate(summaryResult) {
+    var box = el("missing-resolution-note");
+    var fold = el("missing-resolution-fold");
+    var info = summaryResult.ok ? summaryResult.body.missing_resolution_date : null;
+    if (!info || !info.applies || info.count === 0) {
+      box.hidden = true;
+      fold.hidden = true;
+      text(box, "");
+      return;
+    }
+    box.hidden = false;
+    text(box,
+      "결의일자가 비어 있는 구매 " + numberFormat(info.count) + "건("
+      + numberFormat(info.amount) + " 원)은 결의일자 기준 집계에 포함되지 "
+      + "않았습니다. 위 달성률에는 반영되어 있지 않습니다.");
+
+    // 접힌 채로도 몇 건인지 제목에 적는다(기존 foldable 과 같은 원칙).
+    fold.hidden = false;
+    text(el("missing-resolution-summary"),
+      "결의일자 미기재 구매 " + numberFormat(info.count) + "건 보기");
+
+    // 내려받기 대상은 목록과 **같은 조건**이다 — 같은 연도를 그대로 넘긴다.
+    // 안내가 뜨지 않는 조회(0건·결의일자 기준 아님)에서는 위에서 이미
+    // 되돌아갔으므로, 이 링크도 화면에 나오지 않는다.
+    el("missing-resolution-csv").href =
+      "/dashboard/missing-resolution-date.csv?year="
+      + encodeURIComponent(el("year-select").value);
+
+    // 연도가 바뀌면 접고 비운다 — 다른 연도의 목록이 남아 있으면 오해를 부른다.
+    if (missingRowsLoadedFor !== null && missingRowsLoadedFor !== el("year-select").value) {
+      missingRowsLoadedFor = null;
+      fold.open = false;
+      clear(el("missing-resolution-rows"));
+    } else if (fold.open) {
+      loadMissingResolutionRows();
+    }
+  }
+
+  /**
+   * 결의일자 미기재 구매 **행 목록** (STEP 60).
+   *
+   * ⛔ 조회 전용이다. 결의일자를 채우거나 다른 날짜로 대체하지 않고, 어떤 행도
+   *    바꾸지 않는다. 확정·수정 버튼을 두지 않는다.
+   * ⛔ 판정하지 않는다 — "오류"·"무효"·"실적 불인정" 이라 부르지 않는다.
+   *
+   * 펼칠 때 한 번만 불러온다. 안내 문구가 뜨지 않는 조회에서는 요청 자체를
+   * 보내지 않는다.
+   */
+  var missingRowsLoadedFor = null;
+
+  function loadMissingResolutionRows() {
+    var year = el("year-select").value;
+    if (missingRowsLoadedFor === year) { return; }
+
+    var box = el("missing-resolution-rows");
+    clear(box);
+    box.appendChild(make("div", "empty", "불러오는 중…"));
+
+    fetchJson("/dashboard/missing-resolution-date?year=" + encodeURIComponent(year))
+      .then(function (page) {
+        missingRowsLoadedFor = year;
+        renderMissingResolutionRows(page);
+      })
+      .catch(function (err) {
+        clear(box);
+        box.appendChild(make("div", "empty", "목록을 불러오지 못했습니다: " + err.message));
+      });
+  }
+
+  function renderMissingResolutionRows(page) {
+    var box = el("missing-resolution-rows");
+    clear(box);
+
+    if (!page.items.length) {
+      box.appendChild(make("div", "empty", "결의일자가 입력되지 않은 구매가 없습니다."));
+      return;
+    }
+
+    box.appendChild(make("p", "foot-note",
+      "결의일자가 입력되지 않은 구매 " + numberFormat(page.count) + "건 · "
+      + numberFormat(page.amount) + " 원"));
+
+    var table = make("table", null);
+    var head = make("tr");
+    ["구매 ID", "적요", "거래처명", "사업자등록번호", "금액", "결의일자", "예산과목"]
+      .forEach(function (label) { head.appendChild(make("th", null, label)); });
+    table.appendChild(head);
+
+    page.items.forEach(function (item) {
+      var tr = make("tr");
+      tr.appendChild(make("td", "num", numberFormat(item.purchase_id)));
+      tr.appendChild(make("td", "rv-text", item.description || "-"));
+      tr.appendChild(make("td", "rv-text", item.company_name));
+      tr.appendChild(make("td", "num", item.business_no));
+      tr.appendChild(make("td", "num", numberFormat(item.amount)));
+      // ⛔ 비어 있는 결의일자를 다른 날짜로 채우지 않는다. 비어 있는 채로 보인다.
+      tr.appendChild(make("td", "num", item.resolution_date || "(미기재)"));
+      tr.appendChild(make("td", "rv-text", item.budget_account || "-"));
+      table.appendChild(tr);
+    });
+    box.appendChild(table);
+  }
+
+  function draw(status, summaryResult, displayMap, uploadMonths) {
     renderKpi(status);
     renderStatusTable(status);
-    renderPolicies(summary, displayMap);
-    renderAchievement(summary, displayMap);
+    renderUploadMonths(uploadMonths);
     renderVolume(status);
     renderGauge(status);
+    renderMissingResolutionDate(summaryResult);
+
+    if (summaryResult.ok) {
+      el("summary-error").hidden = true;
+      renderPolicies(summaryResult.body, displayMap);
+      renderAchievement(summaryResult.body, displayMap);
+    } else {
+      // 계산 결과가 없어도 정책 목록과 개발 상태는 보여준다.
+      var box = el("summary-error");
+      box.hidden = false;
+      text(box, summaryResult.reason);
+      renderPoliciesWithoutCalculation(displayMap);
+      clear(el("chart-achievement"));
+      el("chart-achievement").appendChild(
+        make("div", "empty", "달성률을 계산할 수 없습니다. 위 사유를 확인하세요."));
+    }
     text(el("footer-note"),
-      "정책별 개발 상태는 docs/DECISIONS.md 의 결정을 그대로 표시합니다. "
-      + "연도별 집계 · 중복 적재 방지는 미구현 상태입니다.");
+      "정책별 개발 상태는 docs/DECISIONS.md 의 결정을 그대로 표시합니다.");
   }
 
   /** 테마를 바꾸면 SVG 색상 변수를 다시 읽어야 하므로 마지막 데이터로 다시 그린다. */
   function redraw() {
-    if (lastData) { draw(lastData[0], lastData[1], lastData[2]); }
+    if (lastData) { draw(lastData[0], lastData[1], lastData[2], lastData[3]); }
   }
 
   function load() {
     var year = el("year-select").value;
     el("error-box").hidden = true;
 
+    // 달성률 계산(summary)은 실패할 수 있다.
+    //   · 연도 미지정 → 400 (D-27)
+    //   · 연도 귀속 기준일 미확정 → 503 (D-24 · W-1)
+    // 이때도 적재 현황·정책 목록은 정상적으로 보여야 하므로, summary 실패를
+    // 개별적으로 흡수하고 달성률 영역에만 사유를 표시한다.
+    var summaryUrl = "/dashboard/summary?year=" + encodeURIComponent(year);
+
     Promise.all([
       fetchJson("/dashboard/data-status?year=" + encodeURIComponent(year)),
-      fetchJson("/dashboard/summary"),
-      fetchJson("/dashboard/policy-display")
-    ]).then(function (results) {
-      var displayMap = {};
-      results[2].items.forEach(function (item) { displayMap[item.policy_code] = item; });
-      lastData = [results[0], results[1], displayMap];
-      draw(results[0], results[1], displayMap);
-    }).catch(function (err) {
-      var box = el("error-box");
+      fetchJson(summaryUrl).then(
+        function (body) { return { ok: true, body: body }; },
+        function (err) { return { ok: false, reason: err.message }; }
+      ),
+      fetchJson("/dashboard/policy-display"),
+      fetchJson("/dashboard/achievement-levels"),
+      // 월별 적재 현황도 summary 와 마찬가지로 실패를 개별 흡수한다 —
+      // 이 칸이 안 나온다고 대시보드 전체가 사라지면 안 된다.
+      fetchJson("/uploads/purchases/months?year=" + encodeURIComponent(year)).then(
+        function (body) { return body; },
+        function () { return null; }
+      )
+    ])
+      .then(function (results) {
+        var displayMap = {};
+        results[2].items.forEach(function (item) { displayMap[item.policy_code] = item; });
+        levels = results[3];
+        lastData = [results[0], results[1], displayMap, results[4]];
+        draw(results[0], results[1], displayMap, results[4]);
+      })
+      .catch(function (err) {
+        var box = el("error-box");
+        box.hidden = false;
+        text(box, "데이터를 불러오지 못했습니다: " + err.message);
+      });
+  }
+
+  /* ---------------------------------------------------------- 업로드
+   *
+   * ⛔ 업무규칙을 여기에 구현하지 않는다. 이 코드가 하는 일은
+   *    "경로를 백엔드에 넘기고, 백엔드가 준 결과를 그리는 것" 뿐이다.
+   *    엑셀 해석·검증·판정은 전부 Python 이 한다.
+   */
+  var uploadPath = null;
+
+  // 대상 기간은 **화면에서 지정**한다. 파일 내용에서 유추하지 않는다.
+  // 달을 고르면 그 달이 대상 기간이 되어 **달마다 쌓인다** — 다음 달을 올려도
+  // 지난달이 남는다(🟢 2026-09-05 고객 확정). 「연 전체」를 고르면 예전처럼
+  // 1/1 ~ 12/31 한 덩어리다.
+  function buildUploadMonthOptions() {
+    var select = el("upload-month");
+    var whole = document.createElement("option");
+    whole.value = "";
+    whole.textContent = "연 전체";
+    select.appendChild(whole);
+    // 이번 달을 기본값으로 고른다. ⛔ 날짜를 조립하는 것이 아니라
+    //    「지금 몇 월인가」만 묻는다 — 기간 환산은 백엔드가 한다.
+    var thisMonth = new Date().getMonth() + 1;
+    for (var month = 1; month <= 12; month += 1) {
+      var option = document.createElement("option");
+      option.value = String(month);
+      option.textContent = month + "월";
+      if (month === thisMonth) { option.selected = true; }
+      select.appendChild(option);
+    }
+  }
+
+  /** 고른 달. 「연 전체」면 null 을 보내 예전 동작 그대로 둔다. */
+  function selectedUploadMonth() {
+    var value = el("upload-month").value;
+    return value === "" ? null : Number(value);
+  }
+
+  function buildUploadYearOptions() {
+    var select = el("upload-year");
+    var current = new Date().getFullYear();
+    for (var year = current + 1; year >= current - 4; year -= 1) {
+      var option = document.createElement("option");
+      option.value = String(year);
+      option.textContent = String(year);
+      if (year === current) { option.selected = true; }
+      select.appendChild(option);
+    }
+  }
+
+  function desktop() {
+    return (typeof window.procurementApp === "object") && window.procurementApp !== null;
+  }
+
+  function uploadNotice(message) {
+    var box = el("upload-notice");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  function uploadError(message) {
+    var box = el("upload-error");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  function uploadStat(label, value) {
+    var node = make("span", "upload-stat");
+    var strong = make("b", null, String(value));
+    node.appendChild(strong);
+    node.appendChild(document.createTextNode(" " + label));
+    return node;
+  }
+
+  /**
+   * 업로드 결과의 **원본 대비 적재/미적재**.
+   *
+   * ⛔ 쓰지 않는 표현 — "제외되었습니다" · "실적에서 제외합니다" ·
+   *    "검토할 필요가 없습니다" · "부적합 데이터입니다". 금액이 0 이하인 행을
+   *    어떻게 처리할지는 **고객 확인 대기**(Q5-8)이므로 사실만 적는다.
+   *
+   * 숫자는 백엔드가 센 값을 그대로 쓴다 — 맞추려고 보정하지 않는다.
+   */
+  function renderUploadTrace(result) {
+    var box = el("upload-trace");
+    var actions = el("upload-trace-actions");
+    var rows = el("upload-trace-rows");
+    clear(box);
+    clear(rows);
+    rows.hidden = true;
+
+    if (!result.stored) {
+      // 저장하지 않았으면 적재/미적재를 말할 수 없다.
+      box.hidden = true;
+      actions.hidden = true;
+      return;
+    }
+
+    var rejected = result.rejected_rows || 0;
+    var unexplained = result.unexplained_rows || 0;
+    box.appendChild(make("div", null,
+      "원본 행 " + numberFormat(result.total_rows) + "건 · " +
+      "검토 대상 적재 " + numberFormat(result.stored_rows) + "건 · " +
+      "미적재 " + numberFormat(rejected) + "건 · " +
+      "설명되지 않는 행 " + numberFormat(unexplained) + "건"));
+    if (unexplained) {
+      // ⚠️ 0 이 아니면 어딘가에서 행이 사라진 것이다. 조용히 넘기지 않는다.
+      box.appendChild(make("div", null,
+        "⚠️ 설명되지 않는 행이 " + numberFormat(unexplained) + "건 있습니다. " +
+        "원본 행 수와 적재·미적재 합계가 맞지 않습니다."));
+    }
+
+    if (!rejected) {
+      // 검토 화면과 같은 함수를 쓴다 — 같은 사실은 같은 말로 적는다.
+      appendReasonNote(box, 0, [],
+        "미적재 행 없음 — 원본 행이 모두 검토 대상에 들어왔습니다.");
       box.hidden = false;
-      text(box, "데이터를 불러오지 못했습니다: " + err.message);
+      actions.hidden = true;
+      return;
+    }
+
+    box.appendChild(make("div", null,
+      "미적재 행 " + numberFormat(rejected) + "건 확인 — 원본에는 있으나 현재 검토 대상 DB 에 " +
+      "적재되지 않았습니다. 사유와 원본 값을 확인해 주세요."));
+    appendReasonNote(box, rejected, result.rejection_reasons);
+    box.hidden = false;
+    actions.hidden = false;
+  }
+
+  // ------------------------------------------------------------------
+  // 미적재 행 조회 — 검색 · 사유 · 정렬 · 페이지
+  //
+  // ⛔ **조회일 뿐이다.** 걸러 본다고 그 행의 처리 방식이 정해지지 않는다.
+  //    금액 0 이하 행을 승인·제외·검토대상 전환하는 기능은 만들지 않았다.
+  // ------------------------------------------------------------------
+
+  var rejectionPage = 1;
+
+  /** 가장 최근에 받은 ``/imports/trace`` 결과. 같은 것을 두 번 받지 않으려고 둔다. */
+  var lastTrace = null;
+
+  // ------------------------------------------------------------------
+  // 기간 선택지 (STEP 15)
+  //
+  // ⛔ 화면이 달을 만들지 않는다. 백엔드가 준 배치의 기간을 그대로 쓰고,
+  //    고른 기간의 **현재 배치 ID** 를 조회 조건으로 보낸다. 대체된 배치는
+  //    애초에 목록에 없다.
+  // ------------------------------------------------------------------
+
+  /** 마지막으로 받은 기간 목록. 세 화면이 함께 쓴다. */
+  var periodOptions = [];
+
+  /** 진행 중인 기간 목록 요청. 화면 여럿이 **같은 요청 하나**를 기다린다. */
+  var periodsPromise = null;
+
+  /**
+   * 기간 선택지가 준비될 때까지 기다린다.
+   *
+   * 검토 화면과 업로드 화면이 각각 부르지만 요청은 **한 번**만 나간다.
+   */
+  function periodsReady() {
+    if (periodsPromise === null) { periodsPromise = loadPeriods(); }
+    return periodsPromise;
+  }
+
+  /**
+   * 기간별 확정 건수를 다시 받는다.
+   *
+   * 확정·Undo 로 숫자가 바뀌었을 때만 부른다 — 목록을 넘길 때마다 부르면
+   * 조회 한 번에 요청이 둘씩 나간다. 실패해도 화면을 막지 않는다.
+   */
+  function refreshPeriods() {
+    periodsPromise = loadPeriods();
+    return periodsPromise;
+  }
+
+  /**
+   * 기간 선택지를 채운다.
+   *
+   * 값이 서로 다르므로 화면마다 무엇을 담을지 정한다 —
+   * 검토·미적재는 ``batch_id``, 업로드 이력은 기간 자체다.
+   */
+  function loadPeriods() {
+    return fetchJson("/imports/periods").then(function (payload) {
+      periodOptions = payload.items || [];
+      fillPeriodSelect("review-period",
+        function (item) { return String(item.batch_id); }, periodText);
+      fillPeriodSelect("rejection-period", function (item) { return String(item.batch_id); });
+      fillPeriodSelect("history-period", function (item) {
+        return item.period_start + "," + item.period_end;
+      });
+    }).catch(function () {
+      // 기간 목록을 못 받아도 "전체" 로는 볼 수 있어야 한다.
+    });
+  }
+
+  function fillPeriodSelect(id, valueOf, textOf) {
+    var select = el(id);
+    var chosen = select.value;
+    // 첫 항목("전체")만 남기고 다시 채운다.
+    while (select.options.length > 1) { select.remove(1); }
+    periodOptions.forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = valueOf(item);
+      option.textContent = textOf ? textOf(item) : item.label;
+      select.appendChild(option);
+    });
+    // 고르고 있던 기간이 아직 있으면 그대로 둔다(업로드 후에도 유지).
+    select.value = chosen;
+    // ⛔ 없는 값이었으면 "전체" 로 — 최신 달을 자동으로 고르지 않는다.
+    if (select.selectedIndex < 0) { select.selectedIndex = 0; }
+  }
+
+  /**
+   * 기간 선택지에 붙일 진행 상황.
+   *
+   * ⛔ **판정하지 않는다.** 위험·적정 같은 등급도, 색도 붙이지 않는다. 지금
+   *    DB 에 저장된 확정 건수를 그대로 적을 뿐이다.
+   * ⛔ 미적재 건수를 분모에 더하지 않는다 — 검토 대상이 아니기 때문이다(Q5-8).
+   */
+  function periodText(item) {
+    return item.label + " · " + numberFormat(item.confirmed)
+      + " / " + numberFormat(item.stored);
+  }
+
+  /** 선택된 기간을 조회 조건 조각으로. 고르지 않았으면 빈 문자열. */
+  function batchParam(id) {
+    var value = el(id).value;
+    return value ? "&batch_id=" + encodeURIComponent(value) : "";
+  }
+
+  /** [미적재 행 확인] — 조건 패널을 열고 닫는다. */
+  function showUploadRejections() {
+    var panel = el("rejection-panel");
+    if (!panel.hidden) { panel.hidden = true; return; }
+    panel.hidden = false;
+    rejectionPage = 1;
+    loadRejectionReasons();
+    loadRejections();
+  }
+
+  /**
+   * 사유 선택지는 백엔드가 소유한다 — 화면이 만들지 않는다.
+   *
+   * 검토 화면이 이미 받아 둔 ``/imports/trace`` 결과를 **다시 쓴다**. 같은
+   * 것을 두 번 받지 않기 위해서다.
+   */
+  function loadRejectionReasons() {
+    var select = el("rejection-reason");
+    if (select.options.length > 1) { return; }
+    var ready = lastTrace ? Promise.resolve(lastTrace) : fetchJson("/imports/trace");
+    ready.then(function (trace) {
+      lastTrace = trace;
+      (trace.reasons || []).forEach(function (item) {
+        var option = document.createElement("option");
+        option.value = item.reason;
+        option.textContent = item.label + " (" + numberFormat(item.count) + ")";
+        select.appendChild(option);
+      });
+    }).catch(function () { /* 선택지를 못 받아도 전체 조회는 된다 */ });
+  }
+
+  /**
+   * 미적재 조회 조건.
+   *
+   * ⚠️ **목록과 CSV 가 같은 함수를 쓴다.** 조건을 두 곳에서 만들면 화면에서
+   *    보던 것과 다른 파일이 내려온다. 페이지만 CSV 에서 빠진다(서버 계약).
+   */
+  function rejectionParams() {
+    return "search=" + encodeURIComponent(el("rejection-search").value.trim())
+      + "&reason=" + encodeURIComponent(el("rejection-reason").value)
+      + "&sort=" + encodeURIComponent(el("rejection-sort").value)
+      + "&direction=" + encodeURIComponent(el("rejection-direction").value)
+      + batchParam("rejection-period");
+  }
+
+  /** 현재 조건 그대로의 CSV 주소. 페이지 조건은 넣지 않는다. */
+  function rejectionCsvUrl() {
+    return "/imports/trace.csv?" + rejectionParams();
+  }
+
+  function loadRejections() {
+    uploadError("");
+    el("upload-trace-csv").href = rejectionCsvUrl();
+    fetchJson("/imports/rejections?" + rejectionParams()
+              + "&page=" + rejectionPage + "&page_size=50").then(function (page) {
+      renderRejectionTable(el("upload-trace-rows"), page);
+      text(el("rejection-page-info"),
+        page.total
+          ? page.page + " / " + page.total_pages + " 쪽 · 전체 "
+            + numberFormat(page.total) + "건"
+          : "조건에 맞는 미적재 행이 없습니다.");
+      el("rejection-prev").disabled = !page.has_previous;
+      el("rejection-next").disabled = !page.has_next;
+    }).catch(function (error) {
+      uploadError("미적재 행을 불러오지 못했습니다: " + error.message);
+    });
+  }
+
+  function reloadRejectionsFromFirstPage() {
+    rejectionPage = 1;
+    loadRejections();
+  }
+
+  // ------------------------------------------------------------------
+  // 미매칭 기업 (STEP 38)
+  //
+  // "기업 미매칭 N건" 이라는 총계만으로는 담당자가 **어느 기업정보를 먼저
+  // 확보해야 하는지** 알 수 없다. 같은 사실을 사업자번호 단위로 펼친다.
+  //
+  // ⛔ 조회 전용이다. 기업을 만들거나 연결하는 버튼을 두지 않는다.
+  // ⛔ 어느 사업자번호를 확보하라고 **판정하지 않는다** — 금액·건수·비중을
+  //    보여줄 뿐이고, 순서는 담당자가 정렬 조건으로 고른다.
+  // ------------------------------------------------------------------
+
+  var unmatchedPage = 1;
+
+  function unmatchedError(message) {
+    var node = el("unmatched-error");
+    text(node, message);
+    node.hidden = !message;
+  }
+
+  function unmatchedParams() {
+    return "search=" + encodeURIComponent(el("unmatched-search").value.trim())
+      + "&sort=" + encodeURIComponent(el("unmatched-sort").value)
+      + "&direction=" + encodeURIComponent(el("unmatched-direction").value);
+  }
+
+  function loadUnmatched() {
+    unmatchedError("");
+    fetchJson("/dashboard/unmatched-companies?" + unmatchedParams()
+              + "&page=" + unmatchedPage + "&page_size=50").then(function (page) {
+      renderUnmatchedTable(page);
+      // 모집단 설명은 **서버가 준 문구를 그대로** 쓴다 — 화면이 판단하지 않는다.
+      var notice = el("unmatched-notice");
+      text(notice, page.notice);
+      notice.hidden = !page.notice;
+      var pages = Math.max(1, Math.ceil(page.total / page.page_size));
+      text(el("unmatched-page-info"),
+        page.total
+          ? page.page + " / " + pages + " 쪽 · 사업자번호 "
+            + numberFormat(page.total) + "곳"
+          : "조건에 맞는 미매칭 기업이 없습니다.");
+      el("unmatched-prev").disabled = page.page <= 1;
+      el("unmatched-next").disabled = page.page >= pages;
+    }).catch(function (error) {
+      unmatchedError("미매칭 기업을 불러오지 못했습니다: " + error.message);
+    });
+  }
+
+  function renderUnmatchedTable(page) {
+    var box = el("unmatched-rows");
+    clear(box);
+
+    if (!page.unmatched_purchase_count) {
+      box.appendChild(make("div", "rv-key",
+        "기업 미매칭 구매가 없습니다 — 모든 구매가 기업정보와 연결되어 있습니다."));
+      return;
+    }
+    box.appendChild(make("div", "rv-key",
+      "미매칭 구매 " + numberFormat(page.unmatched_purchase_count) + "건 · "
+      + numberFormat(page.unmatched_total_amount) + "원 · 사업자번호 "
+      + numberFormat(page.unmatched_business_no_count) + "곳"));
+    if (!page.items.length) { return; }
+
+    var table = make("table", "rv-reject");
+    var head = make("tr");
+    ["사업자등록번호", "거래처명", "미매칭 건수", "미매칭 금액", "금액 비중"]
+      .forEach(function (label) { head.appendChild(make("th", null, label)); });
+    table.appendChild(head);
+
+    page.items.forEach(function (item) {
+      var tr = make("tr");
+      tr.appendChild(make("td", "num", item.business_no));
+      // 같은 사업자번호에 표기가 여러 가지일 수 있다. ⛔ 하나만 골라 보여주지
+      // 않는다 — 담당자가 어느 표기로 검색할지 모르기 때문이다.
+      tr.appendChild(make("td", "rv-text", item.company_names.join(" · ")));
+      tr.appendChild(make("td", "num", numberFormat(item.purchase_count)));
+      tr.appendChild(make("td", "num", numberFormat(item.total_amount)));
+      tr.appendChild(make("td", "num", item.amount_share + "%"));
+      table.appendChild(tr);
+    });
+    box.appendChild(table);
+  }
+
+  function reloadUnmatchedFromFirstPage() {
+    unmatchedPage = 1;
+    loadUnmatched();
+  }
+
+  // ------------------------------------------------------------------
+  // 재매칭 (STEP 39)
+  //
+  // ⛔ 데이터를 바꾸는 조작이다. 기존 확정 취소와 **같은 확인창 패턴**을 쓴다 —
+  //    확인 전에는 요청을 보내지 않는다.
+  // ⛔ 기업정보를 만들지 않는다. 등록된 기업이 있는 건만 연결된다.
+  // ⛔ 이미 연결된 구매는 건드리지 않는다(서버가 미매칭만 순회한다).
+  // ------------------------------------------------------------------
+
+  var rematchInFlight = false;
+
+  function askRematch() {
+    rememberFocus();
+    var box = el("rematch-box");
+    clear(box);
+
+    var head = make("div", "rv-modal-head");
+    head.appendChild(make("h3", "card-title", "기업정보와 다시 연결할까요?"));
+    box.appendChild(head);
+
+    box.appendChild(make("p", "card-sub",
+      "사업자등록번호가 같은 기업정보가 등록되어 있는 경우에만 연결됩니다. "
+      + "기업정보가 없는 구매는 그대로 미매칭으로 남습니다."));
+    box.appendChild(make("p", "card-sub",
+      "이미 연결된 구매는 건드리지 않습니다. 여러 번 실행해도 안전합니다."));
+
+    var actions = make("div", "rv-pick");
+    var cancel = make("button", "control", "취소");
+    cancel.type = "button";
+    cancel.addEventListener("click", closeRematch);
+
+    var ok = make("button", "control rv-danger", "다시 연결");
+    ok.type = "button";
+    ok.addEventListener("click", function () { runRematch(ok); });
+
+    actions.appendChild(cancel);
+    actions.appendChild(ok);
+    box.appendChild(actions);
+
+    el("rematch-modal").hidden = false;
+    cancel.focus();   // 기본 포커스는 **안전한 쪽**(취소)에 둔다
+  }
+
+  function closeRematch() {
+    el("rematch-modal").hidden = true;
+    restoreFocus();
+  }
+
+  /** 확인 후에만 요청을 보낸다. 두 번 겹쳐 보내지 않는다. */
+  function runRematch(button) {
+    if (rematchInFlight) { return; }
+    rematchInFlight = true;
+    button.disabled = true;
+    unmatchedError("");
+
+    fetch("/purchases/rematch", { method: "POST" }).then(function (response) {
+      if (!response.ok) { throw httpError(response); }
+      return response.json();
+    }).then(function (result) {
+      closeRematch();
+      // 결과 문구는 **서버가 준 것을 그대로** 쓴다 — 화면이 판단하지 않는다.
+      var node = el("rematch-result");
+      text(node, result.notice);
+      node.hidden = false;
+      // 목록과 적재 현황 숫자가 함께 바뀌었다.
+      reloadUnmatchedFromFirstPage();
+      load();
+    }).catch(function (error) {
+      // ⛔ 실패했으면 성공처럼 보이면 안 된다 — 화면 상태를 그대로 둔다.
+      unmatchedError(failureMessage(error, "기업정보와 다시 연결하지 못했습니다"));
+      button.disabled = false;
+    }).finally(function () {
+      rematchInFlight = false;
+    });
+  }
+
+  function rematchIsOpen() {
+    return !el("rematch-modal").hidden;
+  }
+
+  function initUnmatched() {
+    el("unmatched-rematch").addEventListener("click", askRematch);
+    el("rematch-modal").addEventListener("click", function (event) {
+      // 바깥을 눌러 닫는 것은 **취소** 다 — 재매칭이 실행되지 않는다.
+      if (event.target === el("rematch-modal")) { closeRematch(); }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.ctrlKey || event.metaKey || event.altKey) { return; }
+      if (event.key === "Escape" && rematchIsOpen()) {
+        closeRematch();
+        event.preventDefault();
+        return;
+      }
+      if (rematchIsOpen() && event.key === "Tab") { trapTab(event, "rematch-modal"); }
+    });
+    ["unmatched-sort", "unmatched-direction"].forEach(function (id) {
+      el(id).addEventListener("change", reloadUnmatchedFromFirstPage);
+    });
+    // 타이핑 한 글자마다 요청하지 않는다.
+    el("unmatched-search").addEventListener("input", debounce(reloadUnmatchedFromFirstPage, 300));
+    el("unmatched-prev").addEventListener("click", function () {
+      if (unmatchedPage > 1) { unmatchedPage -= 1; loadUnmatched(); }
+    });
+    el("unmatched-next").addEventListener("click", function () {
+      unmatchedPage += 1;
+      loadUnmatched();
+    });
+    loadUnmatched();
+  }
+
+  // ------------------------------------------------------------------
+  // 업로드 이력 (STEP 14)
+  //
+  // ⛔ 삭제·복구 기능을 만들지 않는다. 새 상태값도 만들지 않는다 —
+  //    상태 문자열과 "현재/대체됨" 판정은 **백엔드가 준 값**(status ·
+  //    is_current)을 그대로 쓴다. 화면이 상태 상수를 비교하지 않는다.
+  // ------------------------------------------------------------------
+
+  function historyError(message) {
+    var node = el("history-error");
+    text(node, message);
+    node.hidden = !message;
+  }
+
+  function loadHistory() {
+    historyError("");
+    // 값은 "시작,끝" 이며 백엔드가 준 그대로다. ⛔ 화면이 날짜를 만들지 않는다.
+    var chosen = el("history-period").value;
+    var query = chosen
+      ? "?period_start=" + encodeURIComponent(chosen.split(",")[0])
+        + "&period_end=" + encodeURIComponent(chosen.split(",")[1])
+      : "";
+    fetchJson("/imports/batches" + query).then(renderHistory).catch(function (error) {
+      historyError("업로드 이력을 불러오지 못했습니다: " + error.message);
+    });
+  }
+
+  function renderHistory(payload) {
+    var box = el("history-table");
+    clear(box);
+    el("history-detail").hidden = true;
+
+    if (!payload.items.length) {
+      box.appendChild(make("div", "rv-key", "아직 업로드한 파일이 없습니다."));
+      return;
+    }
+
+    var table = make("table");
+    var head = make("tr");
+    ["기간", "파일", "업로드일시", "원본", "적재", "미적재", "설명 안 됨", "상태", ""]
+      .forEach(function (label) { head.appendChild(make("th", null, label)); });
+    table.appendChild(head);
+
+    payload.items.forEach(function (item) {
+      var tr = make("tr");
+      // 값은 그대로 이어 붙인다 — 줄바꿈은 CSS 가 `~` 앞뒤 공백에서만 한다.
+      tr.appendChild(make("td", "rv-period", item.period_start + " ~ " + item.period_end));
+      // 파일명은 길이가 제각각인 자유 텍스트다. 미적재 표와 **같은 규칙**으로
+      // 줄바꿈을 허용한다(잘라내지 않는다). 기간·일시·숫자는 nowrap 그대로다.
+      tr.appendChild(make("td", "rv-text", item.file_name));
+      // 값을 만드는 방법은 그대로다 — 480px 이하에서 날짜와 시각 사이의 **기존
+      // 공백**에서만 줄을 바꾸기 위해 CSS 가 고를 이름만 붙인다.
+      tr.appendChild(make("td", "rv-stamp",
+        (item.uploaded_at || "").replace("T", " ").slice(0, 19)));
+      // 원본 행 수를 모르는 옛 배치는 "-" 다. ⛔ 0 으로 적지 않는다.
+      tr.appendChild(make("td", "num",
+        item.source_rows === null ? "-" : numberFormat(item.source_rows)));
+      tr.appendChild(make("td", "num", numberFormat(item.stored)));
+      tr.appendChild(make("td", "num", numberFormat(item.rejected)));
+      tr.appendChild(make("td", "num",
+        item.unexplained === null ? "-" : numberFormat(item.unexplained)));
+      tr.appendChild(make("td", null, item.is_current ? "현재" : "대체됨"));
+
+      var cell = make("td");
+      var button = make("button", "control", "상세");
+      button.type = "button";
+      button.setAttribute("aria-label",
+        "업로드 " + item.batch_id + " (" + item.period_start + ") 상세 보기");
+      button.addEventListener("click", function () { showBatchDetail(item.batch_id); });
+      cell.appendChild(button);
+      tr.appendChild(cell);
+      table.appendChild(tr);
+    });
+    box.appendChild(table);
+    box.appendChild(make("div", "rv-key",
+      "전체 " + numberFormat(payload.total) + "회 업로드 · 현재 사용 중 "
+      + numberFormat(payload.current) + "개 배치"));
+  }
+
+  /**
+   * 이 배치의 **검토 변경 이력** CSV 링크.
+   *
+   * ⚠️ 기존 ``/reviews/history.csv`` 를 그대로 쓴다 — 새 API 를 만들지 않았고,
+   *    미적재 CSV 버튼과 **같은 방식**(내려받기 링크)이라 누른다고 화면 조회
+   *    상태가 바뀌지 않는다. 상세를 열 때 이미 받은 값만 쓰므로 추가 요청도 없다.
+   *
+   * ⚠️ 이력은 **현재 배치 기준**이다(STEP 20). 대체된 배치를 고르면 파일이 비어
+   *    나오므로, 그 사실을 미리 적어 둔다 — 빈 파일을 받고 의아해하지 않도록.
+   *    ⛔ 업무 판단이 아니라 조회 범위에 대한 설명이다.
+   */
+  function historyCsvLink(item) {
+    var box = make("div", "upload-actions");
+    var link = make("a", "control", "이력 CSV 내려받기");
+    link.href = "/reviews/history.csv?batch_id=" + encodeURIComponent(item.batch_id);
+    link.setAttribute("download", "review-history.csv");
+    link.setAttribute("aria-label", "업로드 " + item.batch_id + " 의 검토 변경 이력 CSV 내려받기");
+    box.appendChild(link);
+    if (!item.is_current) {
+      box.appendChild(make("span", "rv-key",
+        "대체된 배치입니다 — 검토 이력은 현재 배치 기준이라 이 파일은 비어 있습니다."));
+    }
+    return box;
+  }
+
+  function showBatchDetail(batchId) {
+    var box = el("history-detail");
+    fetchJson("/imports/batches/" + encodeURIComponent(batchId)).then(function (item) {
+      clear(box);
+      box.appendChild(make("div", null,
+        "업로드 #" + item.batch_id + " · " + item.file_name
+        + " · " + (item.uploaded_at || "").replace("T", " ").slice(0, 19)));
+      box.appendChild(make("div", null,
+        "기간 " + item.period_start + " ~ " + item.period_end
+        + " · 상태 " + item.status + (item.is_current ? " (현재)" : " (대체됨)")
+        + (item.superseded_by ? " → #" + item.superseded_by : "")));
+      box.appendChild(make("div", null,
+        "원본 " + (item.source_rows === null ? "-" : numberFormat(item.source_rows))
+        + "건 · 적재 " + numberFormat(item.stored)
+        + "건 · 미적재 " + numberFormat(item.rejected)
+        + "건 · 설명되지 않는 행 "
+        + (item.unexplained === null ? "-" : numberFormat(item.unexplained)) + "건"));
+      // 검토 화면과 같은 함수를 쓴다 — 같은 사실은 같은 말로 적는다.
+      appendReasonNote(box, item.rejected, item.reasons);
+      box.appendChild(historyCsvLink(item));
+      box.hidden = false;
+    }).catch(function (error) {
+      historyError("업로드 상세를 불러오지 못했습니다: " + error.message);
+    });
+  }
+
+  function renderUploadResult(result) {
+    var summary = el("upload-summary");
+    var issues = el("upload-issues");
+    clear(summary);
+    clear(issues);
+
+    if (result.file_errors.length) {
+      uploadError(result.file_errors.join(" / "));
+      summary.hidden = true;
+      issues.hidden = true;
+      return;
+    }
+    uploadError("");
+
+    summary.hidden = false;
+    summary.appendChild(uploadStat("총 행", numberFormat(result.total_rows)));
+    summary.appendChild(uploadStat("정상", numberFormat(result.valid_rows)));
+    summary.appendChild(uploadStat("오류 행", numberFormat(result.error_rows)));
+    if (result.stored) {
+      summary.appendChild(uploadStat("저장", numberFormat(result.stored_rows)));
+      if (result.batch_id !== null) {
+        summary.appendChild(uploadStat("배치", "#" + result.batch_id));
+      }
+    }
+
+    // 왜 저장되었는지/되지 않았는지는 **백엔드가 문장으로** 돌려준다.
+    // 화면은 상태 표시만 덧붙인다 — 같은 문장을 두 번 쓰지 않기 위함이다.
+    uploadNotice(
+      (result.stored ? "✅ "
+        : result.ok ? "✅ 검증을 모두 통과했습니다. "
+        : "⚠️ ")
+      + result.storage_note
+    );
+
+    renderUploadTrace(result);
+    // 새 기간이 생겼을 수 있으므로 목록을 **서버에서 다시 읽는다.**
+    // ⛔ 화면이 기간을 만들어 넣지 않는다.
+    // 새 기간이 생겼을 수 있으므로 **다시 받는다**(캐시를 비운다).
+    if (result.stored) {
+      periodsPromise = loadPeriods();
+      periodsPromise.then(loadHistory);
+    }
+
+    if (!result.issues.length) {
+      issues.hidden = true;
+      return;
+    }
+
+    issues.hidden = false;
+    var table = document.createElement("table");
+    var thead = document.createElement("thead");
+    var headRow = document.createElement("tr");
+    ["행", "항목", "구분", "내용"].forEach(function (label) {
+      headRow.appendChild(make("th", null, label));
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement("tbody");
+    result.issues.forEach(function (issue) {
+      var row = document.createElement("tr");
+      row.appendChild(make("td", null, issue.row_number + "행"));
+      row.appendChild(make("td", null, issue.header || "-"));
+      row.appendChild(make(
+        "td",
+        issue.severity === "error" ? "sev-error" : "sev-warning",
+        issue.severity === "error" ? "오류" : "확인"
+      ));
+      row.appendChild(make("td", "msg", issue.message));
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    issues.appendChild(table);
+
+    if (result.truncated) {
+      issues.appendChild(make("div", "upload-file", "문제가 많아 일부만 표시했습니다."));
+    }
+  }
+
+  // 같은 기간에 이미 데이터가 있을 때 사용자에게 묻는다.
+  //
+  // ⛔ 판단은 **백엔드가** 한다. 화면은 409 를 받고 문장을 보여줄 뿐이며,
+  //    "기존 데이터가 있는가" 를 화면이 스스로 계산하지 않는다.
+  function confirmReplace(detail) {
+    // ⭐ 어느 기간인지는 **백엔드가 쓴 문장**을 그대로 쓴다. 월 업로드면
+    //    「2026년 8월 데이터가 이미 등록되어 있습니다」 처럼 달까지 들어 있다.
+    //    화면이 연/월을 다시 조립하면 백엔드와 어긋날 자리가 생긴다.
+    var year = detail && detail.year ? detail.year : "";
+    var head = (detail && detail.message)
+      ? detail.message.replace(/\.$/, "")
+      : (year + "년 데이터가 이미 등록되어 있습니다");
+    var rows = detail && detail.existing_row_count ? detail.existing_row_count : 0;
+    var label = (detail && detail.month)
+      ? (detail.year + "년 " + detail.month + "월")
+      : (year + "년");
+    return window.confirm(
+      head + (rows ? " (" + numberFormat(rows) + "건)" : "") + ".\n\n"
+      + "기존 " + label + " 데이터를 삭제하고 새로 업로드한 데이터로 "
+      + "교체하시겠습니까?\n\n"
+      + "⛔ 그 달에 확정해 두신 구매유형은 새 데이터에 자동으로 옮겨지지 "
+      + "않습니다."
+    );
+  }
+
+  /**
+   * 고른 기간과 결의일자가 달라 **파일 전체**가 거절되었음을 알린다.
+   *
+   * ⭐ 「일부 행만 빠졌다」 로 읽히면 안 된다. 담당자가 「나머지는 들어갔겠지」
+   *    라고 넘기면 그 달 실적이 통째로 비어 있는 채 남는다(STEP 121 §7 · §8).
+   * ⛔ 화면이 판정하지 않는다 — 백엔드가 준 값을 그대로 옮긴다.
+   */
+  function renderPeriodMismatch(detail) {
+    uploadNotice("");
+    var label = detail.year + "년" + (detail.month ? " " + detail.month + "월" : "");
+    var found = (detail.found_periods || []).map(function (item) {
+      return item.period + " " + numberFormat(item.count) + "건";
+    }).join(" · ");
+
+    uploadError(
+      "업로드할 수 없습니다. 고르신 업로드 기간은 " + label + "입니다. "
+      + "파일에 " + label + "이 아닌 결의일자가 "
+      + numberFormat(detail.mismatch_count) + "건 있어 "
+      + "전체 " + numberFormat(detail.total_rows) + "건이 "
+      + "**하나도 등록되지 않았습니다**"
+      + (found ? " (발견된 결의일자: " + found + ")" : "") + ". "
+      + "기존에 등록되어 있던 데이터는 그대로 있습니다. "
+      + "파일의 결의일자를 확인하신 뒤 다시 올려 주십시오."
+    );
+  }
+
+  // 업로드 요청 하나를 보내고 결과를 그린다.
+  // 검증과 저장은 **엔드포인트만 다르고** 화면 처리는 같다.
+  function sendUpload(url, payload, buttons) {
+    buttons.forEach(function (button) { button.disabled = true; });
+    uploadError("");
+    uploadNotice("처리 중입니다...");
+
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (res) {
+        return res.json().then(function (body) {
+          // 409 = 같은 기간에 기존 데이터가 있고 교체 확인이 없다는 뜻.
+          // 이 시점에 DB 는 아직 아무것도 바뀌지 않았다.
+          if (res.status === 409 && body.detail && body.detail.code === "EXISTING_PERIOD") {
+            return { needsConfirm: true, detail: body.detail };
+          }
+          // 고른 기간과 결의일자가 다른 행이 있어 **파일 전체**가 거절된 경우.
+          // ⭐ 「일부만 빠졌다」 로 읽히지 않도록 문장을 따로 만든다(STEP 121 §7).
+          if (res.status === 409 && body.detail
+              && body.detail.code === "UPLOAD_PERIOD_MISMATCH") {
+            return { rejected: true, detail: body.detail };
+          }
+          if (!res.ok) {
+            var message = body.detail;
+            if (message && typeof message === "object") { message = message.message; }
+            throw new Error(message || ("HTTP " + res.status));
+          }
+          return { body: body };
+        });
+      })
+      .then(function (outcome) {
+        if (outcome.needsConfirm) {
+          if (!confirmReplace(outcome.detail)) {
+            // [취소] — 아무것도 바꾸지 않는다.
+            uploadNotice("취소했습니다. 기존 데이터를 그대로 두었습니다.");
+            return null;
+          }
+          // [교체] — 사용자의 명시적 확인을 붙여 다시 요청한다.
+          var confirmed = {};
+          Object.keys(payload).forEach(function (key) { confirmed[key] = payload[key]; });
+          confirmed.replace_existing = true;
+          sendUpload(url, confirmed, buttons);
+          return null;
+        }
+        if (outcome.rejected) {
+          renderPeriodMismatch(outcome.detail);
+          return null;
+        }
+        renderUploadResult(outcome.body);
+        if (outcome.body.stored) { load(); }   // 저장되었으면 대시보드를 다시 그린다
+        return null;
+      })
+      .catch(function (err) {
+        uploadNotice("");
+        uploadError("처리에 실패했습니다: " + err.message);
+      })
+      .finally(function () {
+        buttons.forEach(function (button) { button.disabled = false; });
+      });
+  }
+
+  function initUpload() {
+    var pick = el("upload-pick");
+    var run = el("upload-run");
+    var save = el("upload-save");
+    var template = el("upload-template");
+
+    buildUploadYearOptions();
+    buildUploadMonthOptions();
+
+    // 미적재 행 확인은 브라우저에서도 쓸 수 있어야 하므로 데스크톱 검사보다
+    // 먼저 연결한다(파일 선택만 데스크톱 앱 기능이다).
+    el("upload-trace-show").addEventListener("click", showUploadRejections);
+    el("history-reload").addEventListener("click", loadHistory);
+    el("history-period").addEventListener("change", loadHistory);
+    el("rejection-period").addEventListener("change", reloadRejectionsFromFirstPage);
+    ["rejection-reason", "rejection-sort", "rejection-direction"].forEach(function (id) {
+      el(id).addEventListener("change", reloadRejectionsFromFirstPage);
+    });
+    // 타이핑 한 글자마다 요청하지 않는다.
+    el("rejection-search").addEventListener("input", debounce(reloadRejectionsFromFirstPage, 300));
+    el("rejection-prev").addEventListener("click", function () {
+      if (rejectionPage > 1) { rejectionPage -= 1; loadRejections(); }
+    });
+    el("rejection-next").addEventListener("click", function () {
+      rejectionPage += 1;
+      loadRejections();
+    });
+    periodsReady().then(loadHistory);
+
+    if (!desktop()) {
+      pick.disabled = true;
+      template.disabled = true;
+      uploadNotice("파일 선택과 양식 다운로드는 데스크톱 앱에서 사용할 수 있습니다.");
+      return;
+    }
+
+    template.addEventListener("click", function () {
+      uploadError("");
+      window.procurementApp.saveTemplate().then(function (res) {
+        if (res.saved) {
+          uploadNotice("표준 양식을 저장했습니다: " + res.path);
+        } else if (res.message) {
+          uploadError(res.message);
+        }
+      });
+    });
+
+    pick.addEventListener("click", function () {
+      uploadError("");
+      window.procurementApp.selectUploadFile().then(function (res) {
+        if (!res.selected) { return; }
+        uploadPath = res.path;
+        text(el("upload-file"), "선택한 파일: " + res.name);
+        run.disabled = false;
+        save.disabled = false;
+      });
+    });
+
+    run.addEventListener("click", function () {
+      if (!uploadPath) { return; }
+      sendUpload("/uploads/purchases/validate", { file_path: uploadPath }, [run, save]);
+    });
+
+    save.addEventListener("click", function () {
+      if (!uploadPath) { return; }
+      sendUpload(
+        "/uploads/purchases",
+        {
+          file_path: uploadPath,
+          year: Number(el("upload-year").value),
+          month: selectedUploadMonth()
+        },
+        [run, save]
+      );
+    });
+  }
+
+  // ------------------------------------------------- 목표비율 관리 (연도 × 정책)
+  //
+  // ⛔ 기업(구매처)을 고르지 않는다. 축은 **연도 × 정책** 뿐이다(DECISIONS §0.20).
+  // ⛔ 정책 목록·정책명을 화면이 들고 있지 않는다. 서버가 준다.
+  // ⛔ 빈칸은 "미설정" 이지 0% 가 아니다. 빈칸을 0 으로 바꿔 보내지 않는다.
+  // ⛔ 달성률 표시 구간(20/40/60/80/100)으로 입력값을 제한하지 않는다.
+
+  var ptItems = [];   // 마지막으로 서버에서 받은 정책별 목표비율
+
+  function ptNotice(message) {
+    var box = el("pt-notice");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  function ptError(message) {
+    var box = el("pt-error");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  /**
+   * 저장 실패 사유. 목표비율 저장은 **설정 변경 권한**이 필요하므로, 권한 쪽
+   * 실패를 "다시 시도" 로 안내하면 담당자가 헛수고를 한다.
+   *
+   * ⛔ 자동 재시도를 하지 않는다 — 다시 보낼지는 사람이 정한다.
+   */
+  function ptFailureMessage(error) {
+    var status = error && error.status;
+    if (status === 503) {
+      return "설정 변경 기능이 꺼져 있습니다. 관리자에게 문의해 주세요.";
+    }
+    if (status === 401 || status === 403) {
+      return "설정을 변경할 권한이 없습니다. 관리자에게 문의해 주세요.";
+    }
+    if (status === 422) {
+      return "목표비율은 0 보다 크고 100 이하인 숫자여야 합니다. 비워 두면 미설정입니다.";
+    }
+    return failureMessage(error, "목표비율을 저장하지 못했습니다");
+  }
+
+  /** 목표비율 입력칸 한 줄. 값이 없으면 **비워 둔다**(0 을 넣지 않는다). */
+  function ptRow(item) {
+    var tr = document.createElement("tr");
+    var th = make("th", null, item.policy_name);
+    var td = document.createElement("td");
+
+    var input = document.createElement("input");
+    input.className = "control-input";
+    input.type = "text";
+    input.inputMode = "decimal";
+    input.id = "pt-input-" + item.policy_code;
+    input.value = item.target_rate === null ? "" : item.target_rate;
+    input.placeholder = "미설정";
+    input.setAttribute("aria-label", item.policy_name + " 목표비율(%)");
+    input.style.width = "7em";
+
+    td.appendChild(input);
+    td.appendChild(document.createTextNode(" %"));
+    tr.appendChild(th);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  /**
+   * 목표가 **구매유형별로 갈리는** 정책 한 줄 (여성기업).
+   *
+   * 기준마다 입력칸을 따로 둔다. 저장은 분모 기준까지 받는 경로
+   * (PUT /policy-targets/{year}/{code}/{scope})로 각각 보내므로,
+   * 어느 기준을 고친 것인지 서버가 안다.
+   *
+   * ⛔ 여러 기준을 한 칸으로 합치지 않는다 — 합치는 순간 고객이 준 값이
+   *    아닌 숫자로 달성률을 재게 된다.
+   */
+  function ptScopedRow(item) {
+    var tr = document.createElement("tr");
+    tr.appendChild(make("th", null, item.policy_name));
+
+    var td = document.createElement("td");
+    item.scoped_targets.forEach(function (scoped) {
+      var line = make("div", "scoped-input");
+      line.appendChild(make("span", "scoped-title", scoped.scope_label));
+
+      var input = document.createElement("input");
+      input.className = "control-input";
+      input.type = "text";
+      input.inputMode = "decimal";
+      input.id = "pt-input-" + item.policy_code + "-" + scoped.scope;
+      input.value = scoped.target_rate === null ? "" : scoped.target_rate;
+      input.placeholder = "미설정";
+      input.setAttribute("aria-label",
+                         item.policy_name + " " + scoped.scope_label + " 목표비율(%)");
+      input.style.width = "7em";
+      input.setAttribute("data-scope", scoped.scope);
+      input.setAttribute("data-code", item.policy_code);
+
+      line.appendChild(input);
+      line.appendChild(document.createTextNode(" %"));
+      if (!scoped.calculable) {
+        // 저장은 되지만 분모를 구할 방법이 없어 달성률은 나오지 않는다.
+        line.appendChild(make("span", "hint", " (저장됨 · 달성률은 계산 보류)"));
+      }
+      td.appendChild(line);
+    });
+
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function renderPolicyTargets(body) {
+    ptItems = body.items || [];
+    var rows = el("pt-rows");
+    clear(rows);
+    if (ptItems.length === 0) {
+      var tr = document.createElement("tr");
+      var td = make("td", null, "활성 정책이 없습니다.");
+      td.colSpan = 2;
+      tr.appendChild(td);
+      rows.appendChild(tr);
+      return;
+    }
+    ptItems.forEach(function (item) {
+      // 목표가 **여럿**인 정책(여성기업: 공사 3% · 용역 5% · 물품 5%)은
+      // 한 칸에 담을 수 없다. ⛔ 하나만 보여 주면 나머지가 사라진다.
+      if (item.scoped_targets && item.scoped_targets.length > 0) {
+        rows.appendChild(ptScopedRow(item));
+        return;
+      }
+      rows.appendChild(ptRow(item));
+    });
+  }
+
+  /** 선택한 연도의 목표비율을 **서버에서 다시** 읽는다. */
+  function loadPolicyTargets() {
+    ptError("");
+    var year = el("pt-year").value;
+    return fetch("/policy-targets?year=" + encodeURIComponent(year),
+                 { headers: { "Accept": "application/json" } })
+      .then(function (res) {
+        if (!res.ok) { throw httpError(res); }
+        return res.json();
+      })
+      .then(renderPolicyTargets)
+      .catch(function (err) {
+        ptError(failureMessage(err, "목표비율을 불러오지 못했습니다"));
+      });
+  }
+
+  /**
+   * 바뀐 값만 저장한다.
+   *
+   * ⛔ 빈칸은 0 이 아니라 **해제**(null)로 보낸다.
+   * ⛔ 손대지 않은 정책은 요청 자체를 보내지 않는다 — 다른 연도는 물론이고
+   *    이 연도의 다른 정책도 건드리지 않는다.
+   */
+  function savePolicyTargets() {
+    ptError("");
+    var year = el("pt-year").value;
+    var button = el("pt-save");
+    var changed = [];
+
+    ptItems.forEach(function (item) {
+      // 유형별 목표 정책은 기준마다 칸이 하나씩 있다.
+      if (item.scoped_targets && item.scoped_targets.length > 0) {
+        item.scoped_targets.forEach(function (scoped) {
+          var scopedInput = el("pt-input-" + item.policy_code + "-" + scoped.scope);
+          if (!scopedInput) { return; }
+          var typedScoped = scopedInput.value.trim();
+          var beforeScoped = scoped.target_rate === null ? "" : String(scoped.target_rate);
+          if (typedScoped === beforeScoped) { return; }
+          changed.push({
+            code: item.policy_code,
+            scope: scoped.scope,
+            value: typedScoped === "" ? null : typedScoped
+          });
+        });
+        return;
+      }
+      var input = el("pt-input-" + item.policy_code);
+      if (!input) { return; }
+      var typed = input.value.trim();
+      var before = item.target_rate === null ? "" : String(item.target_rate);
+      if (typed === before) { return; }
+      changed.push({ code: item.policy_code, value: typed === "" ? null : typed });
+    });
+
+    if (changed.length === 0) {
+      ptNotice("바뀐 값이 없습니다.");
+      return;
+    }
+
+    button.disabled = true;
+    ptNotice("저장 중입니다...");
+
+    var requests = changed.map(function (change) {
+      // 분모 기준이 있는 변경은 기준까지 담은 경로로 보낸다. 없는 변경은
+      // 기존 경로 그대로 — 서버가 기관 전체 구매금액 기준으로 받는다.
+      var url = "/policy-targets/" + encodeURIComponent(year) + "/"
+                + encodeURIComponent(change.code);
+      if (change.scope) { url += "/" + encodeURIComponent(change.scope); }
+      return fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ target_rate: change.value })
+      }).then(function (res) {
+        if (!res.ok) { throw httpError(res); }
+        return res.json();
+      });
+    });
+
+    Promise.all(requests)
+      .then(function () {
+        ptNotice(year + "년 목표비율을 저장했습니다.");
+        // 저장 결과를 서버에서 다시 읽고, 달성률도 다시 그린다.
+        return loadPolicyTargets().then(load);
+      })
+      .catch(function (err) {
+        ptNotice("");
+        ptError(ptFailureMessage(err));
+      })
+      .finally(function () { button.disabled = false; });
+  }
+
+  function initPolicyTargets() {
+    var select = el("pt-year");
+    var current = new Date().getFullYear();
+    for (var y = current + 1; y >= current - 3; y--) {
+      var opt = document.createElement("option");
+      opt.value = String(y);
+      opt.textContent = y + "년";
+      if (y === current) { opt.selected = true; }
+      select.appendChild(opt);
+    }
+    // 연도를 바꾸면 **그 연도 값을 다시 읽는다.** ⛔ 화면에 남은 값을 재사용하지 않는다.
+    select.addEventListener("change", function () {
+      ptNotice("");
+      loadPolicyTargets();
+    });
+    el("pt-save").addEventListener("click", savePolicyTargets);
+    loadPolicyTargets();
+  }
+
+  // ------------------------------------------------- 기업정보 등록 (정책별)
+  //
+  // ⭐ 정책마다 **별개의 기업 목록**을 받는다. 지출 원본에는 기업정보가 없다.
+  // ⛔ 정책 목록·정책명·선택지를 화면이 들고 있지 않는다. 서버가 준다.
+  // ⛔ 파일 내용을 보고 정책을 정하지 않는다 — 사용자가 고른 정책으로 저장한다.
+  // ⛔ 목록을 받지 못한 정책은 **조회불가**다. 미해당도 0원도 아니다.
+
+  var crItems = [];        // 서버가 준 정책별 등록 현황
+  var crPaths = {};        // policy_code -> 사용자가 고른 파일 경로
+
+  function crNotice(message) {
+    var box = el("cr-notice");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  function crError(message) {
+    var box = el("cr-error");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  /** 등록 현황 한 줄. 정책명 · 상태 · 방법 선택 · 파일 선택 · 등록 버튼. */
+  function crRow(item) {
+    var tr = document.createElement("tr");
+    tr.appendChild(make("th", null, item.policy_name));
+
+    var td = document.createElement("td");
+
+    // 상태 — "미등록" 을 "미해당" 으로 읽히지 않게 문구를 그대로 쓴다.
+    var status = make("span", "upload-stat", item.status_label);
+    td.appendChild(status);
+    if (item.registered && item.certification_count !== null) {
+      td.appendChild(document.createTextNode(
+        " 인증 " + numberFormat(item.certification_count) + "건"
+        + (item.source_label ? " · " + item.source_label : "")));
+    }
+
+    var actions = make("div", "upload-actions");
+
+    // 확보 방법 — ⛔ 서버가 준 것만 만든다. 조회가 없는 정책엔 API 가 없다.
+    var select = document.createElement("select");
+    select.className = "control-input";
+    select.id = "cr-method-" + item.policy_code;
+    select.setAttribute("aria-label", item.policy_name + " 기업정보 확보 방법");
+    (item.available_methods || []).forEach(function (method) {
+      var opt = document.createElement("option");
+      opt.value = method;
+      opt.textContent = method === "FILE" ? "파일 업로드" : "조회";
+      select.appendChild(opt);
+    });
+    var methodWrap = make("span", "control");
+    methodWrap.appendChild(make("span", "control-label", "방법"));
+    methodWrap.appendChild(select);
+    actions.appendChild(methodWrap);
+
+    var pick = make("button", "control", "파일 선택");
+    pick.type = "button";
+    pick.id = "cr-pick-" + item.policy_code;
+    pick.disabled = !desktop();
+    pick.addEventListener("click", function () { crPickFile(item); });
+    actions.appendChild(pick);
+
+    var save = make("button", "control", "등록");
+    save.type = "button";
+    save.id = "cr-save-" + item.policy_code;
+    save.addEventListener("click", function () { crRegister(item); });
+    actions.appendChild(save);
+
+    var chosen = make("span", "upload-file", crPaths[item.policy_code]
+      ? "선택한 파일: " + crPaths[item.policy_code].name
+      : "선택된 파일이 없습니다.");
+    chosen.id = "cr-file-" + item.policy_code;
+    actions.appendChild(chosen);
+
+    td.appendChild(actions);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function renderCompanyRegistration(body) {
+    crItems = body.items || [];
+    var rows = el("cr-rows");
+    clear(rows);
+    if (crItems.length === 0) {
+      var tr = document.createElement("tr");
+      var td = make("td", null, "활성 정책이 없습니다.");
+      td.colSpan = 2;
+      tr.appendChild(td);
+      rows.appendChild(tr);
+      return;
+    }
+    crItems.forEach(function (item) { rows.appendChild(crRow(item)); });
+  }
+
+  function loadCompanyRegistration() {
+    crError("");
+    return fetch("/companies/registration", { headers: { "Accept": "application/json" } })
+      .then(function (res) {
+        if (!res.ok) { throw httpError(res); }
+        return res.json();
+      })
+      .then(renderCompanyRegistration)
+      .catch(function (err) {
+        crError(failureMessage(err, "기업정보 등록 현황을 불러오지 못했습니다"));
+      });
+  }
+
+  function crPickFile(item) {
+    crError("");
+    if (!desktop()) { return; }
+    window.procurementApp.selectUploadFile().then(function (res) {
+      if (!res.selected) { return; }
+      crPaths[item.policy_code] = { path: res.path, name: res.name };
+      text(el("cr-file-" + item.policy_code), "선택한 파일: " + res.name);
+    });
+  }
+
+  /**
+   * 고른 정책으로 기업정보를 등록한다.
+   *
+   * ⭐ policy_code 를 **명시해서** 보낸다. 서버는 파일 전체를 그 정책의 목록으로
+   *    저장한다 — ⛔ 파일 안에 다른 인증명이 있어도 다른 정책에 넣지 않는다.
+   */
+  function crRegister(item) {
+    crError("");
+    var method = el("cr-method-" + item.policy_code).value;
+    if (method !== "FILE") {
+      // 조회 방식은 아래 "기업정보 확인 방식" 카드에서 기준일자·사업자번호를
+      // 받아 실행한다. ⛔ 여기서 기준일자를 임의로 정하지 않는다.
+      crNotice(item.policy_name + " 은(는) 아래 '기업정보 확인 방식' 카드에서 "
+               + "조회 기준일자와 사업자등록번호를 입력해 조회해 주세요.");
+      return;
+    }
+
+    var chosen = crPaths[item.policy_code];
+    if (!chosen) {
+      crError(item.policy_name + " 의 파일을 먼저 선택해 주세요.");
+      return;
+    }
+
+    var button = el("cr-save-" + item.policy_code);
+    button.disabled = true;
+    crNotice(item.policy_name + " 기업정보를 등록하는 중입니다...");
+
+    fetch("/companies/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ file_path: chosen.path, policy_code: item.policy_code })
+    })
+      .then(function (res) {
+        return res.json().then(function (body) {
+          if (!res.ok) { throw httpError(res); }
+          return body;
+        });
+      })
+      .then(function (body) {
+        if (!body.stored) {
+          crNotice("");
+          crError(item.policy_name + " — 저장하지 않았습니다: "
+                  + (body.file_errors || []).concat(body.issues || []).slice(0, 3).join(" / "));
+          return null;
+        }
+        crNotice(item.policy_name + " 등록 완료 — 기업 "
+                 + numberFormat(body.created + body.already_exists) + "건, 인증 "
+                 + numberFormat(body.certifications) + "건.");
+        // 등록 직후 지출과 맞춰 본다(기존 rematch 재사용, ⛔ 새 매칭 없음).
+        return fetch("/purchases/rematch", { method: "POST" })
+          .then(loadCompanyRegistration)
+          .then(load);
+      })
+      .catch(function (err) {
+        crNotice("");
+        crError(failureMessage(err, item.policy_name + " 기업정보를 등록하지 못했습니다"));
+      })
+      .finally(function () { button.disabled = false; });
+  }
+
+  function initCompanyRegistration() {
+    el("cr-reload").addEventListener("click", loadCompanyRegistration);
+    loadCompanyRegistration();
+  }
+
+  // ------------------------------------------------- 기업정보 확인 방식
+  //
+  // 사용자가 **파일 업로드 / 조회** 중 하나를 고른다.
+  //
+  // ⛔ 화면은 "어디서 가져올지" 만 고르게 한다. 가져온 뒤 저장되는 자리와
+  //    기업 매칭 · 인증 판정 · 실적 계산은 **두 방식이 완전히 같다.**
+  // ⛔ 화면이 조회 출처 목록을 들고 있지 않다. 서버(/companies/sources)가 준다.
+  // ⛔ 조회 기준일자에 오늘 날짜 등을 임의로 채우지 않는다.
+
+  var companyPath = null;
+
+  function companyNotice(message) {
+    var box = el("company-notice");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  function companyError(message) {
+    var box = el("company-error");
+    box.hidden = !message;
+    if (message) { text(box, message); }
+  }
+
+  /** 고른 확인 방식 — "FILE" 또는 "API". */
+  function companySource() {
+    return el("company-source-api").checked ? "API" : "FILE";
+  }
+
+  function renderCompanyResult(body) {
+    companyNotice("");
+    companyError("");
+
+    var summary = el("company-summary");
+    clear(summary);
+    summary.hidden = false;
+    summary.appendChild(uploadStat("건 처리", numberFormat(body.total)));
+    if (body.stored) {
+      summary.appendChild(uploadStat("건 신규 등록", numberFormat(body.created)));
+      summary.appendChild(uploadStat("건 이미 등록됨", numberFormat(body.already_exists)));
+      summary.appendChild(uploadStat("건 미등록", numberFormat(body.failed)));
+      summary.appendChild(uploadStat("건 인증 저장", numberFormat(body.certifications)));
+    } else {
+      // ⛔ "일부만 저장" 이 없다. 오류가 하나라도 있으면 아무것도 저장하지 않는다.
+      summary.appendChild(uploadStat("저장 안 함", "검증"));
+    }
+
+    var issues = el("company-issues");
+    clear(issues);
+    var lines = (body.file_errors || []).concat(body.issues || []);
+    (body.rows || []).forEach(function (row) {
+      (row.messages || []).forEach(function (message) {
+        lines.push(row.source_row + "행: " + message);
+      });
+    });
+    issues.hidden = lines.length === 0;
+    lines.forEach(function (line) {
+      issues.appendChild(make("div", "upload-file", line));
+    });
+
+    if (body.stored && body.created > 0) {
+      // 저장했으면 대시보드를 다시 그린다. 구매와의 연결은 기존
+      // POST /purchases/rematch 로 한다 — ⛔ 새 매칭을 만들지 않았다.
+      load();
+    }
+  }
+
+  function sendCompany(url, payload, buttons) {
+    buttons.forEach(function (button) { button.disabled = true; });
+    companyError("");
+    companyNotice("처리 중입니다...");
+
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (res) {
+        return res.json().then(function (body) {
+          if (!res.ok) {
+            var message = body.detail;
+            if (message && typeof message === "object") { message = message.message; }
+            throw new Error(message || ("HTTP " + res.status));
+          }
+          return body;
+        });
+      })
+      .then(renderCompanyResult)
+      .catch(function (err) {
+        companyNotice("");
+        companyError("처리에 실패했습니다: " + err.message);
+      })
+      .finally(function () {
+        buttons.forEach(function (button) { button.disabled = false; });
+      });
+  }
+
+  function loadCompanySources() {
+    return fetch("/companies/sources", { headers: { "Accept": "application/json" } })
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        var select = el("company-api-source");
+        clear(select);
+        (body.api_sources || []).forEach(function (item) {
+          var option = document.createElement("option");
+          option.value = item.source;
+          // 정책 이름은 등록된 값만 쓴다. 없으면 식별자를 그대로 보여준다.
+          option.textContent = item.policy_name
+            ? item.policy_name + " (" + item.source + ")"
+            : item.source;
+          select.appendChild(option);
+        });
+      })
+      .catch(function () {
+        companyError("조회 출처 목록을 불러오지 못했습니다.");
+      });
+  }
+
+  function initCompanySource() {
+    var filePanel = el("company-file-panel");
+    var apiPanel = el("company-api-panel");
+    var pick = el("company-pick");
+    var run = el("company-run");
+    var save = el("company-save");
+    var sync = el("company-sync");
+
+    function applyMethod() {
+      var api = companySource() === "API";
+      filePanel.hidden = api;
+      apiPanel.hidden = !api;
+    }
+
+    ["company-source-file", "company-source-api"].forEach(function (id) {
+      el(id).addEventListener("change", applyMethod);
+    });
+    applyMethod();
+    loadCompanySources();
+
+    sync.addEventListener("click", function () {
+      var stdrDate = el("company-api-date").value;
+      if (!stdrDate) {
+        // ⛔ 기준일자를 화면이 대신 정하지 않는다.
+        companyError("조회 기준일자를 입력해 주세요.");
+        return;
+      }
+      var numbers = el("company-api-numbers").value
+        .split(/[\s,]+/)
+        .filter(function (value) { return value !== ""; });
+      if (numbers.length === 0) {
+        companyError("조회할 사업자등록번호를 입력해 주세요.");
+        return;
+      }
+      sendCompany(
+        "/companies/sync",
+        {
+          source: el("company-api-source").value,
+          business_numbers: numbers,
+          stdr_date: stdrDate
+        },
+        [sync]
+      );
+    });
+
+    if (!desktop()) {
+      pick.disabled = true;
+      return;
+    }
+
+    pick.addEventListener("click", function () {
+      companyError("");
+      window.procurementApp.selectUploadFile().then(function (res) {
+        if (!res.selected) { return; }
+        companyPath = res.path;
+        text(el("company-file"), "선택한 파일: " + res.name);
+        run.disabled = false;
+        save.disabled = false;
+      });
+    });
+
+    run.addEventListener("click", function () {
+      if (!companyPath) { return; }
+      sendCompany("/companies/upload/validate", { file_path: companyPath }, [run, save]);
+    });
+
+    save.addEventListener("click", function () {
+      if (!companyPath) { return; }
+      sendCompany("/companies/upload", { file_path: companyPath }, [run, save]);
+    });
+  }
+
+  // ------------------------------------------------- 구매유형 검토 (DB-2)
+  //
+  // ⛔ 이 화면은 업무 판정을 하지 않는다.
+  //    - 선택지 목록은 백엔드가 준다 (/reviews/options)
+  //    - 후보와 점수는 백엔드가 준다. 여기서 계산하지 않는다
+  //    - 점수가 높아도 미리 선택해 두지 않는다 (사실상 자동 확정 방지)
+  //    - 원본은 읽기 전용으로만 그린다
+
+  var reviewOptions = [];
+
+  //: 실적 제외 사유 선택지와 안내 문구. ⛔ 화면이 만들지 않고 서버가 준다.
+  var exclusionReasons = [];
+  var vehicleLeaseNotice = "";
+  var reviewPicks = {};   // purchase_id -> 담당자가 지금 고른 값 (아직 확정 전)
+  var reviewPage = 1;     // 현재 페이지 (1부터)
+  var reviewItems = [];   // 지금 페이지에 그려진 항목
+  var reviewCursor = 0;   // 현재 검토 대상 (reviewItems 안의 위치)
+  var reviewPageInfo = null;
+  var reviewPendingCursor = null;  // 페이지를 넘어간 뒤 커서를 어디에 둘지
+  var reviewPendingFocus = false;  // 다시 그린 뒤 카드로 포커스를 옮길지
+  var reviewJustConfirmed = null;  // 방금 확정한 구매 ID — 다음 대상으로 넘어가려고
+  var lastProgress = null;         // 마지막으로 그린 진행률 payload (다시 그릴 때 재사용)
+
+  function reviewNotice(message) {
+    var node = el("review-notice");
+    text(node, message);
+    node.hidden = !message;
+  }
+
+  function reviewError(message) {
+    var node = el("review-error");
+    text(node, message);
+    node.hidden = !message;
+  }
+
+  /**
+   * 담당자명 표시. 값이 없으면 **비어 있다는 사실**을 그대로 보여준다.
+   *
+   * ⛔ DB 에 가짜 사용자명을 채우지 않는다. 기록에는 ``null`` 이 남고, 화면에서만
+   *    "담당자 미입력" 이라고 읽어 준다 — 나중에 계정 체계가 생겨도 과거 기록을
+   *    잘못 해석하지 않도록.
+   */
+  function actorName(value) {
+    if (value === null || value === undefined || String(value).trim() === "") {
+      return "담당자 미입력";
+    }
+    return String(value);
+  }
+
+  function reviewField(label, value) {
+    var wrap = make("div");
+    wrap.appendChild(make("span", "rv-key", label));
+    wrap.appendChild(make("span", null, value === null || value === "" ? "-" : String(value)));
+    return wrap;
+  }
+
+  /** 블록 제목 — 담당자가 "지금 보는 것이 원본인지 분석인지" 를 늘 알게 한다. */
+  function reviewHeading(label) {
+    return make("div", "rv-head", label);
+  }
+
+  /** 원본 블록 — 읽기 전용. 값을 바꾸는 요소를 만들지 않는다. */
+  function reviewSource(source) {
+    var box = make("div");
+    box.appendChild(reviewHeading("원본 (DB-1 · 수정되지 않습니다)"));
+    box.appendChild(make("div", "rv-desc", source.description || "(적요 없음)"));
+    var grid = make("div", "rv-src");
+    grid.appendChild(reviewField("신고기준일", source.issue_date));
+    grid.appendChild(reviewField("결의일자", source.resolution_date));
+    grid.appendChild(reviewField("거래처명", source.company_name));
+    grid.appendChild(reviewField("사업자번호", source.business_no));
+    // ⚠️ DB-1 은 공급가액과 세액을 따로 보관하지 않는다. amount 는 VAT 포함 총액이다.
+    grid.appendChild(reviewField("금액(VAT 포함)", numberFormat(source.amount) + "원"));
+    grid.appendChild(reviewField("예산과목", source.budget_account || "(공란)"));
+    box.appendChild(grid);
+    return box;
+  }
+
+  /**
+   * 적요 참고 근거 — **판정이 아니다.**
+   *
+   * 고객이 "이런 낱말을 보고 판단한다" 고 알려준 낱말이 이 적요에 들어 있는지
+   * 만 보여준다. 담당자가 매번 적요를 훑지 않아도 되게 하는 것이 전부다.
+   *
+   * ⛔ 유형을 말하지 않는다. ⛔ 점수·순위·추천을 만들지 않는다.
+   * ⛔ 여러 낱말이 나오면 **전부** 적는다 — 어느 것이 이기는지 정하지 않는다.
+   *    실데이터에 `나무심기 조성공사 공사 및 용역 준공금` 처럼 공사 낱말과
+   *    용역 낱말이 함께 든 적요가 실재한다.
+   * ⚠️ 분석 후보(rv-cand)와 **다른 블록**에 둔다. 같은 자리에 두면 "1순위" 로
+   *    읽힌다.
+   */
+  function descriptionHints(hints) {
+    if (!hints || !hints.length) { return null; }
+    var box = make("div", "rv-block");
+    box.appendChild(reviewHeading("참고 근거 · 자동 판정 아님"));
+    box.appendChild(make("div", "rv-key",
+      "고객이 판단할 때 본다고 알려준 낱말입니다. 구매유형을 정하지 않습니다."));
+    hints.forEach(function (hint) {
+      // 문구는 **서버가 준 것을 그대로** 쓴다 — 화면이 해석하지 않는다.
+      box.appendChild(make("div", "rv-why", "· " + hint.text));
+    });
+    return box;
+  }
+
+  /**
+   * 같은 업체의 과거 확정 이력 — **판정이 아니다.**
+   *
+   * 고객이 "실제 계약했던 업체명을 검색해서 공사 여부를 판단하기도 한다" 고
+   * 답했다(2026-08-25). 담당자가 지금 머릿속이나 다른 파일에서 하는 그 일을
+   * 화면으로 옮긴 것이다.
+   *
+   * 묶는 기준은 **사업자등록번호**다(2026-08-30 고객 확정 · STEP 64).
+   * 거래처명 표기가 갈려도 번호가 같으면 한 업체로 모인다.
+   *
+   * ⛔ "이 업체는 공사업체다" 같은 결론을 쓰지 않는다.
+   * ⛔ 상호에 `건설`·`토건` 이 들어가면 공사, 같은 규칙을 만들지 않는다.
+   * ⛔ 점수·순위·추천 유형을 만들지 않는다 — 서버가 그런 필드를 주지도 않는다.
+   * ⚠️ 이력이 한 유형뿐이어도 현재 건이 그 유형이라고 말하지 않는다.
+   */
+  function companyHistory(history) {
+    var box = make("div", "rv-block");
+    box.appendChild(reviewHeading("같은 업체 과거 확정 이력 · 자동 판정 아님"));
+    box.appendChild(make("div", "rv-key",
+      "사업자등록번호가 같은 건을 모아 셉니다. 거래처명 표기가 달라도 함께 "
+      + "잡힙니다. 현재 구매유형을 정하지 않습니다."));
+
+    if (!history || !history.total) {
+      box.appendChild(make("div", "rv-why", "과거 확정 이력이 없습니다."));
+      return box;
+    }
+    var line = make("div", "rv-src");
+    // 서버가 준 유형·건수를 그대로 편다. ⛔ 화면이 유형 목록을 갖지 않는다.
+    history.labels.forEach(function (item) {
+      line.appendChild(reviewField(item.label, numberFormat(item.count) + "건"));
+    });
+    box.appendChild(line);
+    box.appendChild(make("div", "rv-why",
+      "과거 확정 " + numberFormat(history.total) + "건"));
+    if (history.has_conflict) {
+      box.appendChild(make("div", "rv-tag rv-tag-warn",
+        "⚠️ 과거 확정 이력이 여러 유형으로 나뉩니다. 현재 구매의 유형을 "
+        + "자동으로 결정하지 않습니다."));
+    }
+    return box;
+  }
+
+  /**
+   * 분석 블록 — 후보와 점수를 보여줄 뿐, 고르지 않는다.
+   *
+   * 제목과 "확인 권장" 표시는 :func:`analysisFold` 의 펼침 줄로 옮겼다. 접어
+   * 둬도 놓치면 안 되는 표시이기 때문이며, 내용은 하나도 빠지지 않았다.
+   */
+  function reviewAnalysis(analysis) {
+    var box = make("div", "rv-block");
+    var meta = make("div", "rv-src");
+    meta.appendChild(reviewField("분석 방법",
+      analysis.analyzer_name
+        ? analysis.analyzer_name + " v" + (analysis.analyzer_version || "?")
+        : "(분석기 미선택)"));
+    meta.appendChild(reviewField("후보 개수", analysis.candidate_count));
+    // 점수 차이는 후보가 2개 이상일 때만 존재한다. 없으면 "0" 이 아니라 "-".
+    meta.appendChild(reviewField("1·2순위 점수차",
+      analysis.score_gap === null ? "-" : scorePercent(analysis.score_gap)));
+    box.appendChild(meta);
+
+    if (!analysis.candidates.length) {
+      box.appendChild(make("div", "rv-key",
+        analysis.note || "분석 후보가 없습니다. 원본을 보고 직접 선택하세요."));
+      return box;
+    }
+    analysis.candidates.forEach(function (candidate, index) {
+      var line = make("div", "rv-cand");
+      line.appendChild(make("span", "rv-key", (index + 1) + "순위"));
+      line.appendChild(make("span", null, candidate.label));
+      line.appendChild(make("span", "rv-score", scorePercent(candidate.score)));
+      if (candidate.evidence) {
+        line.appendChild(make("span", "rv-why", candidate.evidence));
+      }
+      box.appendChild(line);
+    });
+    return box;
+  }
+
+  /** 점수(0~1 문자열)를 백분율 표기로. */
+  function scorePercent(value) {
+    return Math.round(Number(value) * 100) + "%";
+  }
+
+  /**
+   * 같은 적요의 과거 확정 이력.
+   *
+   * ⛔ 추천이 아니다. 과거 기록을 세어 보여줄 뿐이며, 담당자의 선택을 미리
+   *    눌러 놓지 않는다.
+   */
+  function reviewPastLabels(past) {
+    var box = make("div", "rv-block");
+    // 제목과 "과거 판단이 갈렸다" 표시는 pastFold 의 펼침 줄로 옮겼다.
+    // ⑤ 신규 적요 — 오류가 아니다. 임의 유형을 붙이지 않는다.
+    if (!past.labels.length) {
+      box.appendChild(make("div", "rv-key",
+        "과거 확정 이력 없음 (처음 보는 적요)"));
+      return box;
+    }
+
+    var line = make("div", "rv-cand");
+    line.appendChild(make("span", "rv-key", "과거 " + past.total + "건"));
+    past.labels.forEach(function (label) {
+      line.appendChild(make("span", "rv-past", label.label + " " + label.count + "건"));
+    });
+    box.appendChild(line);
+
+    // 일관성 — 구조적 구분일 뿐 임계값으로 자른 등급이 아니다.
+    var summary = make("div", "rv-src");
+    summary.appendChild(reviewField("일관성", consistencyLabel(past.consistency)));
+    summary.appendChild(reviewField("최다 유형",
+      past.dominant_label ? past.dominant_label + " " + past.dominant_ratio + "%" : "-"));
+    summary.appendChild(reviewField("유형 수", past.type_count));
+    box.appendChild(summary);
+
+    if (past.differs_from_top_candidate) {
+      box.appendChild(make("span", "rv-tag",
+        "1순위 후보가 과거 최다 유형과 다릅니다"));
+    }
+    return box;
+  }
+
+  /**
+   * 접히는 블록. 기본은 **닫힘**이다.
+   *
+   * ``<details>`` / ``<summary>`` 를 쓴다 — 브라우저가 키보드 조작(Tab·Enter·
+   * Space)과 스크린리더의 펼침/접힘 안내를 이미 제공하므로, 직접 만든 토글보다
+   * 안전하고 코드도 적다.
+   *
+   * ⛔ **정보를 지우는 것이 아니다.** 늘 펼쳐져 있던 것을 필요할 때 펼쳐 보게
+   *    바꿀 뿐이며, 접힌 상태에서도 안에 무엇이 몇 건 있는지 제목에 적는다.
+   */
+  function foldable(body, title, hint, tag) {
+    var box = make("details", "rv-fold");
+    var head = make("summary");
+    head.appendChild(make("span", null, title));
+    if (hint) { head.appendChild(make("span", "rv-key", hint)); }
+    // 접힌 채로도 놓치면 안 되는 표시(확인 권장 등)는 제목에 함께 둔다.
+    if (tag) { head.appendChild(tag); }
+    box.appendChild(head);
+    box.appendChild(body);
+    return box;
+  }
+
+  /**
+   * 실적 산입 여부 — **구매유형과 다른 값이다.**
+   *
+   * 2026-08-31 고객 확정(§0.10). 빠지는 경로는 둘뿐이다.
+   *   ① 예산과목 규칙 6종 — 담당자가 되돌릴 수 없다(고객이 정한 규칙)
+   *   ② 담당자가 사유를 골라 확정한 건 — 되돌릴 수 있다
+   *
+   * ⛔ 적요 낱말로 자동 판정하지 않는다. 고객은 지출결의서·세금계산서·
+   *    품의서를 확인하고 판단하며, 그 자료는 이 시스템에 없다.
+   * ⛔ 유형 선택과 섞지 않는다 — 다른 줄, 다른 버튼이다.
+   */
+  function performanceBlock(item) {
+    var perf = item.performance;
+    var box = make("div", "rv-block");
+    box.appendChild(reviewHeading("실적 산입 여부 · 구매유형과 별개"));
+
+    var line = make("div", "rv-src");
+    line.appendChild(reviewField("실적", perf.status_label));
+    if (perf.reason_label) { line.appendChild(reviewField("제외 사유", perf.reason_label)); }
+    if (perf.excluded_by) { line.appendChild(reviewField("확정자", actorName(perf.excluded_by))); }
+    if (perf.excluded_at) { line.appendChild(reviewField("확정 시각", perf.excluded_at)); }
+    box.appendChild(line);
+
+    if (perf.by_budget_account_rule) {
+      box.appendChild(make("div", "rv-why",
+        "예산과목 규칙으로 실적에서 빠졌습니다. 화면에서 되돌릴 수 없습니다."));
+      return box;
+    }
+
+    var row = make("div", "rv-pick");
+    if (perf.status === "EXCLUDED") {
+      var back = make("button", "control", "실적 제외 되돌리기");
+      back.type = "button";
+      back.addEventListener("click", function () { includeInPerformance(item); });
+      row.appendChild(back);
+    } else {
+      // 사유를 고르지 않고는 뺄 수 없다 — 왜 뺐는지 없이 빼면 근거가 남지 않는다.
+      var select = make("select", "control-input");
+      select.setAttribute("aria-label", "실적 제외 사유");
+      (exclusionReasons || []).forEach(function (reason) {
+        var option = document.createElement("option");
+        option.value = reason.value;
+        option.textContent = reason.label;
+        select.appendChild(option);
+      });
+      var drop = make("button", "control", "실적 제외");
+      drop.type = "button";
+      drop.setAttribute("aria-label", "이 구매를 달성률 계산에서 제외");
+      drop.addEventListener("click", function () {
+        excludeFromPerformance(item, select.value);
+      });
+      row.appendChild(select);
+      row.appendChild(drop);
+    }
+    box.appendChild(row);
+
+    // ⛔ 자동 판정 기준이 아니다 — 사람에게 보여 주는 안내일 뿐이다.
+    if (vehicleLeaseNotice) { box.appendChild(make("div", "rv-why", vehicleLeaseNotice)); }
+    return box;
+  }
+
+  /**
+   * 지금 이 건의 상태 — 카드 맨 위에 늘 보인다.
+   *
+   * ⛔ 상태를 만들어 내지 않는다. 서버가 준 ``review`` 를 그대로 읽는다.
+   */
+  function reviewStateLine(review) {
+    var box = make("div", "rv-state");
+    box.appendChild(reviewField("검토 상태", review.status));
+    box.appendChild(reviewField("선택된 구매유형",
+      review.status === "CONFIRMED"
+        ? (review.final_purchase_type_label || "판단 보류")
+        : (review.final_purchase_type_label || "(아직 없음)")));
+    return box;
+  }
+
+  /** 일관성 코드를 담당자가 읽을 말로. ⛔ 등급이 아니라 사실 서술이다. */
+  function consistencyLabel(value) {
+    if (value === "SINGLE_TYPE") { return "한 유형으로만 확정됨"; }
+    if (value === "MIXED_TYPES") { return "여러 유형으로 갈림"; }
+    return "이력 없음";
+  }
+
+  /**
+   * 분석 결과 — **기본 접힘**.
+   *
+   * 접힌 줄에 후보 개수와 "확인 권장" 표시를 함께 두어, 펼치지 않아도 안에
+   * 무엇이 있는지 알 수 있게 한다. ⛔ 없는 값을 만들어 표시하지 않는다.
+   */
+  function analysisFold(analysis) {
+    var tag = analysis.is_ambiguous
+      ? make("span", "rv-tag rv-tag-warn", "확인 권장 — 후보가 갈립니다")
+      : null;
+    return foldable(reviewAnalysis(analysis), "분석 결과 (참고 · 확정이 아닙니다)",
+      "후보 " + analysis.candidate_count + "개", tag);
+  }
+
+  /** 같은 적요의 과거 확정 이력 — **기본 접힘**. */
+  function pastFold(past) {
+    var tag = past.has_conflict
+      ? make("span", "rv-tag rv-tag-warn",
+          "과거 판단이 갈렸던 적요입니다 (" + past.type_count + "개 유형)")
+      : null;
+    return foldable(reviewPastLabels(past), "같은 적요의 과거 확정 이력 (참고)",
+      past.labels.length ? "과거 " + past.total + "건" : "이력 없음", tag);
+  }
+
+  /** 확정 블록 — 담당자가 고르는 유일한 곳. */
+  function reviewPicker(item) {
+    var id = item.source.purchase_id;
+    var wrap = make("div", "rv-block");
+    wrap.appendChild(reviewHeading("담당자 결정 (여기서만 확정됩니다)"));
+    var box = make("div", "rv-pick");
+    var buttons = [];
+
+    reviewOptions.forEach(function (option) {
+      var button = make("button", "rv-opt", option.label);
+      button.type = "button";
+      button.dataset.value = option.value === null ? "" : option.value;
+      button.addEventListener("click", function () {
+        reviewPicks[id] = option.value;
+        buttons.forEach(function (other) { other.className = "rv-opt"; });
+        button.className = "rv-opt on";
+      });
+      buttons.push(button);
+      box.appendChild(button);
+    });
+
+    var note = make("input", "control control-input rv-note");
+    note.type = "text";
+    note.placeholder = "메모 (선택)";
+    note.value = item.review.review_note || "";
+
+    var confirm = make("button", "control", "확정");
+    confirm.type = "button";
+    confirm.addEventListener("click", function () {
+      if (!(id in reviewPicks)) {
+        reviewError("먼저 유형을 선택하세요. 모르겠으면 '판단 보류' 를 고르면 됩니다.");
+        return;
+      }
+      confirmReview(id, reviewPicks[id], note.value);
+    });
+
+    box.appendChild(note);
+    box.appendChild(confirm);
+    wrap.appendChild(box);
+    // ⛔ 어떤 버튼도 미리 눌려 있지 않다. 분석 점수가 아무리 높아도 마찬가지다.
+    wrap.appendChild(make("div", "rv-done",
+      "선택된 항목이 없습니다. 분석 결과는 참고이며, 확정은 담당자가 직접 고릅니다."));
+    return wrap;
+  }
+
+  /** 이력 보기 버튼 — 이 카드 한 건의 이력만 불러온다(목록을 다시 받지 않는다). */
+  function historyButton(purchaseId) {
+    var button = make("button", "control", "이력 보기");
+    button.type = "button";
+    button.setAttribute("aria-label", "구매 " + purchaseId + " 의 검토 변경 이력 보기");
+    button.addEventListener("click", function () {
+      rememberFocus();
+      openHistory(purchaseId);
+    });
+    return button;
+  }
+
+  function reviewCard(item, index) {
+    var card = make("div", "rv");
+    card.dataset.index = String(index);
+    card.dataset.purchaseId = String(item.source.purchase_id);
+    // 키보드로 행을 옮겨 다닐 수 있게 카드 자체를 포커스 대상으로 둔다.
+    // roving tabindex — 현재 행만 Tab 순서에 넣어, Tab 을 한 번 누를 때마다
+    // 수백 개 카드를 지나가지 않게 한다(실제 목록은 한 쪽에 최대 100건).
+    card.setAttribute("role", "group");
+    card.setAttribute("aria-label", "검토 대상 " + (index + 1) + "번째 · 구매 "
+      + item.source.purchase_id);
+    card.tabIndex = -1;
+    // ── A. 핵심 판단 정보 — 늘 보인다 ────────────────────────────────
+    //    적요·거래처·사업자번호·금액·결의일자·예산과목 → 상태와 선택된 유형
+    //    → 확정 조작. 담당자가 한 건을 판단하는 데 필요한 것이 맨 위에 모인다.
+    card.appendChild(reviewSource(item.source));
+    // 참고 근거는 **원본 바로 아래**에 둔다 — 원본을 읽을 때 함께 보는 단서이지
+    // 분석 결과가 아니기 때문이다. ⛔ 없으면 아무것도 그리지 않는다.
+    var hints = descriptionHints(item.description_hints);
+    if (hints) { card.appendChild(hints); }
+    // 거래처 이력도 원본을 읽을 때 함께 보는 단서다. ⛔ 적요 참고 근거와
+    // **다른 블록**에 둔다 — 섞이면 어느 축의 사실인지 알 수 없다.
+    card.appendChild(companyHistory(item.company_labels));
+    card.appendChild(reviewStateLine(item.review));
+    // ⛔ 구매유형과 **다른 블록**이다. 한 건이 "용역이면서 실적 제외" 일 수 있다.
+    card.appendChild(performanceBlock(item));
+
+    if (item.review.status === "CONFIRMED") {
+      var done = make("div", "rv-block");
+      done.appendChild(reviewHeading("담당자 결정"));
+      var line = make("div", "rv-src");
+      line.appendChild(reviewField("확정 유형",
+        item.review.final_purchase_type_label || "판단 보류"));
+      line.appendChild(reviewField("확정자", actorName(item.review.reviewed_by)));
+      line.appendChild(reviewField("확정 시각", item.review.reviewed_at));
+      line.appendChild(reviewField("메모", item.review.review_note));
+      done.appendChild(line);
+      card.appendChild(done);
+
+      // ⛔ 바로 되돌리지 않는다. 확인창을 먼저 띄운다.
+      var again = make("button", "control", "확정 취소");
+      again.type = "button";
+      again.setAttribute("aria-label", "확정 취소하고 다시 검토 상태로 되돌리기");
+      again.addEventListener("click", function () { askUndo(item); });
+      var row = make("div", "rv-pick");
+      row.appendChild(again);
+      row.appendChild(historyButton(item.source.purchase_id));
+      card.appendChild(row);
+    } else {
+      card.appendChild(reviewPicker(item));
+      var extra = make("div", "rv-pick");
+      extra.appendChild(historyButton(item.source.purchase_id));
+      card.appendChild(extra);
+    }
+
+    // ── B·C. 참고 정보 — 기본 접힘 ───────────────────────────────────
+    //    ⛔ 지우지 않는다. 펼치면 예전과 똑같은 내용이 그대로 나온다.
+    //    ⛔ 펼쳐도 서버에 아무것도 묻지 않는다 — 이미 받아 둔 값으로 그린다.
+    card.appendChild(analysisFold(item.analysis));
+    card.appendChild(pastFold(item.past_labels));
+    return card;
+  }
+
+  /**
+   * 진행률 두 가지를 나란히 보여준다.
+   *
+   * ⛔ 이 값은 **현황**이지 평가 기준이 아니다. 몇 % 면 위험/적정 같은 판정을
+   *    붙이지 않는다.
+   *
+   * 조건이 전체와 같으면 같은 숫자가 두 번 나오므로, 그때는 하나만 보여준다.
+   */
+  function renderProgress(payload) {
+    var node = el("review-progress");
+    lastProgress = payload;
+    clear(node);
+    var whole = payload.progress;
+    var condition = payload.condition;
+
+    var wholeText = "전체 확정 " + numberFormat(whole.confirmed)
+      + " / " + numberFormat(whole.total)
+      + " · 확인 권장 " + numberFormat(whole.ambiguous);
+    node.appendChild(make("div", null, wholeText));
+
+    if (!condition) { return; }
+    // 조건이 전체와 같으면 중복이므로 생략한다.
+    if (condition.total === whole.total && condition.confirmed === whole.confirmed) {
+      node.appendChild(make("div", "rv-cond", "현재 조건 = 전체"));
+    } else {
+      node.appendChild(make("div", "rv-cond",
+        "현재 조건 확정 " + numberFormat(condition.confirmed)
+        + " / " + numberFormat(condition.total)
+        + " (" + condition.ratio + "%)"));
+    }
+    appendPeriodNote(node);
+  }
+
+  /**
+   * 선택한 기간의 보조 정보.
+   *
+   * ⛔ 미적재 건수는 **분모 밖**에 따로 적는다. 검토 대상이 아니고, 어떻게
+   *    처리할지는 고객 확인 사항이다(Q5-8). "제외" 라고 쓰지 않는다.
+   */
+  function appendPeriodNote(node) {
+    var value = el("review-period").value;
+    if (!value) { appendWholeRejectionNote(node); return; }
+    var item = periodOptions.filter(function (option) {
+      return String(option.batch_id) === value;
+    })[0];
+    if (!item) { return; }
+    var text = "기간 " + item.label
+      + " · 검토 대상 " + numberFormat(item.stored) + "건"
+      + " · 확정 " + numberFormat(item.confirmed) + "건";
+    if (item.rejected) {
+      text += " · 미적재 " + numberFormat(item.rejected) + "건(검토 대상 밖)";
+    }
+    node.appendChild(make("div", "rv-cond", text));
+    appendReasonNote(node, item.rejected, item.reasons);
+  }
+
+  /**
+   * 기간을 고르지 않았을 때(= 전체)의 미적재 요약.
+   *
+   * ⚠️ 이미 받아 둔 ``/imports/trace`` 결과를 다시 쓴다 — 같은 숫자를 위해
+   *    API 를 또 부르지 않는다.
+   */
+  function appendWholeRejectionNote(node) {
+    if (!lastTrace) { return; }
+    appendReasonNote(node, lastTrace.rejected, lastTrace.reasons);
+  }
+
+  /**
+   * 미적재 **사유별 건수**. 서버가 준 사유 목록을 그대로 편다.
+   *
+   * 검토 화면(진행률·원본 대조)과 업로드 화면(업로드 결과·이력 상세)이 **모두
+   * 이 함수 하나**를 쓴다. 같은 사실을 화면마다 다른 말로 적으면, 담당자는 서로
+   * 다른 뜻으로 읽게 된다.
+   *
+   * ⛔ 사실 표시일 뿐이다. 어떤 사유도 "제외" · "검토 불필요" · "오류" 를 뜻하지
+   *    않는다 — 미적재 행의 처리 방식은 아직 확인 전이다(Q5-8).
+   * ⛔ 사유를 화면이 만들거나 골라 내지 않는다. 코드도 이름도 하드코딩하지
+   *    않으므로, 사유가 늘면 그대로 한 줄씩 늘어난다.
+   *
+   * @param emptyText 미적재가 0건일 때 쓸 문장. 없으면 "미적재 없음".
+   */
+  function appendReasonNote(node, rejected, reasons, emptyText) {
+    if (!rejected) {
+      node.appendChild(make("div", "rv-key", emptyText || "미적재 없음"));
+      return;
+    }
+    var box = make("div", "rv-key");
+    box.appendChild(make("div", null, "미적재 사유 (검토 대상 밖 · 처리 방식 확인 전)"));
+    (reasons || []).forEach(function (reason) {
+      box.appendChild(make("div", null,
+        "· " + reason.label + ": " + numberFormat(reason.count) + "건"));
+    });
+    node.appendChild(box);
+  }
+
+  function renderReviews(payload) {
+    var list = el("review-list");
+    clear(list);
+
+    reviewItems = payload.items;
+    renderProgress(payload);
+    renderPager(payload.page);
+
+    if (!payload.items.length) {
+      reviewCursor = -1;
+      list.appendChild(make("div", "empty", "현재 조건에 맞는 검토 대상이 없습니다."));
+      renderCursorInfo();
+      return;
+    }
+    payload.items.forEach(function (item, index) {
+      list.appendChild(reviewCard(item, index));
+    });
+
+    // 확정 등으로 목록이 줄어들면 커서가 끝을 넘어갈 수 있다.
+    if (reviewCursor >= payload.items.length) { reviewCursor = payload.items.length - 1; }
+    if (reviewCursor < 0) { reviewCursor = 0; }
+    advanceAfterConfirm();
+    focusCursor(false);
+    if (reviewPendingFocus) { reviewPendingFocus = false; focusCurrentCard(); }
+  }
+
+  /**
+   * 확정한 건이 그대로 남아 있으면 **한 칸 내려 놓는다**(연속 검토).
+   *
+   * 조건에 따라 확정한 건이 목록에서 빠지면 같은 자리에 다음 건이 들어오므로
+   * 아무것도 하지 않아도 된다. 남아 있을 때(예: 상태 = 전체)만 옮긴다.
+   *
+   * ⛔ **이동뿐이다.** 다음 건의 유형을 미리 고르거나 확정하지 않는다. 자동확정은
+   *    없다 — 확정은 담당자가 카드마다 직접 누른다.
+   */
+  function advanceAfterConfirm() {
+    if (reviewJustConfirmed === null) { return; }
+    var here = reviewItems[reviewCursor];
+    var stayed = here && String(here.source.purchase_id) === String(reviewJustConfirmed);
+    reviewJustConfirmed = null;
+    if (stayed && reviewCursor + 1 < reviewItems.length) { reviewCursor += 1; }
+  }
+
+  /**
+   * 현재 화면의 조건을 쿼리 문자열로 만든다.
+   *
+   * ⛔ 조건을 화면이 임의로 덧붙이지 않는다. 담당자가 고른 값 그대로다.
+   */
+  function reviewParams(withPage) {
+    var parts = [
+      "search=" + encodeURIComponent(el("review-search").value.trim()),
+      "status=" + encodeURIComponent(el("review-status").value),
+      "decision=" + encodeURIComponent(el("review-decision").value),
+      "history=" + encodeURIComponent(el("review-history").value),
+      "candidates=" + encodeURIComponent(el("review-candidates").value),
+      "sort=" + encodeURIComponent(el("review-sort").value),
+      "direction=" + encodeURIComponent(el("review-direction").value)
+    ];
+    // 정책을 고르지 않았으면 조건 자체를 보내지 않는다(= 전체).
+    if (el("review-policy").value) {
+      parts.push("policy=" + encodeURIComponent(el("review-policy").value));
+    }
+    // 기간을 고르지 않았으면 조건 자체를 보내지 않는다(= 전체).
+    if (el("review-period").value) {
+      parts.push("batch_id=" + encodeURIComponent(el("review-period").value));
+    }
+    if (withPage) {
+      parts.push("page=" + reviewPage);
+      parts.push("page_size=" + encodeURIComponent(el("review-page-size").value));
+    }
+    return parts.join("&");
+  }
+
+  function loadReviews(pushEntry) {
+    reviewError("");
+    syncUrl(pushEntry === true);
+    fetchJson("/reviews?" + reviewParams(true))
+      .then(function (payload) {
+        reviewPageInfo = payload.page || null;
+        if (reviewPendingCursor === "first") { reviewCursor = 0; }
+        if (reviewPendingCursor === "last") {
+          reviewCursor = Math.max(0, (payload.items || []).length - 1);
+        }
+        reviewPendingCursor = null;
+        renderReviews(payload);
+      })
+      .catch(function (error) { reviewError("검토 목록을 불러오지 못했습니다: " + error.message); });
+  }
+
+  /** 조건이 바뀌면 1페이지로 돌아간다 — 3페이지에 있던 채로 걸러지면 빈 화면이 된다. */
+  function reloadFromFirstPage() {
+    reviewPage = 1;
+    reviewCursor = 0;
+    loadReviews(true);
+  }
+
+  /** 타자 칠 때마다 요청하지 않도록 잠시 기다린다. */
+  function debounce(fn, delay) {
+    var timer = null;
+    return function () {
+      if (timer) { clearTimeout(timer); }
+      timer = setTimeout(function () { timer = null; fn(); }, delay);
+    };
+  }
+
+  function renderPager(page) {
+    var info = el("review-page-info");
+    var previous = el("review-prev");
+    var next = el("review-next");
+    if (!page) {
+      text(info, "");
+      previous.disabled = next.disabled = true;
+      return;
+    }
+    text(info, page.total === 0
+      ? "조건에 맞는 건이 없습니다"
+      : page.page + " / " + page.total_pages + " 쪽 · 전체 "
+        + numberFormat(page.total) + "건");
+    previous.disabled = !page.has_previous;
+    next.disabled = !page.has_next;
+  }
+
+  /** CSV 는 화면과 **같은 조건**으로 내려받는다(페이지 조건은 빼고 전부). */
+  function exportReviews() {
+    window.location.href = "/reviews/export.csv?" + reviewParams(false);
+  }
+
+  /**
+   * 변경 이력 CSV — **지금 보고 있는 기간**의 이력만 내려받는다.
+   *
+   * ⚠️ 기간 외의 조건(검색·상태·정렬)은 보내지 않는다. 이력은 "그 구매에 무슨
+   *    일이 있었는가" 의 기록이라, 지금 상태로 걸러 내면 취소된 기록처럼 **조건에
+   *    맞지 않게 된 과거**가 통째로 빠진다.
+   * ⛔ 화면에 이미 있는 값을 그대로 쓴다 — 누르기 전에 아무것도 다시 받지 않는다.
+   */
+  function exportReviewHistory() {
+    var period = el("review-period").value;
+    window.location.href = "/reviews/history.csv"
+      + (period ? "?batch_id=" + encodeURIComponent(period) : "");
+  }
+
+  // ------------------------------------------------------------------
+  // 연속 검토 — 현재 대상 커서
+  //
+  // ⛔ "먼저 볼 것" 을 시스템이 고르지 않는다. 지금 화면에 보이는 **정렬
+  //    순서 그대로** 다음 칸으로 옮길 뿐이다.
+  // ------------------------------------------------------------------
+
+  /**
+   * 현재 대상 카드를 강조하고 화면에 보이게 한다.
+   *
+   * ⛔ **커서는 화면 상태일 뿐이다.** DB 에 저장하지 않고, URL 에도 넣지 않으며,
+   *    옮긴다고 해서 서버에 아무것도 보내지 않는다.
+   */
+  function focusCursor(scroll) {
+    var cards = el("review-list").querySelectorAll(".rv");
+    for (var i = 0; i < cards.length; i += 1) {
+      var on = i === reviewCursor;
+      cards[i].classList.toggle("rv-current", on);
+      cards[i].tabIndex = on ? 0 : -1;
+      if (on) {
+        cards[i].setAttribute("aria-current", "true");
+      } else {
+        cards[i].removeAttribute("aria-current");
+      }
+    }
+    if (scroll && cards[reviewCursor]) {
+      cards[reviewCursor].scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    renderCursorInfo();
+  }
+
+  /** 현재 카드 요소. 없으면 ``null``. */
+  function currentCard() {
+    return el("review-list").querySelectorAll(".rv")[reviewCursor] || null;
+  }
+
+  /**
+   * 현재 카드로 포커스를 옮긴다 — 키보드로 이동했을 때만 부른다.
+   *
+   * 마우스로 조건을 바꿔 목록을 다시 그릴 때까지 포커스를 빼앗으면, 담당자가
+   * 조작하던 자리를 잃는다. 그래서 :func:`focusCursor` 와 나눠 두었다.
+   */
+  function focusCurrentCard() {
+    var card = currentCard();
+    if (card) { card.focus(); }
+  }
+
+  /** 카드 안에서 담당자가 조작할 수 있는 요소들(Tab 순서 그대로). */
+  function cardControls(card) {
+    return card.querySelectorAll("button, input, select, textarea, [href]");
+  }
+
+  function renderCursorInfo() {
+    var node = el("review-cursor-info");
+    if (!reviewItems.length) { text(node, ""); return; }
+    text(node, "현재 " + (reviewCursor + 1) + " / " + reviewItems.length + " 번째");
+  }
+
+  /**
+   * 다음(또는 이전) 검토 대상으로 옮긴다.
+   *
+   * 페이지 끝을 넘어가면 다음 페이지를 불러온다. 조건(검색·필터·정렬·페이지
+   * 크기)은 **그대로 유지**된다.
+   */
+  function moveCursor(step, takeFocus) {
+    if (!reviewItems.length) { return; }
+    var next = reviewCursor + step;
+
+    if (next >= reviewItems.length) {
+      if (reviewPageInfo && reviewPageInfo.has_next) {
+        reviewPage += 1;
+        reviewPendingCursor = "first";
+        reviewPendingFocus = takeFocus === true;
+        loadReviews();
+      } else {
+        reviewNotice("마지막 검토 대상입니다. 조건을 바꾸거나 목록을 다시 확인하세요.");
+      }
+      return;
+    }
+    if (next < 0) {
+      if (reviewPageInfo && reviewPageInfo.has_previous) {
+        reviewPage -= 1;
+        reviewPendingCursor = "last";
+        reviewPendingFocus = takeFocus === true;
+        loadReviews();
+      } else {
+        reviewNotice("첫 검토 대상입니다.");
+      }
+      return;
+    }
+    reviewCursor = next;
+    focusCursor(true);
+    // ⛔ 서버에 아무것도 보내지 않는다 — 같은 페이지 안의 자리 이동일 뿐이다.
+    if (takeFocus === true) { focusCurrentCard(); }
+  }
+
+  // ------------------------------------------------------------------
+  // 변경 이력
+  // ------------------------------------------------------------------
+
+  /** 유형 코드를 한글 라벨로. 선택지 목록은 백엔드가 준 것을 그대로 쓴다. */
+  function typeLabel(code) {
+    if (!code) { return "-"; }
+    for (var i = 0; i < reviewOptions.length; i += 1) {
+      if (reviewOptions[i].value === code) { return reviewOptions[i].label; }
+    }
+    return code;
+  }
+
+  // ------------------------------------------------------------------
+  // 원본 → 검토 대상 대조 (STEP 12)
+  //
+  // ⛔ "제외되었습니다" · "검토할 필요가 없습니다" 라고 쓰지 않는다. 금액이
+  //    0 이하인 행을 어떻게 처리할지는 **고객 확인 대기**(Q5-8)이므로, 지금
+  //    말할 수 있는 것은 "원본에는 있는데 검토 대상에는 없다" 는 사실뿐이다.
+  // ------------------------------------------------------------------
+
+  /** 대조 결과를 불러와 안내줄을 그린다. 실패해도 검토 화면을 막지 않는다. */
+  function loadTrace() {
+    return fetchJson("/imports/trace").then(function (trace) {
+      lastTrace = trace;
+      renderTrace(trace);
+      // 목록이 대조 결과보다 먼저 그려졌다면, 전체 기준 미적재 요약이 빠진 채로
+      // 남아 있다. ⛔ 목록을 다시 받지 않고 **이미 받은 값으로** 다시 그린다.
+      if (lastProgress) { renderProgress(lastProgress); }
+    }).catch(function () {
+      // 대조 정보를 못 받아도 검토는 계속할 수 있어야 한다.
+      el("review-trace").hidden = true;
+      el("review-trace-rows").hidden = true;
+    });
+  }
+
+  function renderTrace(trace) {
+    var box = el("review-trace");
+    var rows = el("review-trace-rows");
+    clear(box);
+    clear(rows);
+
+    if (trace.all_visible) {
+      // 모두 보이는 상태에서는 굳이 자리를 차지하지 않는다.
+      box.hidden = true;
+      rows.hidden = true;
+      return;
+    }
+
+    box.appendChild(make("div", null, trace.notice));
+    // 업로드 화면·진행률과 같은 함수를 쓴다 — 같은 사실은 같은 말로 적는다.
+    appendReasonNote(box, trace.rejected, trace.reasons);
+    box.hidden = false;
+
+    if (!trace.rows || !trace.rows.length) { rows.hidden = true; return; }
+    renderRejectionTable(rows, trace);
+    rows.hidden = false;
+  }
+
+  /**
+   * 미적재 행 표. 검토 화면과 업로드 화면이 **같은 것**을 쓴다.
+   *
+   * ``payload`` 는 두 가지 모양을 받는다 — ``/imports/trace`` 의
+   * ``{rejected, rows, truncated}`` 와 ``/imports/rejections`` 의
+   * ``{total, items}``. 담당자가 보는 표는 하나뿐이어야 하기 때문이다.
+   */
+  function renderRejectionTable(box, payload) {
+    clear(box);
+    var rows = payload.items || payload.rows || [];
+    var total = payload.total !== undefined ? payload.total : payload.rejected;
+    box.appendChild(make("div", "rv-key", "미적재 행 " + numberFormat(total) + "건"));
+    if (!rows.length) {
+      box.appendChild(make("div", "rv-key", "표시할 행이 없습니다."));
+      return;
+    }
+    // `rv-reject` 는 좁은 화면 규칙이 **이 표만** 고르기 위한 이름이다. 미적재
+    // 표는 업로드 화면과 검토 화면 두 곳에 같은 함수로 그려지므로, 상자 id 로
+    // 고르면 한쪽만 바뀌어 같은 표가 화면마다 달라진다.
+    var table = make("table", "rv-reject");
+    var head = make("tr");
+    // 원본 행 번호는 **파일마다 1부터** 다시 시작하므로, 어느 업로드의 몇 행인지
+    // 함께 보여야 담당자가 원본을 찾을 수 있다.
+    ["업로드", "원본 행", "적요", "거래처", "금액", "예산과목", "사유"].forEach(function (label) {
+      head.appendChild(make("th", null, label));
+    });
+    table.appendChild(head);
+    rows.forEach(function (row) {
+      var tr = make("tr");
+      tr.appendChild(make("td", "num", row.batch_id === null ? "-" : "#" + row.batch_id));
+      tr.appendChild(make("td", "num", String(row.row_number)));
+      // 긴 자유 텍스트는 줄바꿈을 허용한다(내용은 그대로 다 보인다).
+      tr.appendChild(make("td", "rv-text", row.description || "-"));
+      tr.appendChild(make("td", "rv-text", row.company_name || "-"));
+      tr.appendChild(make("td", "num",
+        row.amount === null ? "-" : Number(row.amount).toLocaleString()));
+      // 예산과목도 길이가 제각각인 자유 텍스트다(`일반운영비-공공요금및제세-
+      // 시설장비유지비` 처럼 40자를 넘기도 한다). 적요·거래처·사유와 **같은
+      // 규칙**을 쓴다 — 규칙을 새로 만들지 않는다.
+      // ⚠️ 실측: 이 값이 비어 있지 않으면 이 열 하나가 272px 을 차지해 768px
+      //    화면에서도 표가 상자를 넘겼다(751 > 690). 같은 규칙을 주면 690 이다.
+      tr.appendChild(make("td", "rv-text", row.budget_account || "-"));
+      tr.appendChild(make("td", "rv-text", row.reason_label));
+      table.appendChild(tr);
+    });
+    box.appendChild(table);
+    if (payload.truncated) {
+      // ⛔ 조용히 자르지 않는다 — 자른 사실을 말한다.
+      box.appendChild(make("div", "rv-key",
+        "목록이 길어 일부만 표시했습니다. 전체 건수는 위 안내를 보세요."));
+    }
+  }
+
+  /** 이력 한 줄. ⛔ 과거 값이지 현재 확정값이 아니라는 것을 라벨로 못 박는다. */
+  function historyRow(entry) {
+    var row = make("div", "rv-hist-row");
+    row.appendChild(make("span", "rv-hist-when", entry.changed_at || "-"));
+    row.appendChild(make("span", "rv-hist-act", entry.action));
+    row.appendChild(make("span", null, actorName(entry.changed_by)));
+    var change = typeLabel(entry.before_type) + " → " + typeLabel(entry.after_type);
+    row.appendChild(make("span", "rv-hist-type", change));
+    if (entry.note) { row.appendChild(make("span", "rv-why", entry.note)); }
+    return row;
+  }
+
+  function openHistory(purchaseId) {
+    reviewError("");
+    var current = null;
+    for (var i = 0; i < reviewItems.length; i += 1) {
+      if (reviewItems[i].source.purchase_id === purchaseId) { current = reviewItems[i]; }
+    }
+    // 이력만 불러온다 — 목록 전체를 다시 가져오지 않는다.
+    fetchJson("/reviews/" + encodeURIComponent(purchaseId) + "/history")
+      .then(function (payload) { showHistory(purchaseId, current, payload.items); })
+      .catch(function (error) { reviewError("이력을 불러오지 못했습니다: " + error.message); });
+  }
+
+  function showHistory(purchaseId, current, entries) {
+    // ⚠️ id 를 "review-history" 로 두면 과거 이력 **필터 select** 와 겹친다.
+    var box = el("review-history-box");
+    clear(box);
+
+    var head = make("div", "rv-modal-head");
+    head.appendChild(make("h3", "card-title", "검토 변경 이력 · 구매 " + purchaseId));
+    var close = make("button", "control", "닫기");
+    close.type = "button";
+    close.addEventListener("click", closeHistory);
+    head.appendChild(close);
+    box.appendChild(head);
+
+    // ⛔ 현재 확정값을 **맨 위에 따로** 보여준다. 아래 이력의 과거 값과
+    //    섞이면 어느 것이 지금 값인지 알 수 없다.
+    if (current) {
+      var now = make("div", "rv-block");
+      now.appendChild(reviewHeading("지금 값 (현재 상태 기준)"));
+      var line = make("div", "rv-src");
+      line.appendChild(reviewField("상태", current.review.status));
+      line.appendChild(reviewField("확정 유형",
+        current.review.status === "PENDING"
+          ? "(미확정)"
+          : (current.review.final_purchase_type_label || "판단 보류")));
+      line.appendChild(reviewField("확정자", actorName(current.review.reviewed_by)));
+      now.appendChild(line);
+      box.appendChild(now);
+    }
+
+    var list = make("div", "rv-block");
+    list.appendChild(reviewHeading("변경 이력 (과거 기록 · 시간순)"));
+    if (!entries.length) {
+      list.appendChild(make("div", "rv-key", "변경 이력이 없습니다."));
+    } else {
+      entries.forEach(function (entry) { list.appendChild(historyRow(entry)); });
+    }
+    box.appendChild(list);
+
+    el("review-modal").hidden = false;
+    focusInside(box);
+  }
+
+  function closeHistory() {
+    el("review-modal").hidden = true;
+    restoreFocus();
+  }
+
+  function historyIsOpen() {
+    return !el("review-modal").hidden;
+  }
+
+  // ------------------------------------------------------------------
+  // 모달 포커스 — 열면 안으로, 닫으면 원래 자리로
+  // ------------------------------------------------------------------
+
+  /** 모달을 열기 전에 포커스가 있던 요소. 닫을 때 여기로 되돌린다. */
+  var focusBeforeModal = null;
+
+  function rememberFocus() {
+    focusBeforeModal = document.activeElement;
+  }
+
+  function restoreFocus() {
+    if (focusBeforeModal && focusBeforeModal.focus) { focusBeforeModal.focus(); }
+    focusBeforeModal = null;
+  }
+
+  /** 모달 안 첫 버튼으로 포커스를 옮긴다 — 키보드 사용자가 갇히지 않도록. */
+  function focusInside(box) {
+    var target = box.querySelector("button, [href], input, select, textarea");
+    if (target) { target.focus(); }
+  }
+
+  // ------------------------------------------------------------------
+  // 확정 취소 (Undo) — 상태만 REOPENED 로. ⛔ 값을 지우지 않는다.
+  // ------------------------------------------------------------------
+
+  /** 지금 요청 중인 확정 취소 대상. 같은 건에 두 번 보내지 않는다. */
+  var undoInFlight = {};
+
+  /**
+   * 확정 취소 확인창.
+   *
+   * ⛔ 버튼을 누르자마자 상태를 바꾸지 않는다. 연속 검토 중 잘못 눌러 확정이
+   *    풀리면 담당자가 알아채기 어렵기 때문이다.
+   * ⛔ 여기서 **새 유형을 고르지 않는다.** 되돌리기만 하고, 다시 고르는 것은
+   *    되돌린 뒤 평소대로 한다.
+   */
+  function askUndo(item) {
+    rememberFocus();
+    var box = el("review-undo-box");
+    clear(box);
+
+    var head = make("div", "rv-modal-head");
+    head.appendChild(make("h3", "card-title", "확정을 취소할까요?"));
+    box.appendChild(head);
+
+    box.appendChild(make("p", "card-sub",
+      "다시 검토 상태로 되돌립니다. 지금까지의 확정 기록은 지워지지 않고 이력에 남습니다."));
+
+    // 현재 확정값은 **참고용**으로만 보여준다.
+    var info = make("div", "rv-src");
+    info.appendChild(reviewField("현재 확정 유형",
+      item.review.final_purchase_type_label || "판단 보류"));
+    info.appendChild(reviewField("확정자", actorName(item.review.reviewed_by)));
+    info.appendChild(reviewField("확정일시", item.review.reviewed_at));
+    box.appendChild(info);
+
+    var actions = make("div", "rv-pick");
+    var cancel = make("button", "control", "취소");
+    cancel.type = "button";
+    cancel.addEventListener("click", closeUndo);
+
+    var ok = make("button", "control rv-danger", "확정 취소");
+    ok.type = "button";
+    ok.addEventListener("click", function () {
+      runUndo(item.source.purchase_id, ok);
+    });
+
+    actions.appendChild(cancel);
+    actions.appendChild(ok);
+    box.appendChild(actions);
+
+    el("review-undo-modal").hidden = false;
+    cancel.focus();   // 기본 포커스는 **안전한 쪽**(취소)에 둔다
+  }
+
+  function closeUndo() {
+    el("review-undo-modal").hidden = true;
+    restoreFocus();
+  }
+
+  function undoIsOpen() {
+    return !el("review-undo-modal").hidden;
+  }
+
+  /** 확인 후에만 요청을 보낸다. 같은 건에 두 번 보내지 않는다. */
+  function runUndo(purchaseId, button) {
+    if (undoInFlight[purchaseId]) { return; }
+    undoInFlight[purchaseId] = true;
+    button.disabled = true;
+    reviewError("");
+
+    fetch("/reviews/" + encodeURIComponent(purchaseId) + "/reopen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reopened_by: el("review-actor").value || null })
+    }).then(function (response) {
+      if (!response.ok) { throw httpError(response); }
+      closeUndo();
+      reviewNotice("확정을 취소했습니다. 이전 확정 기록은 이력에 남아 있습니다.");
+      // 기간별 확정 건수가 바뀌었다. 목록보다 **먼저** 받아야 진행률 보조
+      // 정보가 갱신된 숫자로 그려진다.
+      refreshPeriods().then(function () { loadReviews(); });
+    }).catch(function (error) {
+      // ⛔ 실패했으면 성공처럼 보이면 안 된다 — 화면 상태를 그대로 둔다.
+      reviewError(failureMessage(error, "확정을 취소하지 못했습니다"));
+      button.disabled = false;
+    }).finally(function () {
+      delete undoInFlight[purchaseId];
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // 오류 안내
+  // ------------------------------------------------------------------
+
+  /** 응답 상태를 담은 오류 객체. */
+  function httpError(response) {
+    var error = new Error("HTTP " + response.status);
+    error.status = response.status;
+    return error;
+  }
+
+  /**
+   * 실패 사유를 담당자가 읽을 말로 바꾼다.
+   *
+   * ⛔ 자동 재시도를 하지 않는다. 확정·취소는 상태를 바꾸는 요청이라, 조용히
+   *    다시 보내면 담당자가 모르는 사이에 두 번 처리될 수 있다. 다시 시도할지는
+   *    사람이 정한다.
+   */
+  function failureMessage(error, what) {
+    if (error && error.status === 409) {
+      return what + ": 이미 처리된 상태입니다. 새로고침 후 확인해 주세요.";
+    }
+    if (error && error.status === 404) {
+      return what + ": 대상을 찾을 수 없습니다. 목록을 새로고침해 주세요.";
+    }
+    if (error && error.status) {
+      return what + " (서버 오류 " + error.status + "). 저장되지 않았습니다. 다시 시도해 주세요.";
+    }
+    // status 가 없으면 요청 자체가 서버에 닿지 못한 것이다.
+    return "서버와 연결할 수 없습니다. 네트워크 연결을 확인한 후 다시 시도해 주세요.";
+  }
+
+  // ------------------------------------------------------------------
+  // URL 상태 — 새로고침·뒤로가기·공유
+  // ------------------------------------------------------------------
+
+  /** 현재 조건을 URL 에 반영한다. 조건 변경은 history 에 쌓고, 그 외는 교체한다. */
+  function syncUrl(pushEntry) {
+    var url = window.location.pathname + "?" + reviewParams(true);
+    if (pushEntry) {
+      window.history.pushState(null, "", url);
+    } else {
+      window.history.replaceState(null, "", url);
+    }
+  }
+
+  /** URL 의 조건을 화면 입력에 되돌려 놓는다. */
+  function applyUrl() {
+    var params = new URLSearchParams(window.location.search);
+    var dropped = [];
+    var pairs = [
+      ["policy", "review-policy"],
+      ["search", "review-search"], ["status", "review-status"],
+      ["decision", "review-decision"], ["history", "review-history"],
+      ["candidates", "review-candidates"], ["sort", "review-sort"],
+      ["direction", "review-direction"], ["page_size", "review-page-size"],
+      // 기간은 선택지가 서버에서 온 뒤라야 되돌릴 수 있다 — initReview 가
+      // loadPeriods() 를 먼저 기다린다.
+      ["batch_id", "review-period"]
+    ];
+    pairs.forEach(function (pair) {
+      var value = params.get(pair[0]);
+      if (value === null) { return; }
+      var node = el(pair[1]);
+      if (node.tagName === "SELECT") {
+        // 허용되지 않는 값이면 무시한다 — 서버가 422 를 주기 전에 화면이 막는다.
+        for (var i = 0; i < node.options.length; i += 1) {
+          if (node.options[i].value === value) { node.value = value; return; }
+        }
+        // ⛔ 조용히 넘기지 않는다. 담당자가 URL 을 고쳤거나 오래된 링크를
+        //    열었을 수 있으므로, 무엇이 무시되었는지 알려 준다.
+        dropped.push(pair[0]);
+        return;
+      }
+      node.value = value;
+    });
+    if (dropped.length) {
+      reviewNotice("URL 의 조건 일부를 쓸 수 없어 무시했습니다: " + dropped.join(", ")
+        + ". 나머지 조건으로 보여 줍니다.");
+    }
+    var page = parseInt(params.get("page") || "1", 10);
+    reviewPage = isNaN(page) || page < 1 ? 1 : page;
+  }
+
+  /**
+   * 실적 제외 확정.
+   *
+   * ⛔ 구매유형을 건드리지 않는다 — 다른 요청, 다른 필드다.
+   * ⛔ 행을 지우지 않는다. 원본은 남고 계산에서만 빠지며, 이 화면에도 계속
+   *    보인다(그래야 되돌릴 수 있다).
+   */
+  function excludeFromPerformance(item, reason) {
+    reviewError("");
+    var actor = el("review-actor").value;
+    fetch("/reviews/" + encodeURIComponent(item.source.purchase_id) + "/performance-exclusion", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: reason, excluded_by: actor || null, note: null })
+    }).then(function (response) {
+      if (!response.ok) { throw httpError(response); }
+      reviewNotice("실적에서 제외했습니다. 원본 데이터는 그대로 남습니다.");
+      return refreshPeriods().then(function () { loadReviews(); });
+    }).catch(function (error) {
+      reviewError(failureMessage(error, "실적에서 제외하지 못했습니다"));
+    });
+  }
+
+  /** 실적 제외 되돌리기. ⛔ 제외했던 이력은 지워지지 않는다. */
+  function includeInPerformance(item) {
+    reviewError("");
+    var actor = el("review-actor").value;
+    fetch("/reviews/" + encodeURIComponent(item.source.purchase_id) + "/performance-exclusion", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ changed_by: actor || null, note: null })
+    }).then(function (response) {
+      if (!response.ok) { throw httpError(response); }
+      reviewNotice("실적 제외를 되돌렸습니다. 제외했던 이력은 그대로 남습니다.");
+      return refreshPeriods().then(function () { loadReviews(); });
+    }).catch(function (error) {
+      reviewError(failureMessage(error, "되돌리지 못했습니다"));
+    });
+  }
+
+  function confirmReview(purchaseId, value, note) {
+    reviewError("");
+    var actor = el("review-actor").value;
+    fetch("/reviews/" + encodeURIComponent(purchaseId), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        final_purchase_type: value === "" ? null : value,
+        reviewed_by: actor || null,
+        review_note: note || null
+      })
+    }).then(function (response) {
+      if (!response.ok) { throw httpError(response); }
+      delete reviewPicks[purchaseId];
+      reviewJustConfirmed = purchaseId;
+      reviewNotice("확정했습니다. 원본 데이터는 변경되지 않았습니다.");
+      // 기간별 확정 건수가 바뀌었다. 목록보다 **먼저** 받아야 진행률 보조
+      // 정보가 갱신된 숫자로 그려진다.
+      // 확정한 건이 현재 조건에서 빠지면 같은 자리에 다음 건이 들어온다.
+      // ⛔ 다음 건의 유형을 미리 고르거나 확정하지 않는다 — 이동만 한다.
+      refreshPeriods().then(function () { loadReviews(); });
+    }).catch(function (error) {
+      // ⛔ 실패했으면 **다음 건으로 넘어가지 않는다.** 고른 값도 남겨 둬서
+      //    담당자가 그대로 다시 누를 수 있게 한다.
+      reviewError(failureMessage(error, "확정하지 못했습니다"));
+    });
+  }
+
+  // STEP 10 에서 확인창 없이 바로 되돌리던 옛 ``reopenReview`` 를 지웠다.
+  // 확인창을 거치지 않는 경로가 남아 있으면 실수로 확정이 풀릴 수 있다.
+  // 되돌리기는 askUndo → runUndo 한 갈래뿐이다.
+
+  // ------------------------------------------------------------------
+  // 키보드 단축키
+  //
+  // ⛔ **확정 단축키를 만들지 않았다.** Enter 나 숫자 키로 확정하면 실수로
+  //    담당자가 보지 않은 건이 확정된다. 이동만 단축키로 제공하고, 확정은
+  //    반드시 버튼을 누르게 한다. Enter 는 카드 **안으로 들어갈** 뿐이다.
+  // ------------------------------------------------------------------
+
+  /** 지금 글자를 입력하는 중인가 — 그렇다면 단축키를 가로채면 안 된다. */
+  function isTyping(target) {
+    if (!target) { return false; }
+    var tag = (target.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") { return true; }
+    return target.isContentEditable === true;
+  }
+
+  /** 지금 포커스가 검토 목록 안에 있는가. */
+  function insideList(target) {
+    var list = el("review-list");
+    return !!(target && list && list.contains(target));
+  }
+
+  /** 포커스가 카드 자체(안의 컨트롤이 아니라)에 있는가. */
+  function onCard(target) {
+    return !!(target && target.classList && target.classList.contains("rv"));
+  }
+
+  /**
+   * 모달 안에서 Tab 이 바깥으로 새지 않게 한다.
+   *
+   * 확인창 뒤의 목록으로 포커스가 빠지면, 담당자는 확인창이 떠 있는데도
+   * 보이지 않는 버튼을 누르게 된다.
+   */
+  function trapTab(event, modalId) {
+    var focusable = el(modalId).querySelectorAll("button, input, select, textarea, [href]");
+    if (!focusable.length) { return; }
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      last.focus();
+      event.preventDefault();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      first.focus();
+      event.preventDefault();
+    }
+  }
+
+  function handleReviewKey(event) {
+    // 브라우저·OS 단축키를 빼앗지 않는다.
+    if (event.ctrlKey || event.metaKey || event.altKey) { return; }
+
+    if (event.key === "Escape" && undoIsOpen()) {
+      closeUndo();
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "Escape" && historyIsOpen()) {
+      closeHistory();
+      event.preventDefault();
+      return;
+    }
+    // 모달이 열려 있으면 뒤쪽 목록을 움직이지 않는다.
+    if (undoIsOpen()) {
+      if (event.key === "Tab") { trapTab(event, "review-undo-modal"); }
+      return;
+    }
+    if (historyIsOpen()) {
+      if (event.key === "Tab") { trapTab(event, "review-modal"); }
+      return;
+    }
+    if (isTyping(event.target)) { return; }
+
+    // ↑/↓ 는 **검토 목록 안에 포커스가 있을 때만** 가로챈다. 화면 아무 데서나
+    // 빼앗으면 담당자가 방향키로 화면을 내려 보는 평소 동작이 사라진다.
+    // 입력창·목록상자 안에서는 위 `isTyping` 에서 이미 걸러진다.
+    if (event.key === "ArrowDown" && insideList(event.target)) {
+      moveCursor(1, true);
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "ArrowUp" && insideList(event.target)) {
+      moveCursor(-1, true);
+      event.preventDefault();
+      return;
+    }
+    // Enter — 카드에서 **그 카드 안의 첫 조작 요소**로 들어간다. 여기서 확정이
+    // 일어나지 않는다. 버튼 위에서는 브라우저 기본 동작(누르기)을 그대로 둔다.
+    if (event.key === "Enter" && onCard(event.target)) {
+      var controls = cardControls(event.target);
+      if (controls.length) { controls[0].focus(); event.preventDefault(); }
+      return;
+    }
+
+    var key = event.key.toLowerCase();
+    if (key === "n") { moveCursor(1, insideList(event.target)); event.preventDefault(); return; }
+    if (key === "p") { moveCursor(-1, insideList(event.target)); event.preventDefault(); }
+  }
+
+  /**
+   * 정책 고르는 칸을 채운다 (STEP 123).
+   *
+   * ⛔ 정책 목록을 화면이 지어내지 않는다 — 기존 ``/dashboard/policy-display``
+   *    가 주는 그대로 쓴다.
+   * ⚠️ 기업정보가 등록되지 않은 정책도 **목록에는 남긴다.** 고를 수는 있고,
+   *    결과가 0건일 뿐이다. 「목록에 없다」와 「해당 거래가 없다」는 다른
+   *    이야기이기 때문이다(§4 · §17).
+   */
+  function fillReviewPolicies() {
+    var box = el("review-policy");
+    // URL 에 정책이 들어 있었다면 목록을 채운 **뒤에** 되살린다 — 목록이
+    // 비어 있는 동안에는 고를 수 없기 때문이다.
+    var wanted = new URLSearchParams(window.location.search).get("policy") || "";
+    return fetchJson("/dashboard/policy-display").then(function (payload) {
+      (payload.items || []).forEach(function (item) {
+        var option = document.createElement("option");
+        option.value = item.policy_code;
+        option.textContent = item.policy_name || item.policy_code;
+        box.appendChild(option);
+      });
+      if (wanted && box.value !== wanted) {
+        for (var i = 0; i < box.options.length; i += 1) {
+          if (box.options[i].value === wanted) { box.value = wanted; break; }
+        }
+      }
+      return null;
+    }, function () {
+      // 목록을 못 받아도 「전체」로는 계속 쓸 수 있어야 한다.
+      return null;
+    });
+  }
+
+  function initReview() {
+    fillReviewPolicies();
+    // 조건이 바뀌면 1페이지부터 다시 본다.
+    ["review-policy", "review-period", "review-status", "review-decision", "review-history",
+     "review-candidates", "review-sort", "review-direction",
+     "review-page-size"].forEach(function (id) {
+      el(id).addEventListener("change", reloadFromFirstPage);
+    });
+    el("review-search").addEventListener("input", debounce(reloadFromFirstPage, 300));
+    el("review-reload").addEventListener("click", loadReviews);
+    el("review-export").addEventListener("click", exportReviews);
+    el("review-export-history").addEventListener("click", exportReviewHistory);
+
+    // 페이지 이동은 조건을 그대로 유지한 채 번호만 바꾼다.
+    el("review-prev").addEventListener("click", function () {
+      if (reviewPage > 1) { reviewPage -= 1; reviewCursor = 0; loadReviews(true); }
+    });
+    el("review-next").addEventListener("click", function () {
+      reviewPage += 1;
+      reviewCursor = 0;
+      loadReviews(true);
+    });
+    el("review-next-target").addEventListener("click", function () { moveCursor(1); });
+    el("review-prev-target").addEventListener("click", function () { moveCursor(-1); });
+    el("review-modal").addEventListener("click", function (event) {
+      if (event.target === el("review-modal")) { closeHistory(); }
+    });
+    el("review-undo-modal").addEventListener("click", function (event) {
+      // 바깥을 눌러 닫는 것은 **취소** 다 — 확정 취소가 실행되지 않는다.
+      if (event.target === el("review-undo-modal")) { closeUndo(); }
+    });
+    document.addEventListener("keydown", handleReviewKey);
+    window.addEventListener("popstate", function () {
+      // 뒤로/앞으로 — URL 이 정본이므로 그대로 복원한다.
+      periodsReady().then(function () {
+        applyUrl();
+        reviewCursor = 0;
+        loadReviews(false);
+      });
+    });
+    // 원본 대조는 목록과 독립이다 — 실패해도 검토를 막지 않는다.
+    loadTrace();
+    // ⚠️ **순서가 중요하다.** 기간 선택지가 서버에서 온 뒤라야 URL 의
+    //    ``batch_id`` 를 select 에 되돌릴 수 있다. 먼저 그리면 선택지가 없어
+    //    조용히 "전체" 로 떨어진다.
+    periodsReady().then(function () {
+      applyUrl();
+      // 선택지 목록은 백엔드가 소유한다. 화면이 만들지 않는다.
+      return Promise.all([
+        fetchJson("/reviews/options"),
+        fetchJson("/reviews/exclusion-reasons")
+      ]).then(function (results) {
+        reviewOptions = results[0];
+        exclusionReasons = results[1].items;
+        vehicleLeaseNotice = results[1].vehicle_lease_notice;
+        loadReviews();
+      });
+    }).catch(function (error) {
+      reviewError("선택지를 불러오지 못했습니다: " + error.message);
+    });
+  }
+
+  /**
+   * 목록은 **펼칠 때** 불러온다. 안내가 뜨지 않는 조회에서는 요청 자체를
+   * 보내지 않으므로, 화면을 열기만 해도 구매 원본이 오가는 일이 없다.
+   */
+  function initMissingResolutionFold() {
+    el("missing-resolution-fold").addEventListener("toggle", function () {
+      if (el("missing-resolution-fold").open) { loadMissingResolutionRows(); }
     });
   }
 
   initTheme();
   buildYearOptions();
+  initMissingResolutionFold();
+  initPolicyTargets();
+  initCompanyRegistration();
+  initUpload();
+  initCompanySource();
+  initReview();
+  initUnmatched();
   load();
 })();
 </script>

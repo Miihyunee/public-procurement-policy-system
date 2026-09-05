@@ -78,9 +78,7 @@ class TestPolicySummaryResponseModel:
             (DashboardStatus.SHORTAGE, "SHORTAGE", "부족"),
         ],
     )
-    def test_status_labels(
-        self, status: DashboardStatus, code: str, label: str
-    ) -> None:
+    def test_status_labels(self, status: DashboardStatus, code: str, label: str) -> None:
         model = PolicySummaryResponseModel.from_policy_summary(_policy_summary(status))
         assert model.status == code
         assert model.status_label == label
@@ -115,17 +113,13 @@ class TestDashboardResponseModel:
         assert model.policies[0].policy_code == "SMALL_BUSINESS"
 
     def test_total_serialized_as_string(self) -> None:
-        summary = DashboardSummary(
-            total_purchase_amount=Decimal("10000000"), policy_summaries=[]
-        )
+        summary = DashboardSummary(total_purchase_amount=Decimal("10000000"), policy_summaries=[])
         dumped = DashboardResponseModel.from_summary(summary).model_dump()
         assert dumped["total_purchase_amount"] == "10000000"
         assert dumped["policies"] == []
 
     def test_empty_policies(self) -> None:
-        summary = DashboardSummary(
-            total_purchase_amount=Decimal("0"), policy_summaries=[]
-        )
+        summary = DashboardSummary(total_purchase_amount=Decimal("0"), policy_summaries=[])
         model = DashboardResponseModel.from_summary(summary)
         assert model.policies == []
 
@@ -136,8 +130,17 @@ class TestDashboardResponseModel:
             policy_summaries=[_policy_summary()],
         )
         payload = DashboardResponseModel.from_summary(summary).model_dump()
+        # 변경 사유(STEP 103): 구매유형별 달성 결과 필드가 추가되었습니다.
+        # 여성기업 목표가 공사 3% · 용역·물품 5% 로 갈려 달성률이 하나가
+        # 아니기 때문입니다. 일반 정책은 빈 목록이며 기존 값은 그대로입니다.
+        #
+        # 변경 사유(STEP 59): 결의일자 공란 알림 필드가 추가되었습니다. 이
+        # 시험이 지키던 것은 "응답 구조가 정확히 이것뿐" 이라는 사실이므로,
+        # 비교를 느슨하게 하지 않고 **새 필드를 기대값에 함께 적습니다.**
+        # 기본값은 "해당 없음" 이며, 계산 결과와 무관합니다.
         assert payload == {
             "total_purchase_amount": "10000000",
+            "missing_resolution_date": {"applies": False, "count": 0, "amount": "0"},
             "policies": [
                 {
                     "policy_id": 1,
@@ -150,6 +153,9 @@ class TestDashboardResponseModel:
                     "shortage_rate": "40.00",
                     "status": "SHORTAGE",
                     "status_label": "부족",
+                    # STEP 103 — 구매유형별 목표를 가진 정책만 채워진다.
+                    # 일반 정책(중소기업)은 비어 있다.
+                    "scoped_achievements": [],
                 }
             ],
         }
@@ -266,9 +272,7 @@ class TestDashboardApiServiceWithTargets:
         assert response.total_purchase_amount == Decimal("10000000")
         assert response.policies == []
 
-    def test_unknown_policy_propagates_validation_error(
-        self, api: DashboardApiService
-    ) -> None:
+    def test_unknown_policy_propagates_validation_error(self, api: DashboardApiService) -> None:
         with pytest.raises(CalculatorValidationError):
             api.get_dashboard_with_targets({99999: Decimal("50")})
 
@@ -276,9 +280,7 @@ class TestDashboardApiServiceWithTargets:
 class TestDashboardApiServiceRegisteredTargets:
     """등록된 목표율 방식(get_dashboard)을 검증합니다."""
 
-    def test_uses_registered_target_rate(
-        self, api: DashboardApiService, db_path: Path
-    ) -> None:
+    def test_uses_registered_target_rate(self, api: DashboardApiService, db_path: Path) -> None:
         _seed_policy_with_purchase(db_path, target_rate=Decimal("50"))
         response = api.get_dashboard()
         assert len(response.policies) == 1
@@ -320,9 +322,7 @@ class TestTargetRateNotSet:
         response = api.get_dashboard()
         assert [item.policy_code for item in response.policies] == ["SMALL_BUSINESS"]
 
-    def test_2_achievement_rate_is_null(
-        self, api: DashboardApiService, db_path: Path
-    ) -> None:
+    def test_2_achievement_rate_is_null(self, api: DashboardApiService, db_path: Path) -> None:
         """Test 2 — 달성률은 계산하지 않고 NULL 이다(0 이 아님)."""
         _seed_policy_with_purchase(db_path, target_rate=None)
         item = api.get_dashboard().policies[0]
@@ -334,9 +334,7 @@ class TestTargetRateNotSet:
         item = api.get_dashboard().policies[0]
         assert item.shortage_rate is None
 
-    def test_4_status_is_target_rate_not_set(
-        self, api: DashboardApiService, db_path: Path
-    ) -> None:
+    def test_4_status_is_target_rate_not_set(self, api: DashboardApiService, db_path: Path) -> None:
         """Test 4 — status 는 TARGET_RATE_NOT_SET 이다."""
         _seed_policy_with_purchase(db_path, target_rate=None)
         assert api.get_dashboard().policies[0].status == "TARGET_RATE_NOT_SET"
@@ -362,14 +360,26 @@ class TestTargetRateNotSet:
         assert item.status == "SHORTAGE"
         assert item.status_label == "부족"
 
-    def test_target_rate_and_purchase_amount_are_null(
+    def test_target_rate_is_null_but_the_purchase_amount_is_still_counted(
         self, api: DashboardApiService, db_path: Path
     ) -> None:
-        """목표율·정책 구매액도 NULL 이다(계산하지 않았음을 의미)."""
+        """목표율은 NULL 이지만 **정책 구매액은 집계한다.**
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-09-03 PM 확정
+            (``DECISIONS.md`` §0.23 · STEP 97 §13). 원래 이 시험은 정책
+            구매액까지 ``None`` 이기를 요구했다. 확정된 규칙은 **목표비율이
+            없어도 실적은 보여 준다**는 것이다 — 실적은 지출데이터만으로
+            나오고 목표비율이 필요한 것은 달성률뿐이기 때문이다.
+
+            ⛔ 그래도 달성률·부족률은 여전히 ``None`` 이다(아래 Test 2·3).
+            즉 *계산할 수 없는 것*의 범위가 좁아진 것이지, 없는 값을 채워
+            넣기로 한 것이 아니다.
+        """
         _seed_policy_with_purchase(db_path, target_rate=None)
         item = api.get_dashboard().policies[0]
         assert item.target_rate is None
-        assert item.purchase_amount is None
+        assert item.purchase_amount == Decimal("3000000")
 
     def test_total_purchase_amount_is_still_aggregated(
         self, api: DashboardApiService, db_path: Path
@@ -388,7 +398,8 @@ class TestTargetRateNotSet:
         assert item["target_rate"] is None
         assert item["achievement_rate"] is None
         assert item["shortage_rate"] is None
-        assert item["purchase_amount"] is None
+        # §0.23 — 목표비율이 없어도 실적은 센다. 계산할 수 없는 것만 null 이다.
+        assert item["purchase_amount"] == "3000000"
         assert item["status"] == "TARGET_RATE_NOT_SET"
         assert item["status_label"] == "목표율 미설정"
 

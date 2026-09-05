@@ -14,15 +14,20 @@ from pathlib import Path
 import pytest
 
 from procurement.dashboard.status_service import DataStatusService
-from procurement.database.bootstrap import init_db, seed_policies
+from procurement.database.bootstrap import MVP_POLICY_SEEDS, init_db, seed_policies
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.import_batch_repository import ImportBatchRepository
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Company, Purchase
 
 #: 정본 정책 코드 개수(bootstrap seed 기준).
-SEED_POLICY_COUNT = 5
+#:
+#: ⚠️ 하드코딩하지 않는다 — 2026-09-03 PM 확정(§0.22 · STEP 97)으로 정책이
+#: 5종에서 9종(활성 8 + 비활성 GREEN)으로 늘면서 고정값 ``5`` 가 어긋났다.
+#: 정본은 seed 목록이므로 거기에서 센다.
+SEED_POLICY_COUNT = len(MVP_POLICY_SEEDS)
 
 
 @pytest.fixture
@@ -40,6 +45,7 @@ def service(db_path: Path) -> DataStatusService:
         CompanyRepository(db_path),
         CertificationRepository(db_path),
         PolicyRepository(db_path),
+        ImportBatchRepository(db_path),
     )
 
 

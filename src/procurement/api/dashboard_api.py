@@ -25,8 +25,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from procurement.api.response import DashboardResponseModel
+from procurement.api.response import (
+    DashboardResponseModel,
+    MissingResolutionDateListResponseModel,
+)
+from procurement.core.period import PeriodFilter
 from procurement.dashboard.data_service import DashboardDataService
+from procurement.models.purchase import Purchase
 
 
 class DashboardApiService:
@@ -42,12 +47,15 @@ class DashboardApiService:
         """
         self._dashboard_service = dashboard_service
 
-    def get_dashboard(self) -> DashboardResponseModel:
+    def get_dashboard(self, period: PeriodFilter | None = None) -> DashboardResponseModel:
         """시스템에 등록된 목표율 기반 대시보드 응답을 반환합니다.
 
         내부적으로
         :meth:`DashboardDataService.build_summary_from_registered_targets` 를
         호출합니다.
+
+        Args:
+            period: 적용할 기간 조건. ``None`` 이면 기간 제한 없음(기존 동작).
 
         Returns:
             :class:`DashboardResponseModel`.
@@ -57,8 +65,59 @@ class DashboardApiService:
                 ``policy_repository`` 가 설정되지 않은 경우(그대로 전파).
             CalculatorValidationError: 계산기 검증 실패 시(그대로 전파).
         """
-        summary = self._dashboard_service.build_summary_from_registered_targets()
+        summary = self._dashboard_service.build_summary_from_registered_targets(period)
         return DashboardResponseModel.from_summary(summary)
+
+    def get_missing_resolution_date(
+        self, period: PeriodFilter | None = None
+    ) -> MissingResolutionDateListResponseModel:
+        """결의일자가 없어 기간 산정에서 빠진 구매를 **행 단위로** 반환합니다.
+
+        :meth:`get_dashboard` 응답의 ``missing_resolution_date`` 가 알려 주는
+        건수·금액과 **같은 모집단**을 행으로 펼친 것입니다. 담당자가 어떤
+        행인지 직접 확인할 수 있게 하는 것이 목적입니다.
+
+        .. warning::
+            ⛔ **조회 전용입니다.** 결의일자를 채우거나 다른 날짜로 대체하지
+            않고, 어떤 행도 수정하지 않으며, 달성률에 영향을 주지 않습니다.
+
+        .. warning::
+            ⛔ **판정하지 않습니다.** 이 행들을 "오류"·"무효" 로 분류하지
+            않으며, 어떻게 처리할지는 아직 정해지지 않았습니다.
+
+        Args:
+            period: 지금 화면이 보고 있는 기간 조건. **범위 조건으로 쓰지
+                않습니다** — 결의일자 기준 조회인지 판단하는 데만 씁니다.
+                결의일자 기준이 아니면 빈 목록을 반환합니다.
+
+        Returns:
+            :class:`MissingResolutionDateListResponseModel`.
+        """
+        rows = self._dashboard_service.list_missing_resolution_date(period)
+        return MissingResolutionDateListResponseModel.from_purchases(rows)
+
+    def list_missing_resolution_date_rows(
+        self, period: PeriodFilter | None = None
+    ) -> list[Purchase]:
+        """CSV 내보내기용으로 **같은 대상**을 행 그대로 돌려줍니다.
+
+        :meth:`get_missing_resolution_date` 와 **완전히 같은 호출**을 씁니다 —
+        화면에서 보던 것과 다른 파일이 내려오면 안 되기 때문입니다. 응답 모델로
+        감싸지 않는 이유는, CSV 를 한 줄씩 흘려보내려면 도메인 행이 필요하기
+        때문입니다(기존 검토·미적재 CSV 와 같은 방식).
+
+        .. warning::
+            ⛔ **조회 전용입니다.** 계산기를 부르지 않고, 어떤 행도 만들거나
+            바꾸지 않습니다.
+
+        Args:
+            period: 지금 화면이 보고 있는 기간 조건. 범위 조건으로 쓰지 않으며,
+                결의일자 기준 조회인지 판단하는 데만 씁니다.
+
+        Returns:
+            :class:`Purchase` 목록(``purchase_id`` 오름차순). 없으면 빈 목록.
+        """
+        return self._dashboard_service.list_missing_resolution_date(period)
 
     def get_dashboard_with_targets(
         self, target_rates: dict[int, Decimal]

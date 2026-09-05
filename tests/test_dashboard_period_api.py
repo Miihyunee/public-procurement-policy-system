@@ -1,0 +1,254 @@
+"""
+``GET /dashboard/summary?year=`` 및 기간 조회 가능 여부 노출 테스트.
+
+핵심 규칙 두 가지를 고정합니다.
+
+1. ``year`` 를 **생략하면 기존과 동일**하게 전 기간 합산으로 동작한다(하위 호환).
+2. ``year`` 를 지정했는데 **연도 귀속 기준일이 설정되지 않았으면 503** 으로
+   거부한다. 임의의 기준일로 숫자를 만들지 않는다(D-24 · W-1).
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from procurement.app import create_app
+from procurement.core.period import CONTRACT_DATE, PAYMENT_DATE
+from procurement.database.bootstrap import init_db, seed_policies
+from procurement.database.certification_repository import CertificationRepository
+from procurement.database.company_repository import CompanyRepository
+from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
+from procurement.database.purchase_repository import PurchaseRepository
+from procurement.models import Certification, Company, Purchase
+
+
+@pytest.fixture
+def db_path(tmp_path: Path) -> Path:
+    path = tmp_path / "period_api.db"
+    init_db(path)
+    seed_policies(path)
+
+    companies = CompanyRepository(path)
+    certifications = CertificationRepository(path)
+    purchases = PurchaseRepository(path)
+    policies = PolicyRepository(path)
+
+    policy = policies.find_by_policy_code("SMALL_BUSINESS")
+    assert policy is not None and policy.policy_id is not None
+    policies.update_target_rate("SMALL_BUSINESS", Decimal("30"))
+    # ⚠️ STEP 93 — 목표비율의 정본은 **연도별** 값이다(DECISIONS §0.20). 위
+    #    Policy.target_rate 는 하위호환으로 남아 있을 뿐 계산에 쓰이지 않으므로,
+    #    정책 금액을 확인하는 연도(2026)에 같은 값을 등록한다.
+    #    ⛔ 기대값은 바뀌지 않았다 — 값을 **어디에 두는지**만 바뀌었다.
+    PolicyTargetRepository(path).upsert(2026, policy.policy_id, Decimal("30"))
+
+    company = companies.insert(
+        Company(business_no="1234567890", company_name="가나상사", representative_name="홍길동")
+    )
+    assert company.company_id is not None
+    certifications.insert(
+        Certification(
+            company_id=company.company_id,
+            policy_id=policy.policy_id,
+            valid_from=date(2020, 1, 1),
+            valid_to=date(2030, 12, 31),
+        )
+    )
+
+    purchases.insert(_purchase("300", date(2026, 1, 5), date(2026, 2, 1), company.company_id))
+    purchases.insert(_purchase("700", date(2026, 3, 1), date(2026, 3, 5), None))
+    purchases.insert(_purchase("500", date(2025, 6, 1), date(2025, 7, 1), company.company_id))
+    return path
+
+
+def _purchase(amount: str, contract: date, payment: date, company_id: int | None) -> Purchase:
+    return Purchase(
+        business_no="1234567890" if company_id else "9999999999",
+        company_name="테스트업체",
+        contract_date=contract,
+        payment_date=payment,
+        # 결의일자를 계약일과 같은 날로 채운다 — 일반 정책의 인증 유효기간
+        # 판정 기준일이 결의일자이기 때문이다(🟢 DECISIONS §0.12.1 · STEP 84).
+        # ⛔ 합성 데이터에 빠져 있던 필드를 채운 것이며 계산을 바꾸지 않았다.
+        resolution_date=contract,
+        amount=Decimal(amount),
+        company_id=company_id,
+    )
+
+
+@pytest.fixture
+def client_without_date_field(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """연도 귀속 기준일 설정을 **명시적으로 비운** 앱.
+
+    .. note::
+        **바뀐 이유** — 🟢 2026-09-02 PM 확정(STEP 86)으로 연도 귀속 기준일이
+        **결의일자**로 고정되어 설정 기본값이 생겼습니다. 그래서 "설정이 비어
+        있는 상태" 는 이제 기본값을 **명시적으로 비워야** 만들어집니다.
+        ⛔ 시험을 지우지 않고, 그 상태를 만들어 **같은 것을 그대로 확인**합니다.
+    """
+    from procurement.core.config import settings
+
+    monkeypatch.setattr(settings, "PURCHASE_PERIOD_DATE_FIELD", None)
+    return TestClient(create_app(db_path, period_date_field=None))
+
+
+@pytest.fixture
+def client_with_payment_date(db_path: Path) -> TestClient:
+    """기준일을 지급일로 설정한 앱.
+
+    .. note::
+        테스트에서만 명시적으로 주입합니다. **D-24 를 확정한 것이 아니며**,
+        기본값은 여전히 없습니다.
+    """
+    return TestClient(create_app(db_path, period_date_field=PAYMENT_DATE))
+
+
+class TestWithoutYear:
+    """``year`` 생략 — **400** (D-27). 전 기간을 임의로 합산하지 않는다.
+
+    이전에는 200 + 전 기간 합산이었으나, PM 이 D-27 을 적용하도록 결정해
+    동작이 바뀌었습니다. 이 클래스는 그 결정에 대한 회귀 테스트입니다.
+    """
+
+    def test_returns_400(self, client_without_date_field: TestClient) -> None:
+        assert client_without_date_field.get("/dashboard/summary").status_code == 400
+
+    def test_does_not_sum_all_periods(self, client_with_payment_date: TestClient) -> None:
+        """기준일이 설정되어 있어도 연도를 생략하면 합산값을 주지 않는다."""
+        response = client_with_payment_date.get("/dashboard/summary")
+        assert response.status_code == 400
+        assert "total_purchase_amount" not in response.json()
+
+    def test_message_explains_reason(self, client_without_date_field: TestClient) -> None:
+        detail = client_without_date_field.get("/dashboard/summary").json()["detail"]
+        assert "D-27" in detail
+
+    def test_response_shape_unchanged_when_year_given(
+        self, client_with_payment_date: TestClient
+    ) -> None:
+        """연도를 주면 응답 구조는 기존과 동일하다.
+
+        .. note::
+            변경 사유(STEP 59): 결의일자 공란 알림 필드가 추가되었습니다.
+            비교를 느슨하게 하지 않고 **새 필드를 기대 집합에 함께 적습니다.**
+            지급일 기준 조회이므로 이 필드는 "해당 없음" 으로 나갑니다.
+        """
+        body = client_with_payment_date.get("/dashboard/summary?year=2026").json()
+        assert set(body) == {"total_purchase_amount", "policies", "missing_resolution_date"}
+        assert body["missing_resolution_date"]["applies"] is False
+
+
+class TestYearWithoutDateField:
+    """기준일 미설정 상태에서 연도를 지정하면 숫자를 만들지 않는다."""
+
+    def test_returns_503(self, client_without_date_field: TestClient) -> None:
+        assert client_without_date_field.get("/dashboard/summary?year=2026").status_code == 503
+
+    def test_message_names_the_setting_and_the_confirmed_basis(
+        self, client_without_date_field: TestClient
+    ) -> None:
+        """안내가 **무엇을 설정해야 하는지**와 **확정 기준일**을 말하는가.
+
+        .. note::
+            **바뀐 이유** — 예전 문구는 *"기준일이 확정되지 않았습니다
+            (D-24 · W-1)"* 였습니다. 🟢 2026-09-02 PM 확정(STEP 86)으로
+            기준일은 **결의일자로 확정**되었으므로, 503 은 이제 미확정이
+            아니라 **설정이 비어 있다**는 뜻입니다.
+        """
+        detail = client_without_date_field.get("/dashboard/summary?year=2026").json()["detail"]
+        assert "PURCHASE_PERIOD_DATE_FIELD" in detail
+        assert "결의일자" in detail
+        # ⛔ 비어 있어도 임의의 날짜로 계산하지 않는다는 원칙은 그대로.
+        assert "임의의 날짜로 계산하지 않습니다" in detail
+
+    def test_data_status_reports_unavailable(self, client_without_date_field: TestClient) -> None:
+        body = client_without_date_field.get("/dashboard/data-status").json()
+        assert body["period_filter_available"] is False
+        assert body["period_date_field"] is None
+
+
+class TestYearWithDateField:
+    """기준일이 설정되면 연도 조회가 실제로 동작한다."""
+
+    def test_returns_200(self, client_with_payment_date: TestClient) -> None:
+        assert client_with_payment_date.get("/dashboard/summary?year=2026").status_code == 200
+
+    def test_filters_total(self, client_with_payment_date: TestClient) -> None:
+        body = client_with_payment_date.get("/dashboard/summary?year=2026").json()
+        assert body["total_purchase_amount"] == "1000"
+
+    def test_filters_policy_amount(self, client_with_payment_date: TestClient) -> None:
+        body = client_with_payment_date.get("/dashboard/summary?year=2026").json()
+        small = next(p for p in body["policies"] if p["policy_code"] == "SMALL_BUSINESS")
+        assert small["purchase_amount"] == "300"
+        assert small["total_purchase_amount"] == "1000"
+
+    def test_previous_year_differs(self, client_with_payment_date: TestClient) -> None:
+        body = client_with_payment_date.get("/dashboard/summary?year=2025").json()
+        assert body["total_purchase_amount"] == "500"
+
+    def test_empty_year_returns_zero(self, client_with_payment_date: TestClient) -> None:
+        body = client_with_payment_date.get("/dashboard/summary?year=2020").json()
+        assert body["total_purchase_amount"] == "0"
+
+    def test_data_status_reports_available(self, client_with_payment_date: TestClient) -> None:
+        body = client_with_payment_date.get("/dashboard/data-status").json()
+        assert body["period_filter_available"] is True
+        assert body["period_date_field"] == PAYMENT_DATE
+
+    def test_rejects_out_of_range_year(self, client_with_payment_date: TestClient) -> None:
+        assert client_with_payment_date.get("/dashboard/summary?year=12").status_code == 422
+
+    def test_rejects_non_numeric_year(self, client_with_payment_date: TestClient) -> None:
+        assert client_with_payment_date.get("/dashboard/summary?year=abc").status_code == 422
+
+
+class TestDateFieldChangesResult:
+    """어느 날짜를 기준으로 하느냐에 따라 결과가 달라진다 — D-24 가 중요한 이유."""
+
+    def test_contract_basis_differs_from_payment_basis(self, db_path: Path) -> None:
+        by_payment = TestClient(create_app(db_path, period_date_field=PAYMENT_DATE))
+        by_contract = TestClient(create_app(db_path, period_date_field=CONTRACT_DATE))
+
+        payment_total = by_payment.get("/dashboard/summary?year=2025").json()[
+            "total_purchase_amount"
+        ]
+        contract_total = by_contract.get("/dashboard/summary?year=2025").json()[
+            "total_purchase_amount"
+        ]
+        assert payment_total == contract_total == "500"
+
+        # 2026 은 동일하지만, 경계에 걸친 데이터에서는 달라질 수 있다.
+        assert (
+            by_payment.get("/dashboard/summary?year=2026").json()["total_purchase_amount"] == "1000"
+        )
+
+
+class TestTheDefaultDateFieldIsTheResolutionDate:
+    """🟢 설정 기본값이 **결의일자**라는 사실을 고정한다.
+
+    .. note::
+        **바뀐 이유** — 이 클래스는 STEP 85 까지 ``TestNoDefaultDateField`` 로
+        *"기본값이 없다"* 를 잠그고 있었습니다. 기본값을 두지 않은 것은 어느
+        날짜로 연도를 나눌지가 **미확정**이었기 때문입니다(D-24). 2026-09-02
+        PM 이 *"실적 산정 및 연도 귀속의 기준일은 원본파일의 결의일자"* 라고
+        확정했으므로, 이제는 **확정된 값이 붙어 있는지**를 잠급니다.
+        ⛔ 시험을 지우지 않고 기대값을 확정 규칙으로 바꿨습니다.
+    """
+
+    def test_the_settings_default_is_the_resolution_date(self) -> None:
+        from procurement.core.config.settings import Settings
+
+        assert Settings().PURCHASE_PERIOD_DATE_FIELD == "resolution_date"
+
+    def test_the_issue_date_is_not_selectable(self) -> None:
+        """⛔ 신고기준일은 기간 축에 **넣지 않았다.**"""
+        from procurement.core.period import ALLOWED_DATE_FIELDS
+
+        assert "issue_date" not in ALLOWED_DATE_FIELDS

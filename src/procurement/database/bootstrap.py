@@ -10,8 +10,9 @@ procurement.database.bootstrap
 
 제공 기능:
 
-- :func:`init_db` — 핵심 4개 테이블을 일괄 생성(멱등)
-- :func:`seed_policies` — MVP 정책 5종을 등록(멱등)
+- :func:`init_db` — 핵심 테이블을 일괄 생성(멱등)
+- :func:`migrate_schema` — 이전 버전 DB 에 누락된 컬럼을 보완(멱등)
+- :func:`seed_policies` — 정책 9종을 등록(멱등). 활성 8종 + 비활성 1종
 - :func:`verify_bootstrap` — DB·테이블·컬럼·seed 상태를 점검
 - :func:`bootstrap` — 위 과정을 순서대로 수행하는 오케스트레이터
 
@@ -34,8 +35,15 @@ from pathlib import Path
 from procurement.core.config import settings
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.import_batch_repository import ImportBatchRepository
+from procurement.database.import_rejection_repository import ImportRejectionRepository
+from procurement.database.policy_company_source_repository import (
+    PolicyCompanySourceRepository,
+)
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
+from procurement.database.review_repository import ReviewRepository
 from procurement.models.policy import Policy
 
 
@@ -48,47 +56,101 @@ class PolicySeed:
         policy_name: 정책명.
         evaluation_basis: 판정 기준일 유형(``PAYMENT_DATE`` / ``CONTRACT_DATE``).
         description: 정책 설명.
+        is_active: 계산 대상 여부. ``False`` 면 등록은 하되 **계산에서 제외**
+            됩니다(행을 지우지 않으므로 이력이 보존됩니다).
     """
 
     policy_code: str
     policy_name: str
     evaluation_basis: str
     description: str
+    is_active: bool = True
 
 
-#: MVP 대상 정책 5종. 판정 기준일은 ``docs/POLICY_DEFINITION.md`` 를 따릅니다.
+#: 대상 정책. 판정 기준일은 ``docs/POLICY_DEFINITION.md`` 를 따릅니다.
+#:
+#: 2026-09-03 PM 확정(STEP 97)으로 **활성 8종**이 최종 범위입니다. 녹색제품은
+#: 등록만 하고 비활성으로 두어 이력을 보존합니다(§0.5.1).
 #:
 #: ``target_rate`` 는 의도적으로 포함하지 않습니다(NULL 등록).
 MVP_POLICY_SEEDS: tuple[PolicySeed, ...] = (
     PolicySeed(
         policy_code="SMALL_BUSINESS",
         policy_name="중소기업",
-        evaluation_basis="PAYMENT_DATE",
+        # 2026-08-31 고객 최종 회신(DECISIONS §0.12.1) — 인증 유효기간 판정
+        # 기준일은 결의일자다. ⛔ 연도 귀속 기준일과는 다른 축이다.
+        evaluation_basis="RESOLUTION_DATE",
         description="중소기업제품 우선구매",
     ),
     PolicySeed(
         policy_code="WOMAN",
         policy_name="여성기업",
-        evaluation_basis="PAYMENT_DATE",
+        # 2026-08-31 고객 최종 회신(DECISIONS §0.12.1) — 인증 유효기간 판정
+        # 기준일은 결의일자다. ⛔ 연도 귀속 기준일과는 다른 축이다.
+        evaluation_basis="RESOLUTION_DATE",
         description="여성기업제품 우선구매",
     ),
     PolicySeed(
         policy_code="DISABLED",
         policy_name="장애인기업",
-        evaluation_basis="PAYMENT_DATE",
+        # 2026-08-31 고객 최종 회신(DECISIONS §0.12.1) — 인증 유효기간 판정
+        # 기준일은 결의일자다. ⛔ 연도 귀속 기준일과는 다른 축이다.
+        evaluation_basis="RESOLUTION_DATE",
         description="장애인기업제품 우선구매",
     ),
     PolicySeed(
         policy_code="STARTUP",
         policy_name="창업기업",
-        evaluation_basis="CONTRACT_DATE",
-        description="창업기업제품 우선구매(계약일 기준)",
+        # 2026-08-14 고객 확정: 결의일자와 계약일자 중 하나라도 인증 유효기간에
+        # 해당하면 인정한다(OR 조건). 계약일 단독 기준이 아니다.
+        evaluation_basis="RESOLUTION_OR_CONTRACT_DATE",
+        description="창업기업제품 우선구매(결의일자·계약일자 중 하나라도 인증기간에 해당하면 인정)",
+    ),
+    # ── 2026-09-03 PM 확정(STEP 97 §0 · §2) — 최종 정책 범위 8종.
+    #    확인 요청서 ② ⑦("사회적기업 등을 집계할 것인가")에 대한 답이며, 이 네
+    #    정책이 등록되면서 그 질문이 닫혔다.
+    #
+    #    판정 기준일은 **결의일자**다 — 2026-08-31 고객 최종 회신(§0.12.1)의
+    #    일반 규칙을 그대로 적용한 것이며, ⛔ 새 규칙을 만든 것이 아니다.
+    #    창업기업만 OR 규칙이고 나머지는 전부 결의일자다.
+    PolicySeed(
+        policy_code="SOCIAL_ENTERPRISE",
+        policy_name="사회적기업",
+        evaluation_basis="RESOLUTION_DATE",
+        description="사회적기업제품 우선구매",
+    ),
+    PolicySeed(
+        policy_code="SOCIAL_COOPERATIVE",
+        policy_name="사회적협동조합",
+        evaluation_basis="RESOLUTION_DATE",
+        description="사회적협동조합제품 우선구매",
+    ),
+    PolicySeed(
+        policy_code="DISABLED_STANDARD_WORKPLACE",
+        policy_name="장애인표준사업장",
+        evaluation_basis="RESOLUTION_DATE",
+        description="장애인표준사업장 생산품 우선구매",
+    ),
+    PolicySeed(
+        policy_code="SELF_SUPPORT_VILLAGE",
+        policy_name="자활용사촌",
+        evaluation_basis="RESOLUTION_DATE",
+        # ⚠️ `DATA_DICTIONARY.md` 는 자활용사촌을 "기간 무관 · 거래 유무 · 품목
+        #    기준"(VENDOR_EXISTENCE)으로 적어 두었다. 그 유형은 아직 구현되어
+        #    있지 않고, 이번 STEP 은 날짜 규칙을 재설계하지 않는다(§15).
+        #    ⛔ 임의로 새 판정 유형을 만들지 않고 일반 규칙(결의일자)을 쓴다.
+        #    판정 기준이 실제로 다른지는 PM 확인이 필요하다.
+        description="자활용사촌 생산품 우선구매",
     ),
     PolicySeed(
         policy_code="GREEN",
         policy_name="녹색제품",
         evaluation_basis="PAYMENT_DATE",
-        description="녹색제품 우선구매(판정 단위는 업무 분석 후 확정)",
+        description="녹색제품 우선구매 — 이번 MVP 계산 대상에서 제외(DECISIONS §0.5.1)",
+        # 2026-08-14 고객 결정 §0.5.1 — 이번 MVP 계산 대상에서 제외한다.
+        # ⛔ 행을 지우지 않는다. 비활성으로 두어 이력을 보존하고, 다시 포함하기로
+        # 하면 관리 화면에서 되살릴 수 있게 한다.
+        is_active=False,
     ),
 )
 
@@ -98,7 +160,61 @@ _REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
     "company": ("company_id", "business_no", "company_name", "representative_name"),
     "policy": ("policy_id", "policy_code", "policy_name", "evaluation_basis", "target_rate"),
     "certification": ("certification_id", "company_id", "policy_id", "valid_from", "valid_to"),
-    "purchase": ("purchase_id", "business_no", "contract_date", "payment_date", "amount"),
+    # 연도별·정책별 목표비율(DECISIONS §0.20). 이 테이블이 없으면 목표비율을
+    # 저장할 곳이 없어 달성률이 영영 계산되지 않으므로 필수 스키마로 본다.
+    "policy_target": ("policy_target_id", "year", "policy_id", "target_rate"),
+    # 정책별 기업정보 등록 여부(STEP 96 §8). 이 테이블이 없으면 '미등록' 과
+    # '미해당' 을 구분할 수 없으므로 필수 스키마로 본다.
+    "policy_company_source": ("policy_company_source_id", "policy_id", "source"),
+    "purchase": (
+        "purchase_id",
+        "business_no",
+        "contract_date",
+        "payment_date",
+        "resolution_date",
+        "issue_date",
+        "description",
+        "budget_account",
+        "amount",
+        "batch_id",
+    ),
+    "purchase_review": (
+        "review_id",
+        "purchase_id",
+        "analysis_status",
+        "candidates_json",
+        "review_status",
+        "final_purchase_type",
+        # 2026-08-31 고객 확정 — 실적 산입 여부(STEP 70). 이 컬럼이 없으면
+        # 실적 제외가 계산에 반영되지 않으므로 필수 스키마로 본다.
+        "performance_status",
+    ),
+    "purchase_review_history": (
+        "history_id",
+        "purchase_id",
+        "action",
+        "changed_at",
+    ),
+    "import_batch": (
+        "batch_id",
+        "file_name",
+        "period_start",
+        "period_end",
+        "status",
+        "row_count",
+        "source_row_count",
+        "total_amount",
+    ),
+    # 원본에는 있었으나 DB-1 에 적재되지 않은 행의 기록(STEP 12).
+    # ⛔ 업무 판단이 아니라 추적 기록이다.
+    "import_rejection": (
+        "rejection_id",
+        "batch_id",
+        "row_number",
+        "reason",
+        "message",
+        "amount",
+    ),
 }
 
 
@@ -158,11 +274,14 @@ def resolve_db_path(db_path: str | Path | None = None) -> Path:
 
 
 def init_db(db_path: str | Path | None = None) -> None:
-    """핵심 4개 테이블을 생성합니다.
+    """핵심 테이블을 생성합니다.
 
     각 Repository 의 ``create_table()`` 은 ``CREATE TABLE IF NOT EXISTS`` 를
     사용하므로 **반복 실행해도 안전**하며, 기존 데이터를 삭제하지 않습니다.
     DB 파일과 상위 디렉터리는 연결 시점에 자동 생성됩니다.
+
+    생성 후 :func:`migrate_schema` 를 호출해, 이전 버전에서 만든 DB 에 추가된
+    컬럼을 보완합니다.
 
     Args:
         db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
@@ -170,12 +289,276 @@ def init_db(db_path: str | Path | None = None) -> None:
     path = resolve_db_path(db_path)
     CompanyRepository(path).create_table()
     PolicyRepository(path).create_table()
+    # ⭐ 등록 버전 표를 **인증표보다 먼저** 만든다. 인증에 «어느 버전에서
+    #    왔는가» 를 채우려면 그 표가 이미 버전 구조여야 한다.
+    PolicyCompanySourceRepository(path).create_table()
     CertificationRepository(path).create_table()
     PurchaseRepository(path).create_table()
+    ImportBatchRepository(path).create_table()
+    # 적재되지 않은 원본 행의 추적 기록 — 신규 테이블만 추가한다(STEP 12).
+    ImportRejectionRepository(path).create_table()
+    # DB-2 (검토·분류) — 신규 테이블만 추가한다. 기존 테이블은 건드리지 않는다.
+    ReviewRepository(path).create_table()
+    # 연도별·정책별 목표비율(DECISIONS §0.20) — **신규 테이블만** 추가한다.
+    # ⛔ 기존 policy 테이블과 그 target_rate 컬럼은 건드리지 않는다. 기존 DB 에
+    #    이 호출이 더해져도 잃는 데이터가 없다.
+    PolicyTargetRepository(path).create_table()
+    migrate_schema(path)
+    # 확정 규칙이 바뀌어 풀린 제약을 기존 DB 에도 반영한다(멱등).
+    relax_purchase_date_constraints(path)
+    # 인덱스는 컬럼 보완·제약 완화 이후에 만든다(구 스키마 DB 대응).
+    PurchaseRepository(path).ensure_indexes()
+
+
+#: 기존 테이블에 나중에 추가된 컬럼. ``CREATE TABLE IF NOT EXISTS`` 로는 추가되지
+#: 않으므로 ``ALTER TABLE`` 로 보완한다. (테이블, 컬럼, 컬럼 정의)
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("purchase", "batch_id", "INTEGER"),
+    # 2026-08-15 PM 결정 — 결의일자를 payment_date 에 섞지 않고 별도 필드로 둔다.
+    # 기존 행은 NULL 이 되며, 값이 없다는 사실이 그대로 보존된다.
+    ("purchase", "resolution_date", "DATE"),
+    # 2026-08-20 음수 상계 업무규칙 확정(DECISIONS §0.6.3.4) — 세금계산서
+    # 발행일자와 담당자가 함께 확인하는 두 항목을 받는다. 기존 행은 NULL 이
+    # 되며, 값이 없다는 사실이 그대로 보존된다(다른 날짜로 대체하지 않는다).
+    ("purchase", "issue_date", "DATE"),
+    ("purchase", "description", "TEXT"),
+    ("purchase", "budget_account", "TEXT"),
+    # 2026-08-22 STEP 14 — 배치의 **원본 행 수**. 적재 행 수(row_count)와 맞대어
+    # "설명되지 않는 행" 을 계산한다. 기존 배치는 NULL 이 되며, 그것이 곧
+    # "원본 행 수를 모른다" 는 뜻이다(0 으로 채우지 않는다).
+    ("import_batch", "source_row_count", "INTEGER"),
+    # 2026-08-31 고객 확정(DECISIONS §0.10 · STEP 70) — 실적 산입 여부.
+    # ⛔ 기존 행의 값은 NULL 이 되며, 읽을 때 INCLUDED 로 봅니다. 따라서
+    #    마이그레이션만으로 기존 달성률이 달라지지 않습니다.
+    ("purchase_review", "performance_status", "TEXT"),
+    ("purchase_review", "exclusion_reason", "TEXT"),
+    ("purchase_review", "excluded_by", "TEXT"),
+    ("purchase_review", "excluded_at", "DATETIME"),
+)
+
+
+def migrate_schema(db_path: str | Path | None = None) -> list[str]:
+    """이전 버전에서 만든 DB 에 누락된 컬럼을 추가합니다(멱등).
+
+    ``CREATE TABLE IF NOT EXISTS`` 는 **기존 테이블에 컬럼을 추가하지 않습니다.**
+    따라서 나중에 추가된 컬럼은 ``ALTER TABLE ... ADD COLUMN`` 으로 보완해야
+    합니다. 이미 있는 컬럼은 건너뛰므로 반복 실행해도 안전합니다.
+
+    기존 행의 새 컬럼 값은 ``NULL`` 이 됩니다. ``purchase.batch_id`` 가 ``NULL``
+    인 행은 **계산에 계속 포함**되므로(배치 도입 이전 데이터 보호), 기존 계산
+    결과가 달라지지 않습니다.
+
+    Args:
+        db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        이번 호출에서 실제로 추가한 컬럼 목록(``"테이블.컬럼"`` 형식).
+    """
+    path = resolve_db_path(db_path)
+    existing = _read_schema(path)
+
+    added: list[str] = []
+    with sqlite3.connect(path) as conn:
+        for table, column, definition in _ADDED_COLUMNS:
+            if table not in existing or column in existing[table]:
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            added.append(f"{table}.{column}")
+    return added
+
+
+#: 고객 확정으로 판정 기준이 바뀐 정책. ``(정책코드, 이전 값, 새 값)``.
+#:
+#: ``seed_policies()`` 는 **이미 존재하는 정책을 건너뛰므로**, 기존 DB 의 값은
+#: seed 상수를 고쳐도 그대로 남는다. 확정된 업무규칙이 기존 DB 에서만 적용되지
+#: 않는 상태를 막기 위해 명시적으로 갱신한다.
+_UPDATED_EVALUATION_BASIS: tuple[tuple[str, str, str], ...] = (
+    # 2026-08-14 고객 확정 — 창업기업은 결의일자 OR 계약일자로 판정한다.
+    ("STARTUP", "CONTRACT_DATE", "RESOLUTION_OR_CONTRACT_DATE"),
+    # 2026-08-15 PM 결정 — 결의일자가 resolution_date 라는 별도 필드로 확정되어,
+    # 임시로 쓰던 PAYMENT_OR_CONTRACT_DATE(=지급일 OR 계약일)를 대체한다.
+    ("STARTUP", "PAYMENT_OR_CONTRACT_DATE", "RESOLUTION_OR_CONTRACT_DATE"),
+    # 2026-08-31 고객 최종 회신(DECISIONS §0.12.1) — 중소기업·여성기업·장애인기업의
+    # 인증 유효기간 판정 기준일이 지급일에서 결의일자로 바뀌었다.
+    # ⛔ 창업기업(STARTUP)은 그대로 둔다 — 결의일자 OR 계약일자 확정이 유지된다.
+    ("SMALL_BUSINESS", "PAYMENT_DATE", "RESOLUTION_DATE"),
+    ("WOMAN", "PAYMENT_DATE", "RESOLUTION_DATE"),
+    ("DISABLED", "PAYMENT_DATE", "RESOLUTION_DATE"),
+)
+
+
+#: NULL 을 허용해야 하는 컬럼 — 확정 규칙이 바뀌어 제약이 풀린 것들.
+#:
+#: 🟢 2026-09-02 PM 확정(STEP 87) — 실적 산정 기준일은 **결의일자**이며
+#: 계약일자·지급일자는 기준일이 아니다. 고객 원본에 두 컬럼이 아예 없으므로,
+#: ``NOT NULL`` 을 그대로 두면 정상 거래가 전부 미적재된다.
+_RELAXED_NOT_NULL: tuple[tuple[str, str], ...] = (
+    ("purchase", "contract_date"),
+    ("purchase", "payment_date"),
+)
+
+
+def relax_purchase_date_constraints(db_path: str | Path | None = None) -> list[str]:
+    """기존 DB 의 ``NOT NULL`` 제약을 푼다(멱등).
+
+    SQLite 는 ``ALTER TABLE ... ALTER COLUMN`` 이 없어 제약을 바꾸려면 테이블을
+    다시 만들어야 합니다. 그래서 **새 테이블을 만들고 → 행을 그대로 옮기고 →
+    바꿔치기** 하는 표준 절차를 씁니다.
+
+    .. warning::
+        ⛔ **행을 지우거나 값을 바꾸지 않습니다.** 컬럼 목록을 그대로 옮기며,
+        옮긴 행 수가 원래 행 수와 다르면 예외를 냅니다(자동 롤백).
+
+    Args:
+        db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        이번 호출에서 실제로 제약을 푼 컬럼 목록(``"테이블.컬럼"``). 이미 풀려
+        있으면 빈 목록입니다.
+    """
+    path = resolve_db_path(db_path)
+    if not path.exists():
+        return []
+
+    relaxed: list[str] = []
+    with sqlite3.connect(str(path)) as conn:
+        conn.row_factory = sqlite3.Row
+        tables = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        for table, column in _RELAXED_NOT_NULL:
+            if table not in tables:
+                continue
+            info = list(conn.execute(f"PRAGMA table_info({table})"))
+            target = next((row for row in info if row["name"] == column), None)
+            if target is None or not target["notnull"]:
+                continue  # 이미 풀려 있거나 컬럼이 없다
+            _rebuild_without_not_null(conn, table, column, info)
+            relaxed.append(f"{table}.{column}")
+    return relaxed
+
+
+def _rebuild_without_not_null(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    info: list[sqlite3.Row],
+) -> None:
+    """``table.column`` 의 ``NOT NULL`` 만 뺀 채 테이블을 다시 만듭니다.
+
+    ⛔ 다른 컬럼의 정의는 손대지 않습니다. 행은 전부 그대로 옮깁니다.
+    """
+    columns = [row["name"] for row in info]
+    before = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+
+    definitions = []
+    for row in info:
+        parts = [row["name"], row["type"] or ""]
+        if row["pk"]:
+            parts.append("PRIMARY KEY")
+        elif row["notnull"] and row["name"] != column:
+            parts.append("NOT NULL")
+        if row["dflt_value"] is not None:
+            parts.append(f"DEFAULT {row['dflt_value']}")
+        definitions.append(" ".join(part for part in parts if part))
+
+    joined = ", ".join(columns)
+    conn.execute(f"CREATE TABLE {table}__relaxed ({', '.join(definitions)})")
+    conn.execute(f"INSERT INTO {table}__relaxed ({joined}) SELECT {joined} FROM {table}")
+
+    after = int(conn.execute(f"SELECT COUNT(*) FROM {table}__relaxed").fetchone()[0])
+    if after != before:  # pragma: no cover - 방어적 확인
+        raise RuntimeError(f"{table} 행이 옮겨지지 않았습니다: {before} → {after}")
+
+    conn.execute(f"DROP TABLE {table}")
+    conn.execute(f"ALTER TABLE {table}__relaxed RENAME TO {table}")
+
+
+def migrate_policy_evaluation_basis(db_path: str | Path | None = None) -> list[str]:
+    """고객 확정으로 바뀐 정책 판정 기준을 기존 DB 에 반영합니다(멱등).
+
+    **이전 값과 정확히 일치하는 행만** 갱신합니다. 운영자가 다른 값으로 바꿔 둔
+    경우에는 건드리지 않습니다.
+
+    .. note::
+        판정 기준(``evaluation_basis``)은 시스템이 소유하는 값입니다. 관리 API
+        (``PolicyAdminService``)는 ``target_rate`` 만 변경하므로, 이 갱신이
+        운영자가 설정한 값을 덮어쓰지 않습니다.
+
+        구매·인증 데이터는 **전혀 건드리지 않습니다.**
+
+    Args:
+        db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        이번 호출에서 실제로 갱신한 항목 목록(``"정책코드: 이전→새값"`` 형식).
+    """
+    path = resolve_db_path(db_path)
+    if "policy" not in _read_schema(path):
+        return []
+
+    updated: list[str] = []
+    with sqlite3.connect(path) as conn:
+        for policy_code, old_value, new_value in _UPDATED_EVALUATION_BASIS:
+            cursor = conn.execute(
+                "UPDATE policy SET evaluation_basis = ? "
+                "WHERE policy_code = ? AND evaluation_basis = ?",
+                (new_value, policy_code, old_value),
+            )
+            if cursor.rowcount:
+                updated.append(f"{policy_code}: {old_value}→{new_value}")
+    return updated
+
+
+#: 이번 MVP 계산 대상에서 **제외**하기로 확정된 정책 코드.
+#:
+#: ⛔ 행을 삭제하지 않는다. ``is_active = 0`` 으로만 바꿔 이력을 보존한다.
+OUT_OF_SCOPE_POLICY_CODES: tuple[str, ...] = (
+    # 2026-08-14 고객 결정 (DECISIONS §0.5.1) — 녹색제품은 이번 MVP 계산 대상이
+    # 아니다. seed 에서만 빼면 **기존 DB 의 행은 그대로 계산되므로** 여기서
+    # 비활성으로 바꾼다.
+    "GREEN",
+)
+
+
+def deactivate_out_of_scope_policies(db_path: str | Path | None = None) -> list[str]:
+    """범위에서 제외된 정책을 **비활성**으로 바꿉니다(멱등).
+
+    ``is_active = 0`` 으로만 바꾸므로 정책 행과 관련 이력은 **그대로 남습니다.**
+    비활성 정책은 :meth:`PolicyRepository.find_active` 에 잡히지 않아 대시보드
+    계산 대상에서 빠지고, 관리 API 의 목표율 설정도 거부됩니다
+    (:class:`~procurement.admin.policy_admin.PolicyAdminService`).
+
+    .. warning::
+        ⛔ **삭제하지 않습니다.** 고객이 다시 포함하기로 하면 ``is_active`` 만
+        되돌리면 됩니다. 구매·인증 데이터는 전혀 건드리지 않습니다.
+
+    Args:
+        db_path: 대상 DB 경로. ``None`` 이면 설정값을 사용합니다.
+
+    Returns:
+        이번 호출에서 실제로 비활성으로 바꾼 정책 코드 목록. 이미 비활성이면
+        빈 목록.
+    """
+    path = resolve_db_path(db_path)
+    if "policy" not in _read_schema(path):
+        return []
+
+    changed: list[str] = []
+    with sqlite3.connect(path) as conn:
+        for policy_code in OUT_OF_SCOPE_POLICY_CODES:
+            cursor = conn.execute(
+                "UPDATE policy SET is_active = 0 WHERE policy_code = ? AND is_active = 1",
+                (policy_code,),
+            )
+            if cursor.rowcount:
+                changed.append(policy_code)
+    return changed
 
 
 def seed_policies(db_path: str | Path | None = None) -> list[str]:
-    """MVP 정책 5종을 등록합니다(멱등).
+    """대상 정책을 등록합니다(멱등).
 
     이미 같은 ``policy_code`` 가 존재하면 건너뛰므로 반복 실행해도 중복 등록되지
     않으며, 기존 정책의 값(특히 운영자가 설정한 ``target_rate``)을 덮어쓰지
@@ -203,6 +586,7 @@ def seed_policies(db_path: str | Path | None = None) -> list[str]:
                 description=seed.description,
                 evaluation_basis=seed.evaluation_basis,
                 target_rate=None,  # D-004: 임의의 목표율을 입력하지 않는다.
+                is_active=seed.is_active,
             )
         )
         created.append(seed.policy_code)
@@ -215,7 +599,7 @@ def verify_bootstrap(db_path: str | Path | None = None) -> HealthReport:
     다음을 확인하고 항목별 결과를 반환합니다.
 
     1. DB 파일 존재
-    2. 필수 테이블 4개 존재
+    2. 필수 테이블 존재
     3. 각 테이블의 필수 컬럼 존재(구 스키마 DB 감지)
     4. MVP 정책 seed 존재
 
@@ -271,8 +655,8 @@ def verify_bootstrap(db_path: str | Path | None = None) -> HealthReport:
                 passed=False,
                 detail=(
                     f"누락된 컬럼: {missing_columns}. 이전 버전에서 만든 DB 로 보입니다. "
-                    "CREATE TABLE IF NOT EXISTS 는 기존 테이블에 컬럼을 추가하지 않으므로, "
-                    "DB 파일을 새로 만들거나 수동으로 컬럼을 추가해야 합니다."
+                    "'python -m procurement init' 을 실행하면 누락된 컬럼만 추가하며, "
+                    "기존 데이터는 삭제하지 않습니다."
                 ),
             )
         )
@@ -296,6 +680,9 @@ def bootstrap(db_path: str | Path | None = None, *, seed: bool = True) -> Health
     init_db(db_path)
     if seed:
         seed_policies(db_path)
+        # seed 는 기존 정책을 건너뛰므로, 확정으로 바뀐 값은 따로 반영한다.
+        migrate_policy_evaluation_basis(db_path)
+        deactivate_out_of_scope_policies(db_path)
     return verify_bootstrap(db_path)
 
 
@@ -344,8 +731,7 @@ def _check_policy_seed(path: Path, *, seeded_tables_ok: bool) -> HealthCheckItem
             name="정책 seed",
             passed=False,
             detail=(
-                f"누락된 정책: {', '.join(missing)}. "
-                "'python -m procurement init' 을 실행하세요."
+                f"누락된 정책: {', '.join(missing)}. 'python -m procurement init' 을 실행하세요."
             ),
         )
     return HealthCheckItem(

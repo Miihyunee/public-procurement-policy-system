@@ -173,25 +173,37 @@ class PurchaseImporter:
         self._purchase_repository = purchase_repository
         self._company_repository = company_repository
 
-    def import_rows(self, rows: Iterable[Mapping[str, Any]]) -> ImportReport:
+    def import_rows(
+        self, rows: Iterable[Mapping[str, Any]], batch_id: int | None = None
+    ) -> ImportReport:
         """컬럼 매핑이 끝난 행들을 적재합니다.
 
         각 행은 다음 키를 가질 수 있습니다.
 
         - ``business_no`` (필수), ``amount`` (필수)
-        - ``contract_date`` (필수), ``payment_date`` (필수)
+        - ``contract_date`` · ``payment_date`` (**선택**) — 🟢 2026-09-02 PM
+          확정(STEP 87). 실적 산정 기준일이 아니므로 없어도 적재합니다.
+          ⛔ 없는 값을 다른 날짜로 채우지 않습니다.
+        - ``resolution_date`` (**선택**) — 결의일자. 표준 업로드 양식에서
+          들어옵니다. 없으면 ``None`` 으로 저장하며, 기존 동작과 동일합니다.
+        - ``issue_date`` (**선택**) — 세금계산서 발행일자(``신고기준일``).
+          음수 상계 판정에 사용합니다. 없으면 ``None`` 으로 저장합니다.
+        - ``description`` · ``budget_account`` (**선택**) — 적요 · 예산과목.
+          **판정에 쓰지 않고 그대로 보관**합니다. 공란은 정상입니다.
         - ``company_name`` (없으면 ``"(미상)"`` 으로 대체하고 경고)
 
         한 행이 실패해도 중단하지 않고 다음 행을 계속 처리합니다.
 
         Args:
             rows: 행(매핑) 목록.
+            batch_id: 이 적재가 속한 업로드 배치 ID. ``None`` 이면 배치 없이
+                저장하며 **기존과 동일하게 동작**합니다(하위 호환).
 
         Returns:
             행별 결과와 집계를 담은 :class:`ImportReport`.
         """
         results = [
-            self._import_row(row_number, row)
+            self._import_row(row_number, row, batch_id)
             for row_number, row in enumerate(rows, start=1)
         ]
         return ImportReport(rows=results)
@@ -215,7 +227,9 @@ class PurchaseImporter:
     # ------------------------------------------------------------------
     # 내부 헬퍼
     # ------------------------------------------------------------------
-    def _import_row(self, row_number: int, row: Mapping[str, Any]) -> ImportRowResult:
+    def _import_row(
+        self, row_number: int, row: Mapping[str, Any], batch_id: int | None = None
+    ) -> ImportRowResult:
         """행 하나를 정규화·검증하고 저장합니다."""
         messages: list[str] = []
 
@@ -226,22 +240,56 @@ class PurchaseImporter:
         business_no = normalized.value
         assert business_no is not None  # is_valid 가 보장
 
-        contract_date, error = _parse_date(row.get("contract_date"), "계약일")
-        if error is not None:
-            return self._failed(row_number, [*messages, error], business_no)
+        # 계약일·지급일은 **선택 항목**이다(🟢 2026-09-02 PM 확정 · STEP 87).
+        # 실적 산정 기준일은 결의일자이며, 원본에 없는 이 두 날짜 때문에
+        # 정상 거래를 미적재시키지 않는다. 값이 있는데 형식이 틀리면 조용히
+        # 버리지 않고 실패로 처리한다. ⛔ 없는 값을 다른 날짜로 채우지 않는다.
+        raw_contract_date = row.get("contract_date")
+        contract_date: date | None = None
+        if isinstance(raw_contract_date, date) or _clean_text(raw_contract_date):
+            contract_date, error = _parse_date(raw_contract_date, "계약일")
+            if error is not None:
+                return self._failed(row_number, [*messages, error], business_no)
 
-        payment_date, error = _parse_date(row.get("payment_date"), "지급일")
-        if error is not None:
-            return self._failed(row_number, [*messages, error], business_no)
+        raw_payment_date = row.get("payment_date")
+        payment_date: date | None = None
+        if isinstance(raw_payment_date, date) or _clean_text(raw_payment_date):
+            payment_date, error = _parse_date(raw_payment_date, "지급일")
+            if error is not None:
+                return self._failed(row_number, [*messages, error], business_no)
+
+        # 결의일자는 선택 항목이다. 값이 없으면 None 으로 두고, 있는데 형식이
+        # 틀리면 조용히 버리지 않고 실패로 처리한다.
+        raw_resolution_date = row.get("resolution_date")
+        resolution_date: date | None = None
+        # datetime 은 date 의 하위형이므로 date 검사 하나로 둘 다 걸린다.
+        if isinstance(raw_resolution_date, date) or _clean_text(raw_resolution_date):
+            resolution_date, error = _parse_date(raw_resolution_date, "결의일자")
+            if error is not None:
+                return self._failed(row_number, [*messages, error], business_no)
+
+        # 발행일자(신고기준일)도 같은 규칙이다 — 없으면 None, 있는데 형식이
+        # 틀리면 실패. ⛔ 없는 값을 다른 날짜로 대체하지 않는다.
+        raw_issue_date = row.get("issue_date")
+        issue_date: date | None = None
+        if isinstance(raw_issue_date, date) or _clean_text(raw_issue_date):
+            issue_date, error = _parse_date(raw_issue_date, "신고기준일")
+            if error is not None:
+                return self._failed(row_number, [*messages, error], business_no)
+
+        # 적요·예산과목은 판정에 쓰지 않고 그대로 보관한다. 공란은 정상이다.
+        description = _clean_text(row.get("description")) or None
+        budget_account = _clean_text(row.get("budget_account")) or None
 
         amount, error = _parse_amount(row.get("amount"))
         if error is not None:
             return self._failed(row_number, [*messages, error], business_no)
 
-        assert contract_date is not None and payment_date is not None and amount is not None
+        assert amount is not None
 
         # 선지급·정산으로 실제 역전이 발생할 수 있어 거부하지 않고 경고만 남긴다.
-        if contract_date > payment_date:
+        # 두 날짜가 **모두 있을 때만** 비교한다 — 없는 값을 대신 넣지 않는다.
+        if contract_date is not None and payment_date is not None and contract_date > payment_date:
             messages.append(
                 f"계약일({contract_date})이 지급일({payment_date})보다 늦습니다. 확인이 필요합니다."
             )
@@ -266,8 +314,13 @@ class PurchaseImporter:
                     company_name=company_name,
                     contract_date=contract_date,
                     payment_date=payment_date,
+                    resolution_date=resolution_date,
+                    issue_date=issue_date,
+                    description=description,
+                    budget_account=budget_account,
                     amount=amount,
                     company_id=company_id,
+                    batch_id=batch_id,
                 )
             )
         except PurchaseValidationError as exc:

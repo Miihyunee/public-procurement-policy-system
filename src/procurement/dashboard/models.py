@@ -41,16 +41,52 @@ class DashboardStatus(Enum):
     상태를 나타내는 값이 있습니다.
 
     - ``TARGET_RATE_NOT_SET`` (목표율 미설정): ``target_rate`` 가 없어 계산하지 않음
+    - ``COMPANY_DATA_NOT_REGISTERED`` (조회불가): 그 정책의 **기업정보 자체가
+      등록되지 않아** 해당 여부를 판단할 수 없음 (STEP 96 §8)
+    - ``CALCULATION_ON_HOLD`` (계산 보류): 목표는 **받았으나** 그 목표를 재는
+      분모를 아직 구할 수 없음 (STEP 99 §1 중요)
+    - ``SCOPED_BY_PURCHASE_TYPE`` (유형별 달성률): 달성률이 **하나가 아니라**
+      구매유형마다 따로 나옴. 여성기업이 여기 해당한다 (STEP 103)
 
-    ``TARGET_RATE_NOT_SET`` 은 달성률로부터 판정되지 않으며
-    (:meth:`from_achievement_rate` 는 이 값을 반환하지 않습니다),
-    "정책이 없음"과 "목표율이 아직 등록되지 않음"을 구분하기 위해 사용합니다.
+    세 값 모두 달성률로부터 판정되지 않으며
+    (:meth:`from_achievement_rate` 는 이 값들을 반환하지 않습니다),
+    **서로 다른 상태**입니다.
+
+    ========================  ===================================================
+    상태                       뜻
+    ========================  ===================================================
+    ``COMPANY_DATA_NOT_REGISTERED``
+                              어떤 사업자가 이 정책의 기업인지 **모른다**.
+                              실적을 셀 수 없다.
+    ``TARGET_RATE_NOT_SET``   누가 해당하는지는 알지만, **목표가 없다**.
+                              실적은 셀 수 있으나 달성률을 낼 수 없다.
+    ``CALCULATION_ON_HOLD``   목표도 있고 실적도 셀 수 있으나, 그 목표를 재는
+                              **분모**를 구할 수 없다. 자활용사촌(생산가능품목)이
+                              여기에 해당한다.
+    ``SCOPED_BY_PURCHASE_TYPE``
+                              계산은 되지만 결과가 **여럿**이다. 여성기업은 공사
+                              3% · 용역 5% · 물품 5% 로 목표가 갈리므로 달성률도
+                              셋이며, 정책 한 줄에 담을 하나의 값이 없다.
+    ========================  ===================================================
+
+    .. note::
+        ⭐ ``CALCULATION_ON_HOLD`` 는 «목표율 미설정» 과 다릅니다. 목표는 고객에게
+        **받았고 저장되어 있습니다.** 못 내는 것은 분모뿐이므로, 화면이 "목표를
+        아직 안 주셨다" 고 잘못 말하지 않도록 상태를 갈라 놓았습니다.
+        ⛔ 없는 분모를 전체 구매금액으로 대신해 숫자를 만들지 않습니다.
+
+    .. warning::
+        ⛔ **조회불가를 "미해당" 이나 0% 로 처리하지 않습니다.** 기업정보를 받지
+        못한 것과 "해당 기업이 없다" 는 전혀 다른 사실입니다(STEP 96 §8 · §22-7·8).
     """
 
     NORMAL = "NORMAL"
     WARNING = "WARNING"
     SHORTAGE = "SHORTAGE"
     TARGET_RATE_NOT_SET = "TARGET_RATE_NOT_SET"
+    COMPANY_DATA_NOT_REGISTERED = "COMPANY_DATA_NOT_REGISTERED"
+    CALCULATION_ON_HOLD = "CALCULATION_ON_HOLD"
+    SCOPED_BY_PURCHASE_TYPE = "SCOPED_BY_PURCHASE_TYPE"
 
     @property
     def label(self) -> str:
@@ -80,7 +116,41 @@ _STATUS_LABELS: dict[DashboardStatus, str] = {
     DashboardStatus.WARNING: "주의",
     DashboardStatus.SHORTAGE: "부족",
     DashboardStatus.TARGET_RATE_NOT_SET: "목표율 미설정",
+    # ⛔ "미해당" 이 아니다. 판단할 근거 자체가 없다는 뜻이다(STEP 96 §8).
+    DashboardStatus.COMPANY_DATA_NOT_REGISTERED: "기업정보 미등록",
+    # ⛔ "목표율 미설정" 이 아니다. 목표는 받았고 분모를 못 구하는 것이다(STEP 99).
+    DashboardStatus.CALCULATION_ON_HOLD: "계산 보류",
+    # 달성률이 **하나가 아니다.** 유형마다 따로 나온다(STEP 103 · 여성기업).
+    DashboardStatus.SCOPED_BY_PURCHASE_TYPE: "유형별 달성률",
 }
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScopedAchievement:
+    """구매유형 하나에 대한 달성 결과(DTO).
+
+    여성기업처럼 목표가 유형별로 갈리는 정책을 위한 값입니다. 정책 한 줄에
+    달성률 하나를 억지로 담지 않고, 유형마다 따로 담습니다.
+
+    Attributes:
+        scope: 구매유형(``CONSTRUCTION`` · ``SERVICE`` · ``GOODS``).
+        scope_label: 화면 표시용 한글 이름(예: ``"공사"``).
+        purchase_amount: 그 유형에서 이 정책이 올린 실적.
+        total_purchase_amount: 그 유형의 **전체** 구매금액(분모).
+        target_rate: 그 유형의 목표 구매비율(%).
+        achievement_rate: 달성률(%). **분모가 0 이면 ``None``** — ⛔ 0% 나
+            100% 로 만들지 않습니다.
+        status: 달성률 판정. 계산하지 못했으면
+            :attr:`DashboardStatus.CALCULATION_ON_HOLD`.
+    """
+
+    scope: str
+    scope_label: str
+    purchase_amount: Decimal
+    total_purchase_amount: Decimal
+    target_rate: Decimal
+    achievement_rate: Decimal | None
+    status: DashboardStatus
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -103,7 +173,7 @@ class PolicySummary:
         achievement_rate: 목표 대비 달성률(%). 목표율 미설정이면 ``None``.
         shortage_rate: 목표 달성까지 부족한 비율(%). ``max(0, 100 - 달성률)``.
             목표율 미설정이면 ``None``.
-        status: 달성 상태(정상/주의/부족/목표율 미설정).
+        status: 달성 상태(정상/주의/부족/목표율 미설정/기업정보 미등록).
     """
 
     policy_id: int
@@ -115,6 +185,40 @@ class PolicySummary:
     achievement_rate: Decimal | None
     shortage_rate: Decimal | None
     status: DashboardStatus
+    #: 구매유형별 달성 결과. 여성기업처럼 목표가 유형별로 갈리는 정책만 채워지며,
+    #: 일반 정책은 비어 있습니다(``()``). ⛔ 여기에 값이 있으면 정책 한 줄의
+    #: ``achievement_rate`` 는 ``None`` 입니다 — 대표값을 고르지 않기 때문입니다.
+    scoped_achievements: tuple[ScopedAchievement, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class MissingResolutionDate:
+    """**결의일자가 없어 기간 산정에서 빠진** 구매의 건수와 금액.
+
+    .. warning::
+        ⛔ **계산에 쓰이지 않습니다.** 분모·분자 어느 쪽에도 들어가지 않고,
+        달성률을 바꾸지도 않습니다. 화면에 "이만큼이 기간 산정에서 빠졌습니다"
+        라고 알려 주기 위한 **표시 전용** 값입니다(``DECISIONS.md`` §0.8.4).
+
+    .. note::
+        결의일자 기준으로 연도를 나눌 때만 의미가 있습니다. 지급일·계약일 기준
+        조회에서는 이 행들이 빠지지 않으므로 :attr:`applies` 가 ``False`` 이며,
+        화면도 표시하지 않습니다.
+
+    Attributes:
+        applies: 이 안내가 지금 조회에 해당하는지. 기간 판정 기준일이 결의일자일
+            때만 ``True``.
+        count: 결의일자가 없는 구매 건수.
+        amount: 그 구매들의 금액 합계.
+    """
+
+    applies: bool
+    count: int
+    amount: Decimal
+
+
+#: 해당 없음(결의일자 기준 조회가 아닐 때).
+NOT_APPLICABLE = MissingResolutionDate(applies=False, count=0, amount=Decimal("0"))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -124,7 +228,10 @@ class DashboardSummary:
     Attributes:
         total_purchase_amount: 기관 전체 구매액.
         policy_summaries: 정책별 요약 목록. 요청한 정책이 없으면 빈 목록.
+        missing_resolution_date: 결의일자가 없어 기간 산정에서 빠진 건수·금액.
+            ⛔ **위 두 값과 무관합니다** — 계산에 들어가지 않습니다.
     """
 
     total_purchase_amount: Decimal
     policy_summaries: list[PolicySummary]
+    missing_resolution_date: MissingResolutionDate = NOT_APPLICABLE

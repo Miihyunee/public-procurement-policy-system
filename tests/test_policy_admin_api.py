@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from procurement.app import create_app
-from procurement.database.bootstrap import init_db, seed_policies
+from procurement.database.bootstrap import MVP_POLICY_SEEDS, init_db, seed_policies
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
 from procurement.database.policy_repository import PolicyRepository
@@ -30,7 +30,11 @@ from procurement.models import Certification, Company, Policy, Purchase
 #: 테스트 전용 관리자 토큰(운영 값 아님).
 TEST_TOKEN = "test-admin-token"
 #: 정본 정책 코드 개수(bootstrap seed 기준).
-SEED_POLICY_COUNT = 5
+#:
+#: ⚠️ 하드코딩하지 않는다 — 2026-09-03 PM 확정(§0.22 · STEP 97)으로 정책이
+#: 5종에서 9종(활성 8 + 비활성 GREEN)으로 늘면서 고정값 ``5`` 가 어긋났다.
+#: 정본은 seed 목록이므로 거기에서 센다.
+SEED_POLICY_COUNT = len(MVP_POLICY_SEEDS)
 
 AUTH = {"Authorization": f"Bearer {TEST_TOKEN}"}
 
@@ -46,7 +50,7 @@ def db_path(tmp_path: Path) -> Path:
 @pytest.fixture
 def client(db_path: Path) -> TestClient:
     """관리자 토큰이 설정된 앱의 테스트 클라이언트."""
-    return TestClient(create_app(db_path, admin_token=TEST_TOKEN))
+    return TestClient(create_app(db_path, admin_token=TEST_TOKEN, period_date_field="payment_date"))
 
 
 def _put(client: TestClient, code: str, payload: object) -> Response:
@@ -65,9 +69,14 @@ class TestListPolicies:
         assert len(payload["policies"]) == SEED_POLICY_COUNT
 
     def test_seed_policy_codes(self, client: TestClient) -> None:
-        """정본 코드가 그대로 노출됩니다(GREEN 포함)."""
+        """정본 코드가 그대로 노출됩니다(비활성 ``GREEN`` 포함).
+
+        ⚠️ 기대 코드를 손으로 적지 않고 seed 정본과 대조합니다 — 2026-09-03
+        PM 확정(§0.22)으로 정책이 늘었을 때 이 목록만 뒤처졌기 때문입니다.
+        API 가 seed 를 **빠짐없이 그대로** 노출하는지가 이 시험의 요지입니다.
+        """
         codes = {item["policy_code"] for item in client.get("/policies").json()["policies"]}
-        assert codes == {"SMALL_BUSINESS", "WOMAN", "DISABLED", "STARTUP", "GREEN"}
+        assert codes == {seed.policy_code for seed in MVP_POLICY_SEEDS}
 
     def test_unset_target_rate_is_json_null(self, client: TestClient) -> None:
         """미설정 목표율은 문자열이 아니라 JSON null 입니다."""
@@ -81,12 +90,23 @@ class TestListPolicies:
         assert [item["target_rate"] for item in payload["policies"]] == [None] * SEED_POLICY_COUNT
 
     def test_includes_is_active(self, client: TestClient) -> None:
+        """활성 여부가 그대로 노출됩니다 — ``GREEN`` 만 비활성입니다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 2026-08-14 고객 결정(DECISIONS §0.5.1)으로
+            녹색제품이 이번 MVP 계산 대상에서 제외되었습니다. 목록에서 감추지
+            않는 이유는, 왜 변경되지 않는지를 화면에서 확인할 수 있어야 하기
+            때문입니다.
+        """
         payload = client.get("/policies").json()
-        assert all(item["is_active"] is True for item in payload["policies"])
+        inactive = {item["policy_code"] for item in payload["policies"] if not item["is_active"]}
+        assert inactive == {"GREEN"}
 
     def test_does_not_require_admin_token(self, db_path: Path) -> None:
         """조회는 관리자 인증 대상이 아닙니다(토큰 미설정 환경에서도 동작)."""
-        response = TestClient(create_app(db_path)).get("/policies")
+        response = TestClient(create_app(db_path, period_date_field="payment_date")).get(
+            "/policies"
+        )
         assert response.status_code == 200
 
 
@@ -128,9 +148,20 @@ class TestUpdateTargetRate:
         second = _put(client, "SMALL_BUSINESS", {"target_rate": "50"}).json()
         assert first["target_rate"] == second["target_rate"] == "50"
 
-    def test_green_policy_is_updatable(self, client: TestClient) -> None:
-        """녹색제품 정책도 등록 수단은 동일합니다(값은 넣어두지 않습니다)."""
-        assert _put(client, "GREEN", {"target_rate": "10"}).status_code == 200
+    def test_green_policy_target_rate_is_rejected(self, client: TestClient) -> None:
+        """⛔ 비활성 정책(녹색제품)의 목표율은 설정할 수 없습니다.
+
+        .. note::
+            **기대값이 바뀐 이유** — 이전에는 200 이었습니다. 2026-08-14 고객
+            결정(DECISIONS §0.5.1)으로 녹색제품이 계산 대상에서 제외되어
+            ``is_active=False`` 가 되었고, 관리 서비스는 비활성 정책의 목표율
+            변경을 거부합니다. 목표율만 넣으면 달성률이 계산되던 경로가
+            이것으로 막힙니다.
+        """
+        response = _put(client, "GREEN", {"target_rate": "10"})
+
+        assert response.status_code == 422
+        assert "비활성" in response.json()["detail"]
 
 
 class TestUpdateValidation:
@@ -166,7 +197,9 @@ class TestUpdateValidation:
         PolicyRepository(db_path).insert(
             Policy(policy_code="OFF", policy_name="폐지", is_active=False)
         )
-        client = TestClient(create_app(db_path, admin_token=TEST_TOKEN))
+        client = TestClient(
+            create_app(db_path, admin_token=TEST_TOKEN, period_date_field="payment_date")
+        )
 
         assert _put(client, "OFF", {"target_rate": "10"}).status_code == 422
 
@@ -204,7 +237,7 @@ class TestAdminAuth:
 
     def test_write_disabled_without_token_is_503(self, db_path: Path) -> None:
         """토큰이 설정되지 않으면 쓰기 API 는 비활성입니다."""
-        client = TestClient(create_app(db_path))
+        client = TestClient(create_app(db_path, period_date_field="payment_date"))
 
         response = client.put(
             "/policies/SMALL_BUSINESS/target-rate",
@@ -216,10 +249,10 @@ class TestAdminAuth:
 
     def test_read_apis_work_without_token(self, db_path: Path) -> None:
         """토큰 미설정 환경에서도 조회 API 2종은 정상 동작합니다."""
-        client = TestClient(create_app(db_path))
+        client = TestClient(create_app(db_path, period_date_field="payment_date"))
 
         assert client.get("/policies").status_code == 200
-        assert client.get("/dashboard/summary").status_code == 200
+        assert client.get("/dashboard/summary?year=2026").status_code == 200
 
 
 class TestDashboardIntegration:
@@ -255,6 +288,10 @@ class TestDashboardIntegration:
                 company_name="가기업",
                 contract_date=date(2026, 3, 1),
                 payment_date=date(2026, 3, 15),
+                # 결의일자 — 일반 정책의 인증 유효기간 판정 기준일이다
+                # (🟢 DECISIONS §0.12.1 · STEP 84). ⛔ 계산을 바꾼 것이 아니라
+                # 합성 데이터에 빠져 있던 필드를 채운 것이다.
+                resolution_date=date(2026, 3, 1),
                 amount=Decimal("1000000"),
                 company_id=company.company_id,
             )
@@ -262,16 +299,33 @@ class TestDashboardIntegration:
         return db_path
 
     def test_status_changes_after_target_rate_is_registered(self, seeded: Path) -> None:
-        """목표율 등록 전에는 TARGET_RATE_NOT_SET, 등록 후에는 계산 상태입니다."""
-        client = TestClient(create_app(seeded, admin_token=TEST_TOKEN))
+        """목표비율 등록 전에는 TARGET_RATE_NOT_SET, 등록 후에는 계산 상태입니다.
 
-        before = client.get("/dashboard/summary").json()
+        ⚠️ **STEP 93 규칙 변경.** 대시보드가 읽는 목표비율이 **연도별** 값으로
+        바뀌었다(DECISIONS §0.20 · 지시서 §8). 그래서 등록에 쓰는 경로가 구
+        ``PUT /policies/{code}/target-rate`` 에서 신규
+        ``PUT /policy-targets/{year}/{code}`` 로 옮겨졌다.
+
+        ⛔ 기대값은 그대로다 — "등록 전 미설정 → 등록 후 계산" 과 달성률 200%
+        를 여전히 검증한다. 구 API 자체는 삭제되지 않았고 다른 시험이 계속
+        검증한다(지시서 §7).
+        """
+        client = TestClient(
+            create_app(seeded, admin_token=TEST_TOKEN, period_date_field="payment_date")
+        )
+
+        before = client.get("/dashboard/summary?year=2026").json()
         item = {p["policy_code"]: p for p in before["policies"]}["SMALL_BUSINESS"]
         assert item["status"] == "TARGET_RATE_NOT_SET"
 
-        _put(client, "SMALL_BUSINESS", {"target_rate": "50"})
+        response = client.put(
+            "/policy-targets/2026/SMALL_BUSINESS",
+            json={"target_rate": "50"},
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        )
+        assert response.status_code == 200
 
-        after = client.get("/dashboard/summary").json()
+        after = client.get("/dashboard/summary?year=2026").json()
         item = {p["policy_code"]: p for p in after["policies"]}["SMALL_BUSINESS"]
         assert item["status"] != "TARGET_RATE_NOT_SET"
         assert item["target_rate"] == "50"
@@ -279,12 +333,14 @@ class TestDashboardIntegration:
 
     def test_reset_returns_to_not_set(self, seeded: Path) -> None:
         """해제하면 다시 목표율 미설정 상태로 돌아갑니다."""
-        client = TestClient(create_app(seeded, admin_token=TEST_TOKEN))
+        client = TestClient(
+            create_app(seeded, admin_token=TEST_TOKEN, period_date_field="payment_date")
+        )
         _put(client, "SMALL_BUSINESS", {"target_rate": "50"})
 
         _put(client, "SMALL_BUSINESS", {"target_rate": None})
 
-        payload = client.get("/dashboard/summary").json()
+        payload = client.get("/dashboard/summary?year=2026").json()
         item = {p["policy_code"]: p for p in payload["policies"]}["SMALL_BUSINESS"]
         assert item["status"] == "TARGET_RATE_NOT_SET"
         assert item["target_rate"] is None
@@ -294,7 +350,7 @@ class TestExistingBehaviourPreserved:
     """기존 API·예외 처리에 영향이 없는지 확인합니다."""
 
     def test_dashboard_endpoint_still_works(self, client: TestClient) -> None:
-        assert client.get("/dashboard/summary").status_code == 200
+        assert client.get("/dashboard/summary?year=2026").status_code == 200
 
     def test_no_new_global_exception_handlers(self, db_path: Path) -> None:
         """전역 예외 처리 방식을 바꾸지 않았습니다.
@@ -307,7 +363,7 @@ class TestExistingBehaviourPreserved:
         from procurement.calculators.procurement_achievement import CalculatorValidationError
         from procurement.database.policy_repository import PolicyValidationError
 
-        app = create_app(db_path, admin_token=TEST_TOKEN)
+        app = create_app(db_path, admin_token=TEST_TOKEN, period_date_field="payment_date")
         registered = set(app.exception_handlers)
 
         assert CalculatorValidationError in registered
