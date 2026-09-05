@@ -179,6 +179,7 @@ from procurement.reviews.review_service import (
     ReviewService,
     ReviewStateError,
 )
+from procurement.reviews.rule_classification import RuleClassifier
 from procurement.uploads.company_source_service import (
     CompanyApiClient,
     CompanySourceService,
@@ -595,6 +596,27 @@ class UploadImportRequestModel(UploadRequestModel):
     )
 
 
+class RuleClassificationResponseModel(BaseModel):
+    """확정 규칙 적용 결과(STEP 122).
+
+    Attributes:
+        examined: 살펴본 거래 수.
+        classified: 규칙으로 **새로 확정한** 거래 수.
+        already_decided: 이미 유형이 있어 건너뛴 거래 수.
+            ⛔ 담당자가 고른 값을 덮어쓰지 않았습니다.
+        pending: 규칙에 없어 **담당자 검토로 남은** 거래 수.
+        by_type: 유형별 확정 건수.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    examined: int
+    classified: int
+    already_decided: int
+    pending: int
+    by_type: dict[str, int]
+
+
 class UploadMonthResponseModel(BaseModel):
     """한 달의 적재 여부.
 
@@ -876,6 +898,11 @@ def create_app(
     )
     # 월별 적재 현황 조회용 — 계산과 **같은 저장소**를 본다(STEP 119 §7).
     purchase_repository = PurchaseRepository(db_path if db_path is not None else settings.db_file)
+    # 확정 규칙으로만 구매유형을 자동 확정한다(STEP 122). ⛔ 추측하지 않는다.
+    rule_classifier = RuleClassifier(
+        purchase_repository,
+        ReviewRepository(db_path if db_path is not None else settings.db_file),
+    )
 
     def _record_company_source(
         policy_code: str,
@@ -1555,7 +1582,55 @@ def create_app(
             ) from exc
         except ImportBatchValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        if result.stored and date_field is not None:
+            # 🟢 적재 직후 **고객이 확정한 규칙**만 적용한다(STEP 122 §5).
+            # ⛔ 추측하지 않는다 — 예산과목 완전 일치 2건뿐이며, 나머지는
+            #    담당자 검토 대상으로 남는다.
+            # ⛔ 기준일 설정이 비어 있으면 돌리지 않는다 — 어느 기간을 볼지
+            #    임의로 정하지 않는다(D-24).
+            rule_classifier.apply(
+                PeriodFilter(start=period_start, end=period_end, date_field=date_field)
+            )
         return build_upload_response(result)
+
+    @app.post(
+        "/reviews/apply-rules",
+        response_model=RuleClassificationResponseModel,
+        summary="확정 규칙으로 구매유형 자동 확정",
+        tags=["reviews"],
+    )
+    def apply_purchase_type_rules(year: int | None = None) -> RuleClassificationResponseModel:
+        """**고객이 확정한 규칙**에 해당하는 거래의 구매유형을 확정합니다.
+
+        업로드할 때 자동으로 한 번 돌지만, **이미 올라와 있는 데이터**에도
+        적용할 수 있도록 열어 둔 입구입니다.
+
+        .. warning::
+            ⛔ **추측하지 않습니다.** 예산과목이 ``도서인쇄비`` ·
+            ``소모성물품구입비`` 와 **정확히 같은** 거래만 물품으로 확정합니다.
+            적요·거래처명·금액을 보지 않으며, 그 밖의 거래는 손대지 않고
+            **담당자 검토 대상**으로 남깁니다.
+
+        .. warning::
+            ⛔ **담당자가 고른 값을 덮어쓰지 않습니다.** 이미 유형이 정해진
+            거래는 건너뜁니다.
+
+        자동 확정도 이력에 남고, 담당자가 검토 화면에서 **다시 바꿀 수
+        있습니다**(``PUT /reviews/{purchase_id}``).
+
+        Args:
+            year: 좁힐 연도. 생략하면 전체입니다.
+        """
+        period = _require_period(year, date_field) if year is not None else None
+        outcome = rule_classifier.apply(period)
+        return RuleClassificationResponseModel(
+            examined=outcome.examined,
+            classified=outcome.classified,
+            already_decided=outcome.already_decided,
+            pending=outcome.pending,
+            by_type=dict(outcome.by_type or {}),
+        )
 
     @app.get(
         "/uploads/purchases/months",

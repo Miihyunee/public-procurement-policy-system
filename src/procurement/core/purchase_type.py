@@ -60,6 +60,72 @@ CONFIRMED_BUDGET_ACCOUNT_TYPES: Final[MappingProxyType[str, str]] = MappingProxy
 )
 
 
+#: 🟢 **자동판정에 쓰는 예산과목 (STEP 122).**
+#:
+#: :data:`CONFIRMED_BUDGET_ACCOUNT_TYPES` 의 3건 중 **실측으로 한 유형만 나온**
+#: 둘입니다(``PURCHASE_TYPE_CLASSIFICATION_ANALYSIS.md`` §165~167).
+#:
+#: ==================  ======  ======  ======  ==========
+#: 예산과목              물품    용역    공사    판정
+#: ==================  ======  ======  ======  ==========
+#: 소모성물품구입비        214       0       0   단일 ✅
+#: 도서인쇄비              122       0       0   단일 ✅
+#: **임차료**                3     210       0   🔴 혼재
+#: ==================  ======  ======  ======  ==========
+#:
+#: .. warning::
+#:     ⛔ **``임차료`` 는 빠져 있습니다.** 213건 중 3건이 물품이라
+#:     ``DECISIONS.md`` §0.9.4 가 **계산 연결을 보류**했고 §0.9.5 가 그 보류를
+#:     유지했습니다. 자동으로 용역이라고 확정하면 그 3건이 조용히 틀립니다.
+#:     보류를 푸는 것은 **고객 확인 사항**입니다.
+#:
+#: .. warning::
+#:     ⛔ **여기에 항목을 더하지 않습니다.** 판정 원칙 2 — 「예산과목 단독으로도
+#:     확정하지 않는다」(§0.9.5) — 가 그대로 살아 있습니다. ``외주용역비``(용역
+#:     201 / 공사 69) · ``각종수수료`` · ``행사운영비`` · ``자산취득비`` 는
+#:     어느 것도 한 유형으로 모이지 않습니다.
+RULE_CLASSIFIABLE_BUDGET_ACCOUNTS: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {
+        "도서인쇄비": GOODS,
+        "소모성물품구입비": GOODS,
+    }
+)
+
+
+def classify_by_confirmed_rule(budget_account: str | None) -> str | None:
+    """**자동으로 확정해도 되는** 구매유형을 돌려줍니다(STEP 122).
+
+    :func:`classify_budget_account` 와 달리 **보류된 매핑을 빼고** 봅니다.
+    지금은 ``도서인쇄비`` · ``소모성물품구입비`` 둘뿐이며, 둘 다 실측에서
+    **다른 유형이 한 건도 나오지 않은** 항목입니다.
+
+    **완전 일치**로만 판정합니다. ⛔ 「도서가 들어가면 물품」 같은 부분 문자열
+    규칙을 만들지 않습니다 — 그렇게 하면 고객이 직접 부정한 사례(기념품
+    KC인증 → 용역, 나라장터 물품 수수료 → 물품)를 그대로 틀리게 됩니다.
+
+    Args:
+        budget_account: 지출데이터의 예산과목 값.
+
+    Returns:
+        자동 확정할 구매유형. 확정 근거가 없으면 ``None`` — 그 거래는
+        **담당자 검토 대상**으로 남습니다.
+
+    Examples:
+        >>> classify_by_confirmed_rule("도서인쇄비")
+        'GOODS'
+        >>> classify_by_confirmed_rule("임차료") is None      # 보류(§0.9.4)
+        True
+        >>> classify_by_confirmed_rule("외주용역비") is None  # 혼재 — 미확정
+        True
+    """
+    if budget_account is None:
+        return None
+    key = budget_account.strip()
+    if not key:
+        return None
+    return RULE_CLASSIFIABLE_BUDGET_ACCOUNTS.get(key)
+
+
 def classify_budget_account(budget_account: str | None) -> str | None:
     """예산과목을 구매유형으로 분류합니다.
 
