@@ -52,9 +52,13 @@ function backendConfig() {
     };
   }
 
-  // 배포본: 번들된 실행파일 경로. 실제 번들 방식은 아직 확정되지 않았다.
+  // 배포본: PyInstaller 로 묶은 백엔드 실행파일.
+  //
+  // ⚠️ Windows 에서는 확장자가 있어야 한다. `spawn("...\\backend\\procurement")`
+  //    처럼 확장자 없이 부르면 파일을 찾지 못한다(ENOENT).
+  const executable = process.platform === "win32" ? "procurement.exe" : "procurement";
   return {
-    backendExecutable: path.join(process.resourcesPath, "backend", "procurement"),
+    backendExecutable: path.join(process.resourcesPath, "backend", executable),
     userDataDir: app.getPath("userData"),
   };
 }

@@ -31,6 +31,10 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+#   ⭐ 단, 우리가 손으로 쓴 빌드 사양은 저장소에 남긴다.
+#      (위 규칙은 PyInstaller 가 자동 생성한 .spec 을 겨냥한 것이다.
+#       이것까지 빠지면 배포본을 만들 방법이 저장소에 없어진다.)
+!packaging/*.spec
 
 # Installer logs
 pip-log.txt

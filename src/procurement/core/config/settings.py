@@ -18,14 +18,96 @@ procurement.core.config.settings
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# 프로젝트 루트: 이 파일 기준 5단계 상위 (src/procurement/core/config/settings.py)
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+#: 사용자 데이터 폴더 이름. `package.json` 의 앱 이름과 **같게** 둔다 —
+#: Electron 이 만드는 `userData` 폴더와 같은 자리를 가리켜야 하기 때문이다.
+_APP_DIR_NAME = "procurement-desktop"
+
+
+def is_frozen() -> bool:
+    """PyInstaller 등으로 **묶여서** 실행 중인가.
+
+    묶인 실행파일에서는 :data:`sys.frozen` 이 붙습니다. 이 값으로 「소스가 있는
+    개발 환경」과 「배포본」을 가릅니다.
+    """
+    return bool(getattr(sys, "frozen", False))
+
+
+def user_data_root() -> Path:
+    """고객 데이터를 두는 폴더 (STEP 125 §6).
+
+    프로그램이 설치되는 자리(`C:\\Program Files\\...`)는 일반 사용자 권한으로
+    **쓸 수 없고**, 프로그램을 새 버전으로 덮으면 **함께 지워질 수** 있습니다.
+    그래서 데이터는 설치 자리 밖에 둡니다.
+
+    ============  ================================================
+    Windows       ``%APPDATA%\\procurement-desktop``
+    그 밖         ``$XDG_DATA_HOME`` 또는 ``~/.local/share`` 아래
+    ============  ================================================
+
+    .. note::
+        Electron 이 넘겨 주는 ``userData`` 폴더와 **같은 이름**을 씁니다.
+        백엔드를 단독 실행하든 Electron 이 띄우든 같은 자리를 보게 됩니다.
+    """
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata) / _APP_DIR_NAME
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if xdg:
+        return Path(xdg) / _APP_DIR_NAME
+    return Path.home() / ".local" / "share" / _APP_DIR_NAME
+
+
+def default_root() -> Path:
+    """기본 경로들의 **기준 폴더**.
+
+    .. warning::
+        ⛔ **묶인 실행파일에서 소스 위치를 기준으로 삼지 않습니다.**
+
+        예전에는 언제나 ``Path(__file__).resolve().parents[4]`` 였습니다. 개발
+        환경에서는 프로젝트 루트가 정확히 잡히지만, PyInstaller 로 묶으면 이
+        파일이 **임시로 풀린 폴더** 안에 놓여 그 위 어딘가를 가리킵니다. 거기에
+        DB 를 만들면 프로그램을 끌 때 **고객 데이터가 사라집니다**(STEP 124 §4.1).
+
+    ⭐ **환경변수가 언제나 이깁니다.** 여기서 정하는 것은 «아무것도 지정하지
+    않았을 때의 기본값» 뿐이며, ``DATABASE_PATH`` 를 주면 그 값이 쓰입니다
+    (Electron 은 이미 그렇게 넘깁니다).
+    """
+    if is_frozen():
+        return user_data_root()
+    # 프로젝트 루트: 이 파일 기준 5단계 상위 (src/procurement/core/config/settings.py)
+    return Path(__file__).resolve().parents[4]
+
+
+#: 기본 경로의 기준 폴더. 실행 형태는 도중에 바뀌지 않으므로 한 번만 정합니다.
+_PROJECT_ROOT = default_root()
+
+
+def _env_files() -> tuple[str, ...]:
+    """설정 파일을 찾을 자리 (STEP 125 §5).
+
+    ⛔ 예전에는 ``".env"`` 하나였고, 그것은 **현재 작업 디렉터리 기준**입니다.
+    바탕화면 바로가기로 켜면 작업 디렉터리가 임의라 찾지 못합니다.
+
+    그래서 **사용자 데이터 폴더의 ``.env`` 를 함께** 봅니다. 순서는
+
+    1. ``<사용자 데이터 폴더>/.env`` — 배포본에서 고객이 API 키를 두는 자리
+    2. ``.env`` — 개발 환경에서 쓰던 자리. **뒤에 두어 이깁니다.**
+
+    ⭐ 어느 쪽이든 **환경변수가 그보다 먼저**입니다. ``DATABASE_PATH`` 우선순위는
+    그대로입니다.
+
+    ⛔ API 키를 실행파일에 넣지 않습니다. 고객 기관이 발급받는 값이며, 넣으면
+    꺼내 볼 수 있습니다.
+    """
+    return (str(user_data_root() / ".env"), ".env")
 
 
 class Settings(BaseSettings):
@@ -35,7 +117,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_env_files(),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

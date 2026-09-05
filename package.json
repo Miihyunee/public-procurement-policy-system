@@ -6,13 +6,48 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
-    "verify:backend": "node scripts/verify-backend.js"
+    "verify:backend": "node scripts/verify-backend.js",
+    "build:backend": "pyinstaller packaging/procurement-backend.spec",
+    "build:desktop": "electron-builder --win"
   },
   "devDependencies": {
-    "electron": "^43.4.0"
+    "electron": "^43.4.0",
+    "electron-builder": "^24.13.3"
   },
   "//": [
-    "electron-builder(배포 설정)는 아직 추가하지 않았다. PM 승인 후 결정한다.",
-    "Python backend 번들 방식(PyInstaller 등)도 미확정이다."
-  ]
+    "build:backend → PyInstaller 로 백엔드를 dist/procurement/ 에 만든다.",
+    "build:desktop → 그 폴더를 resources/backend/ 로 담아 Setup.exe 를 만든다.",
+    "⚠️ 두 빌드 모두 Windows 에서 실행해야 한다 — PyInstaller 는 크로스 컴파일을 하지 않는다.",
+    "⛔ nsis.deleteAppDataOnUninstall=false — 프로그램을 지워도 고객 데이터(%APPDATA%)는 남긴다.",
+    "⛔ 코드 서명은 넣지 않았다. 서명 없는 EXE 는 SmartScreen 경고가 뜬다(STEP 125 §30)."
+  ],
+  "build": {
+    "appId": "kr.go.procurement.desktop",
+    "productName": "공공구매정책관리시스템",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/procurement",
+        "to": "backend"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
 }
