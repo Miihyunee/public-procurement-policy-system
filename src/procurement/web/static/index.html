@@ -345,6 +345,24 @@
   /* 나란히 놓인 카드의 높이가 달라도 내부 여백이 비지 않도록 늘린다. */
   .card > .kpi-grid, .card > .policy-grid { flex: 1 1 auto; }
   .card-title { font-size: 15px; font-weight: 700; margin: 0; }
+
+  /* ------------------------------------------- 월별 적재 현황 (STEP 119) */
+  /* 색만으로 알리지 않는다 — ●/○ 기호와 「완료/미업로드」 글자를 함께 둔다. */
+  .months {
+    display: grid; grid-template-columns: repeat(6, 1fr);
+    gap: 8px; margin-top: 16px;
+  }
+  @media (max-width: 720px) { .months { grid-template-columns: repeat(3, 1fr); } }
+  .month {
+    background: var(--card-soft); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 6px; text-align: center;
+  }
+  .month-name { font-size: 12.5px; font-weight: 600; }
+  .month-mark { font-size: 15px; line-height: 1.3; }
+  .month-state { font-size: 11px; color: var(--muted); }
+  .month.is-uploaded { border-color: var(--normal); }
+  .month.is-uploaded .month-mark { color: var(--normal); }
+  .month.is-missing .month-mark { color: var(--unset); }
   .card-sub { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
   .card-head { display: flex; align-items: flex-start; gap: 10px; }
 
@@ -507,6 +525,19 @@
       <h2 class="card-title">데이터 적재 현황</h2>
       <table class="kv"><tbody id="status-table"></tbody></table>
       <p class="foot-note" id="status-note"></p>
+    </section>
+
+    <!--
+      월별 지출데이터 적재 현황 (STEP 119 §5).
+
+      ⭐ 월별 «달성률» 이 아니라 «올렸는가» 다. 담당자가 「올해 몇 월까지
+         올라왔지?」 를 한눈에 보기 위한 자리다.
+      ⛔ 추이 그래프를 만들지 않는다 — 고객이 요청하지 않았다.
+    -->
+    <section class="card">
+      <h2 class="card-title">월별 지출데이터 적재 현황</h2>
+      <div class="months" id="upload-months"></div>
+      <p class="foot-note" id="upload-months-note"></p>
     </section>
   </div>
 
@@ -1204,6 +1235,38 @@
     return DATE_FIELD_LABEL[field] || field || "-";
   }
 
+  // ------------------------------------------------- 월별 적재 현황 (STEP 119)
+  //
+  // ⭐ 월별 «달성률» 이 아니다. 「올해 몇 월 데이터까지 올라왔는가」 하나만
+  //    보여준다.
+  // ⛔ 화면이 스스로 판정하지 않는다 — 백엔드가 준 uploaded 를 그릴 뿐이다.
+  //    (백엔드는 계산과 같은 데이터를 결의일자로 가른다.)
+  function renderUploadMonths(payload) {
+    var box = el("upload-months");
+    box.replaceChildren();
+    if (!payload || !payload.months) {
+      text(el("upload-months-note"), "월별 적재 현황을 불러오지 못했습니다.");
+      return;
+    }
+
+    var done = 0;
+    payload.months.forEach(function (item) {
+      var cell = make("div", "month " + (item.uploaded ? "is-uploaded" : "is-missing"));
+      cell.appendChild(make("div", "month-name", item.month + "월"));
+      cell.appendChild(make("div", "month-mark", item.uploaded ? "●" : "○"));
+      cell.appendChild(make("div", "month-state", item.uploaded ? "업로드 완료" : "미업로드"));
+      // 색만으로 알리지 않는다 — 읽어 주는 도구를 위해 문장으로도 남긴다.
+      cell.setAttribute("aria-label",
+        item.month + "월 " + (item.uploaded ? "업로드 완료" : "미업로드"));
+      box.appendChild(cell);
+      if (item.uploaded) { done += 1; }
+    });
+
+    text(el("upload-months-note"),
+      payload.year + "년 — 열두 달 중 " + done + "개월치가 올라와 있습니다. "
+      + "대시보드의 실적은 올라온 달의 누적입니다.");
+  }
+
   // ------------------------------------------------------------ 적재 현황 표
   function renderStatusTable(status) {
     var badge = el("data-mode-badge");
@@ -1748,9 +1811,10 @@
     box.appendChild(table);
   }
 
-  function draw(status, summaryResult, displayMap) {
+  function draw(status, summaryResult, displayMap, uploadMonths) {
     renderKpi(status);
     renderStatusTable(status);
+    renderUploadMonths(uploadMonths);
     renderVolume(status);
     renderGauge(status);
     renderMissingResolutionDate(summaryResult);
@@ -1775,7 +1839,7 @@
 
   /** 테마를 바꾸면 SVG 색상 변수를 다시 읽어야 하므로 마지막 데이터로 다시 그린다. */
   function redraw() {
-    if (lastData) { draw(lastData[0], lastData[1], lastData[2]); }
+    if (lastData) { draw(lastData[0], lastData[1], lastData[2], lastData[3]); }
   }
 
   function load() {
@@ -1796,14 +1860,20 @@
         function (err) { return { ok: false, reason: err.message }; }
       ),
       fetchJson("/dashboard/policy-display"),
-      fetchJson("/dashboard/achievement-levels")
+      fetchJson("/dashboard/achievement-levels"),
+      // 월별 적재 현황도 summary 와 마찬가지로 실패를 개별 흡수한다 —
+      // 이 칸이 안 나온다고 대시보드 전체가 사라지면 안 된다.
+      fetchJson("/uploads/purchases/months?year=" + encodeURIComponent(year)).then(
+        function (body) { return body; },
+        function () { return null; }
+      )
     ])
       .then(function (results) {
         var displayMap = {};
         results[2].items.forEach(function (item) { displayMap[item.policy_code] = item; });
         levels = results[3];
-        lastData = [results[0], results[1], displayMap];
-        draw(results[0], results[1], displayMap);
+        lastData = [results[0], results[1], displayMap, results[4]];
+        draw(results[0], results[1], displayMap, results[4]);
       })
       .catch(function (err) {
         var box = el("error-box");
@@ -2525,12 +2595,23 @@
   // ⛔ 판단은 **백엔드가** 한다. 화면은 409 를 받고 문장을 보여줄 뿐이며,
   //    "기존 데이터가 있는가" 를 화면이 스스로 계산하지 않는다.
   function confirmReplace(detail) {
+    // ⭐ 어느 기간인지는 **백엔드가 쓴 문장**을 그대로 쓴다. 월 업로드면
+    //    「2026년 8월 데이터가 이미 등록되어 있습니다」 처럼 달까지 들어 있다.
+    //    화면이 연/월을 다시 조립하면 백엔드와 어긋날 자리가 생긴다.
     var year = detail && detail.year ? detail.year : "";
+    var head = (detail && detail.message)
+      ? detail.message.replace(/\.$/, "")
+      : (year + "년 데이터가 이미 등록되어 있습니다");
     var rows = detail && detail.existing_row_count ? detail.existing_row_count : 0;
+    var label = (detail && detail.month)
+      ? (detail.year + "년 " + detail.month + "월")
+      : (year + "년");
     return window.confirm(
-      year + "년 데이터가 이미 등록되어 있습니다"
-      + (rows ? " (" + numberFormat(rows) + "건)" : "") + ".\n\n"
-      + "기존 데이터를 새 파일로 교체하시겠습니까?"
+      head + (rows ? " (" + numberFormat(rows) + "건)" : "") + ".\n\n"
+      + "기존 " + label + " 데이터를 삭제하고 새로 업로드한 데이터로 "
+      + "교체하시겠습니까?\n\n"
+      + "⛔ 그 달에 확정해 두신 구매유형은 새 데이터에 자동으로 옮겨지지 "
+      + "않습니다."
     );
   }
 

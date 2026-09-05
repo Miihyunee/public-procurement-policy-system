@@ -393,6 +393,43 @@ class PurchaseRepository(BaseRepository):
         rows = self.execute(f"SELECT * FROM purchase{where} ORDER BY purchase_id", tuple(params))
         return [self._row_to_purchase(row) for row in rows]
 
+    def months_with_purchases(self, year: int) -> set[int]:
+        """그 해에 **지출 데이터가 들어와 있는 달**(1~12)을 돌려줍니다.
+
+        「올해 몇 월까지 올라왔는가」를 화면에 보여 주기 위한 조회입니다
+        (STEP 119 §5·§6).
+
+        판정 기준은 **계산에 쓰는 것과 같습니다** — 활성 배치의 행만 보고,
+        달은 **결의일자**로 가릅니다(🟢 §0.10 · STEP 86). 그래서 화면의 「업로드
+        완료」와 대시보드의 누적 실적이 **같은 데이터를 가리킵니다**.
+
+        .. warning::
+            ⛔ **새 업무규칙을 만들지 않습니다.** 「몇 건 이상이면 완료」 같은
+            기준을 두지 않고, 그 달의 계산 대상 행이 **하나라도 있으면** 완료로
+            봅니다. ⛔ 신고기준일·계약일자·지급일로 달을 가르지 않습니다.
+
+        .. note::
+            대체된(비활성) 배치의 행은 세지 않습니다. 계산에서도 빠지는 행이므로,
+            세면 화면과 실적이 어긋납니다.
+
+        Args:
+            year: 대상 연도.
+
+        Returns:
+            데이터가 있는 달의 집합. 없으면 빈 집합.
+        """
+        conditions, params = self._review_scope_conditions(None)
+        conditions.append("resolution_date BETWEEN ? AND ?")
+        params.append(_to_db_date(date(year, 1, 1)))
+        params.append(_to_db_date(date(year, 12, 31)))
+        where = " AND ".join(conditions)
+        rows = self.execute(
+            f"SELECT DISTINCT CAST(strftime('%m', resolution_date) AS INTEGER) AS month "
+            f"FROM purchase WHERE {where}",
+            tuple(params),
+        )
+        return {int(row["month"]) for row in rows if row["month"] is not None}
+
     def count_missing_resolution_date(self) -> tuple[int, Decimal]:
         """**결의일자가 없는** 계산 대상 구매의 건수와 금액 합계를 셉니다.
 

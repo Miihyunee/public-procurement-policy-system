@@ -234,6 +234,23 @@ class BatchImportService:
         """
         return self._batch_repository.find_active_by_period(period_start, period_end)
 
+    def find_overlapping_batches(self, period_start: date, period_end: date) -> list[ImportBatch]:
+        """대상 기간과 **겹치는(기간이 다른)** ACTIVE 배치를 조회합니다(읽기 전용).
+
+        한 해치를 통짜로 올려 둔 상태에서 한 달치를 올리는 경우를 잡습니다.
+        그대로 두면 그 달 행이 두 배치에 남아 이중 집계되므로, 호출부는 이
+        결과가 비어 있지 않으면 적재하지 않습니다(STEP 119 §8·§9).
+
+        Args:
+            period_start: 대상 기간 시작일.
+            period_end: 대상 기간 종료일.
+
+        Returns:
+            겹치는 ACTIVE 배치 목록. 기간이 **정확히 같은** 배치는 빠집니다 —
+            그쪽은 :meth:`find_active_batch` 가 잡아 교체 확인으로 이어집니다.
+        """
+        return self._batch_repository.find_active_overlapping(period_start, period_end)
+
     def find_conflicts(self, period_start: date, period_end: date) -> list[ImportBatch]:
         """같은 기간에 ACTIVE 배치가 2 개 이상 남아 있는지 점검합니다.
 

@@ -185,7 +185,11 @@ from procurement.uploads.company_source_service import (
 )
 from procurement.uploads.template import TEMPLATE_FILE_NAME, build_template_bytes
 from procurement.uploads.upload_response import UploadResponseModel, build_upload_response
-from procurement.uploads.upload_service import ExistingPeriodBatchError, UploadService
+from procurement.uploads.upload_service import (
+    ExistingPeriodBatchError,
+    OverlappingPeriodBatchError,
+    UploadService,
+)
 from procurement.uploads.validation import ValidationReport
 from procurement.web import (
     AchievementLevelsResponseModel,
@@ -590,6 +594,37 @@ class UploadImportRequestModel(UploadRequestModel):
     )
 
 
+class UploadMonthResponseModel(BaseModel):
+    """한 달의 적재 여부.
+
+    Attributes:
+        month: 달(1~12).
+        uploaded: 그 달의 지출 데이터가 들어와 있으면 ``True``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    month: int
+    uploaded: bool
+
+
+class UploadMonthStatusResponseModel(BaseModel):
+    """그 해 1~12월의 적재 현황(STEP 119 §13).
+
+    ⭐ **월별 달성률이 아닙니다.** 「올해 몇 월 데이터까지 올렸는가」만 답합니다.
+
+    Attributes:
+        year: 대상 연도.
+        months: 1월부터 12월까지 **열두 칸 모두**. 빠진 달이 없어야 화면이
+            「아직 안 올린 달」을 보여 줄 수 있습니다.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    year: int
+    months: list[UploadMonthResponseModel]
+
+
 class CompanyUploadRequestModel(BaseModel):
     """기업정보 파일 업로드 요청.
 
@@ -838,6 +873,8 @@ def create_app(
     company_source_registry = PolicyCompanySourceRepository(
         db_path if db_path is not None else settings.db_file
     )
+    # 월별 적재 현황 조회용 — 계산과 **같은 저장소**를 본다(STEP 119 §7).
+    purchase_repository = PurchaseRepository(db_path if db_path is not None else settings.db_file)
 
     def _record_company_source(
         policy_code: str,
@@ -1461,9 +1498,72 @@ def create_app(
                     "month": payload.month,
                 },
             ) from exc
+        except OverlappingPeriodBatchError as exc:
+            # ⛔ 교체 확인으로 넘어갈 수 없는 자리다. 겹친 배치를 대체하면 그
+            #    안의 다른 달까지 사라지고(§9 금지), 두면 그 달이 이중 집계된다
+            #    (§8 금지). 어느 쪽도 안전하지 않아 **적재하지 않는다.**
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "OVERLAPPING_PERIOD",
+                    "message": (
+                        f"{label} 자료와 **기간이 겹치는** 데이터가 이미 등록되어 "
+                        "있습니다. 겹치는 기간이 서로 달라 그 달만 바꿀 수 없습니다."
+                    ),
+                    "existing": [
+                        {
+                            "batch_id": row.batch_id,
+                            "file_name": row.file_name,
+                            "row_count": row.row_count,
+                            "period_start": str(row.period_start),
+                            "period_end": str(row.period_end),
+                        }
+                        for row in exc.existing
+                    ],
+                    "year": payload.year,
+                    "month": payload.month,
+                    "hint": (
+                        "한 해치를 통짜로 올려 두셨다면, 같은 범위(연도 전체)로 "
+                        "다시 올리시거나 달 단위로 나누어 올려 주십시오."
+                    ),
+                },
+            ) from exc
         except ImportBatchValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return build_upload_response(result)
+
+    @app.get(
+        "/uploads/purchases/months",
+        response_model=UploadMonthStatusResponseModel,
+        summary="월별 지출 데이터 적재 현황",
+        tags=["uploads"],
+    )
+    def purchase_upload_months(year: int) -> UploadMonthStatusResponseModel:
+        """그 해 1~12월 중 **어느 달까지 올라와 있는지** 돌려줍니다(STEP 119 §5).
+
+        ⭐ **월별 달성률이 아닙니다.** 「올해 몇 월 데이터까지 올렸는가」 하나만
+        답합니다.
+
+        판정 기준은 대시보드의 누적 실적과 **같은 데이터**입니다 — 활성 배치의
+        행을 **결의일자**로 가릅니다. 그래서 「업로드 완료」로 보이는 달은 반드시
+        누적 실적에도 들어가 있습니다(§7).
+
+        .. warning::
+            ⛔ **새 업무규칙을 만들지 않았습니다.** 그 달의 계산 대상 행이
+            하나라도 있으면 완료이고, 없으면 미업로드입니다. 「몇 건 이상」 같은
+            기준도, 신고기준일·계약일자로 달을 가르는 일도 없습니다.
+
+        Args:
+            year: 대상 연도. ⛔ 다른 연도와 섞이지 않습니다.
+        """
+        uploaded = purchase_repository.months_with_purchases(year)
+        return UploadMonthStatusResponseModel(
+            year=year,
+            months=[
+                UploadMonthResponseModel(month=month, uploaded=month in uploaded)
+                for month in range(1, 13)
+            ],
+        )
 
     # ------------------------------------------------------------------
     # 담당자 검토 (DB-2) — 구매유형 확정

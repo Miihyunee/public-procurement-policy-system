@@ -226,6 +226,41 @@ class ImportBatchRepository(BaseRepository):
         )
         return [self._row_to_batch(row) for row in rows]
 
+    def find_active_overlapping(self, period_start: date, period_end: date) -> list[ImportBatch]:
+        """대상 기간과 **겹치는** ACTIVE 배치를 조회합니다(기간이 달라도).
+
+        같은 기간의 배치는 :meth:`find_active_by_period` 가 잡아 교체 확인으로
+        이어집니다. 이 조회는 그 바깥 — **기간이 서로 다른데 겹치는** 경우를
+        찾습니다. 대표적으로 한 해치를 통짜(``1/1~12/31``)로 올려 둔 상태에서
+        한 달치를 올리는 경우입니다.
+
+        .. warning::
+            ⚠️ 겹친 채로 두면 그 달 행이 **두 배치에 모두 남아** 이중으로
+            집계됩니다(STEP 119 §8 이 금지하는 상태). 그래서 호출부는 이
+            결과가 비어 있지 않으면 적재를 거절합니다.
+
+        Args:
+            period_start: 대상 기간 시작일.
+            period_end: 대상 기간 종료일.
+
+        Returns:
+            겹치는 ACTIVE 배치 목록. **기간이 정확히 같은 것은 제외**합니다.
+        """
+        rows = self.execute(
+            "SELECT * FROM import_batch "
+            "WHERE status = ? AND period_start <= ? AND period_end >= ? "
+            "AND NOT (period_start = ? AND period_end = ?) "
+            "ORDER BY batch_id",
+            (
+                STATUS_ACTIVE,
+                _to_db_date(period_end),
+                _to_db_date(period_start),
+                _to_db_date(period_start),
+                _to_db_date(period_end),
+            ),
+        )
+        return [self._row_to_batch(row) for row in rows]
+
     def find_by_file_hash(self, file_hash: str) -> list[ImportBatch]:
         """같은 내용 해시를 가진 배치를 조회합니다.
 

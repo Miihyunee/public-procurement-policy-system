@@ -40,6 +40,7 @@ procurement.uploads.upload_service
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -227,6 +228,16 @@ class UploadService:
             #    교체 여부도 묻지 않는다 — 저장할 수 없는 파일이기 때문이다.
             return _with_note(result, NOT_STORED_NOTE)
 
+        # ⛔ 기간이 **겹치기만 하는** 기존 데이터가 있으면 적재하지 않는다.
+        #    교체하면 다른 달까지 사라지고, 두면 그 달이 이중 집계된다(STEP 119).
+        overlapping = self._batch_import_service.find_overlapping_batches(period_start, period_end)
+        if overlapping:
+            raise OverlappingPeriodBatchError(
+                existing=overlapping,
+                period_start=period_start,
+                period_end=period_end,
+            )
+
         existing = self._batch_import_service.find_active_batch(period_start, period_end)
         if existing is not None and not replace_existing:
             # ⛔ 묻지 않고 교체하지 않는다. 여기서 멈추므로 DB 는 그대로다.
@@ -307,6 +318,47 @@ class ExistingPeriodBatchError(RuntimeError):
         self.period_end = period_end
         super().__init__(
             f"{period_start.year}년 데이터가 이미 등록되어 있습니다(배치 #{existing.batch_id})."
+        )
+
+
+class OverlappingPeriodBatchError(RuntimeError):
+    """대상 기간과 **겹치는** 기존 데이터가 있어 적재를 거절할 때 발생합니다.
+
+    같은 기간이 아니라 **다른 기간인데 겹치는** 경우입니다. 한 해치를 통짜로
+    (``1/1~12/31``) 올려 둔 상태에서 한 달치를 올리는 것이 대표적입니다.
+
+    .. warning::
+        ⛔ **교체 확인으로 해결되지 않습니다.** 겹친 배치를 대체해 버리면
+        그 안의 **다른 달까지 함께 사라집니다**(STEP 119 §9 금지). 그렇다고
+        그대로 두면 그 달 행이 두 배치에 남아 **이중으로 집계**됩니다(§8 금지).
+
+        어느 쪽도 안전하지 않으므로 **적재하지 않고 그대로 둡니다.** 「한 해
+        통짜 데이터가 있을 때 한 달만 바꾸려면 어떻게 하는가」는 아직 정해지지
+        않은 업무규칙입니다 — ⛔ 여기서 임의로 정하지 않습니다.
+
+    **DB 는 전혀 변경되지 않은 상태**에서 발생합니다.
+
+    Attributes:
+        existing: 겹치는 ACTIVE 배치들.
+        period_start: 올리려던 기간 시작일.
+        period_end: 올리려던 기간 종료일.
+    """
+
+    def __init__(
+        self,
+        *,
+        existing: Sequence[ImportBatch],
+        period_start: date,
+        period_end: date,
+    ) -> None:
+        """오류를 만듭니다."""
+        self.existing = list(existing)
+        self.period_start = period_start
+        self.period_end = period_end
+        periods = ", ".join(f"{row.period_start}~{row.period_end}" for row in self.existing)
+        super().__init__(
+            f"{period_start}~{period_end} 와 겹치는 데이터가 이미 등록되어 있습니다"
+            f"({periods}). 겹치는 기간이 서로 다르므로 그 달만 바꿀 수 없습니다."
         )
 
 
