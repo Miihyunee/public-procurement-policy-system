@@ -29,7 +29,7 @@ procurement.reviews.review_service
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -70,6 +70,11 @@ from procurement.reviews.query import (
     ReviewQuery,
     sort_bucket,
 )
+
+#: 「이 정책과 한 거래의 구매 ID」를 돌려주는 읽기 전용 조회.
+#:
+#: ⛔ 매칭을 **하지 않습니다** — 이미 내려진 판정을 물어볼 뿐입니다.
+PolicyMatcher = Callable[[str, "PeriodFilter | None"], set[int]]
 
 #: 필터 — 전체.
 FILTER_ALL = "ALL"
@@ -352,6 +357,7 @@ class ReviewService:
         purchase_repository: PurchaseRepository,
         review_repository: ReviewRepository,
         classifier: DescriptionClassifier | None = None,
+        policy_matcher: PolicyMatcher | None = None,
     ) -> None:
         """서비스를 초기화합니다.
 
@@ -360,10 +366,17 @@ class ReviewService:
             review_repository: DB-2 저장소.
             classifier: 적요 분석기. ``None`` 이면 분석을 돌리지 않습니다
                 (분석 방법은 아직 미선택 — `DESCRIPTION_SIMILARITY_DESIGN.md`).
+            policy_matcher: 「이 정책과 한 거래는 어느 것인가」를 알려 주는
+                **읽기 전용** 조회(STEP 123). ``None`` 이면 정책 필터를 쓸 수
+                없고 나머지는 예전 그대로입니다.
+
+                ⛔ **여기서 매칭을 다시 하지 않습니다.** 실적 합산이 쓰는
+                판정을 그대로 지나갑니다.
         """
         self._purchase_repository = purchase_repository
         self._review_repository = review_repository
         self._classifier = classifier
+        self._policy_matcher = policy_matcher
         # 과거 이력 색인과, 그것을 만들 때의 DB 지문.
         # 지문이 그대로면 다시 만들지 않는다 (:meth:`_past_label_index`).
         self._index: PastLabelIndex | None = None
@@ -381,6 +394,7 @@ class ReviewService:
         review_filter: str = FILTER_ALL,
         period: PeriodFilter | None = None,
         batch_id: int | None = None,
+        policy_code: str | None = None,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[ReviewTarget]:
@@ -393,6 +407,11 @@ class ReviewService:
             review_filter: :data:`FILTER_ALL` · :data:`FILTER_CONFIRMED` ·
                 :data:`FILTER_PENDING` · :data:`FILTER_AMBIGUOUS`.
             period: 기간 조건. ``None`` 이면 제한 없음.
+            policy_code: 이 정책의 인증기업과 한 거래만. ``None`` 이면 제한 없음.
+
+                ⚠️ :meth:`search` 경로와 **같은 조건**을 씁니다. 한쪽만 거르면
+                「여성기업만 본다」고 골랐는데 전부 나오는 일이 생깁니다
+                (``batch_id`` 가 예전에 그랬습니다 — STEP 20).
             batch_id: 기간(=배치) 조건. ``None`` 이면 제한 없음.
 
                 ⚠️ :meth:`search` 경로와 **같은 조건**(:func:`keeps_batch`)을
@@ -419,10 +438,14 @@ class ReviewService:
         index = self._past_label_index(purchases, stored)
         # 거래처 이력도 **같은 목록**으로 만든다 — 재조회하지 않는다.
         company_index = self._company_label_index(purchases, stored)
+        # 정책 필터 — search 경로와 **같은 조회**를 쓴다(STEP 123).
+        matched = self._matched_purchase_ids(policy_code, period)
 
         targets: list[ReviewTarget] = []
         for purchase in purchases:
             if purchase.purchase_id is None:
+                continue
+            if matched is not None and purchase.purchase_id not in matched:
                 continue
             review = reviews.get(purchase.purchase_id) or PurchaseReview(
                 purchase_id=purchase.purchase_id
@@ -479,10 +502,14 @@ class ReviewService:
         index = self._past_label_index(purchases, stored)
         # 거래처 이력도 **같은 목록**으로 만든다 — 재조회하지 않는다.
         company_index = self._company_label_index(purchases, stored)
+        # 정책 필터 — 이미 내려진 매칭 판정을 **한 번** 물어본다(STEP 123).
+        matched = self._matched_purchase_ids(query.policy_code, period)
 
         targets: list[ReviewTarget] = []
         for purchase in purchases:
             if purchase.purchase_id is None:
+                continue
+            if matched is not None and purchase.purchase_id not in matched:
                 continue
             review = reviews.get(purchase.purchase_id) or PurchaseReview(
                 purchase_id=purchase.purchase_id
@@ -497,6 +524,26 @@ class ReviewService:
                 targets.append(target)
 
         return _sorted(targets, query.sort, descending=query.descending)
+
+    def _matched_purchase_ids(
+        self, policy_code: str | None, period: PeriodFilter | None
+    ) -> set[int] | None:
+        """정책 필터가 남길 구매 ID. 필터가 없으면 ``None``(= 전체 통과).
+
+        ⛔ **매칭을 다시 하지 않습니다.** 주입받은 조회를 그대로 부릅니다.
+
+        Raises:
+            ReviewFilterError: 정책으로 좁히려는데 조회가 연결되어 있지 않은
+                경우. ⛔ 조용히 전체를 돌려주지 않습니다 — 담당자가 「여성기업만
+                본다」고 골랐는데 전부 나오면 그것을 알아챌 방법이 없습니다.
+        """
+        if policy_code is None or policy_code == ANY:
+            return None
+        if self._policy_matcher is None:
+            raise ReviewFilterError(
+                "정책으로 좁힐 수 없습니다 — 정책 매칭 조회가 연결되지 않았습니다."
+            )
+        return self._policy_matcher(policy_code, period)
 
     def get_target(self, purchase_id: int) -> ReviewTarget:
         """검토 대상 한 건을 반환합니다.

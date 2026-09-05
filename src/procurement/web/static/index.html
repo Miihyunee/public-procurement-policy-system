@@ -945,6 +945,18 @@
                  placeholder="적요 · 거래처명 · 사업자등록번호 (띄어쓰기 무시)"
                  aria-label="적요 · 거래처명 · 사업자등록번호로 검색" />
         </span>
+        <!--
+          정책 필터 (STEP 123) — 담당자가 「여성기업 건만」 골라 볼 수 있게 한다.
+          ⛔ 화면이 매칭하지 않는다. 정책 코드를 그대로 보내면 백엔드가 실적
+             합산과 **같은 판정**으로 좁혀 준다.
+        -->
+        <span class="control">
+          <span class="control-label">정책</span>
+          <select id="review-policy" class="control-input"
+                  aria-label="정책으로 검토 대상 좁히기">
+            <option value="">전체</option>
+          </select>
+        </span>
         <span class="control">
           <span class="control-label">상태</span>
           <select id="review-status" class="control-input">
@@ -4037,6 +4049,10 @@
       "sort=" + encodeURIComponent(el("review-sort").value),
       "direction=" + encodeURIComponent(el("review-direction").value)
     ];
+    // 정책을 고르지 않았으면 조건 자체를 보내지 않는다(= 전체).
+    if (el("review-policy").value) {
+      parts.push("policy=" + encodeURIComponent(el("review-policy").value));
+    }
     // 기간을 고르지 않았으면 조건 자체를 보내지 않는다(= 전체).
     if (el("review-period").value) {
       parts.push("batch_id=" + encodeURIComponent(el("review-period").value));
@@ -4562,6 +4578,7 @@
     var params = new URLSearchParams(window.location.search);
     var dropped = [];
     var pairs = [
+      ["policy", "review-policy"],
       ["search", "review-search"], ["status", "review-status"],
       ["decision", "review-decision"], ["history", "review-history"],
       ["candidates", "review-candidates"], ["sort", "review-sort"],
@@ -4764,9 +4781,43 @@
     if (key === "p") { moveCursor(-1, insideList(event.target)); event.preventDefault(); }
   }
 
+  /**
+   * 정책 고르는 칸을 채운다 (STEP 123).
+   *
+   * ⛔ 정책 목록을 화면이 지어내지 않는다 — 기존 ``/dashboard/policy-display``
+   *    가 주는 그대로 쓴다.
+   * ⚠️ 기업정보가 등록되지 않은 정책도 **목록에는 남긴다.** 고를 수는 있고,
+   *    결과가 0건일 뿐이다. 「목록에 없다」와 「해당 거래가 없다」는 다른
+   *    이야기이기 때문이다(§4 · §17).
+   */
+  function fillReviewPolicies() {
+    var box = el("review-policy");
+    // URL 에 정책이 들어 있었다면 목록을 채운 **뒤에** 되살린다 — 목록이
+    // 비어 있는 동안에는 고를 수 없기 때문이다.
+    var wanted = new URLSearchParams(window.location.search).get("policy") || "";
+    return fetchJson("/dashboard/policy-display").then(function (payload) {
+      (payload.items || []).forEach(function (item) {
+        var option = document.createElement("option");
+        option.value = item.policy_code;
+        option.textContent = item.policy_name || item.policy_code;
+        box.appendChild(option);
+      });
+      if (wanted && box.value !== wanted) {
+        for (var i = 0; i < box.options.length; i += 1) {
+          if (box.options[i].value === wanted) { box.value = wanted; break; }
+        }
+      }
+      return null;
+    }, function () {
+      // 목록을 못 받아도 「전체」로는 계속 쓸 수 있어야 한다.
+      return null;
+    });
+  }
+
   function initReview() {
+    fillReviewPolicies();
     // 조건이 바뀌면 1페이지부터 다시 본다.
-    ["review-period", "review-status", "review-decision", "review-history",
+    ["review-policy", "review-period", "review-status", "review-decision", "review-history",
      "review-candidates", "review-sort", "review-direction",
      "review-page-size"].forEach(function (id) {
       el(id).addEventListener("change", reloadFromFirstPage);

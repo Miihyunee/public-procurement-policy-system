@@ -179,6 +179,18 @@ class ReviewQuery:
         decision: :data:`DECISION_FILTERS` 중 하나.
         history: :data:`HISTORY_FILTERS` 중 하나.
         candidates: :data:`CANDIDATE_FILTERS` 중 하나.
+        policy_code: 이 정책의 인증기업과 한 거래만. ``None`` 이면 제한 없음.
+
+            여성기업 목표는 구매유형별로 갈리므로(공사 3% · 용역·물품 5%),
+            담당자가 **그 정책 거래만 골라** 유형을 확정할 수 있어야 합니다
+            (STEP 123).
+
+            ⛔ **여기서 매칭을 다시 하지 않습니다.** 실적 합산이 쓰는 판정
+            (``ProcurementAchievementCalculator.find_matching_purchase_ids``)을
+            그대로 지납니다 — 사업자번호를 다시 비교하거나 인증 파일을 다시
+            읽지 않습니다.
+
+            ⛔ **목록을 좁힐 뿐 어떤 계산도 바꾸지 않습니다.**
         batch_id: 이 업로드 배치로 들어온 행만. ``None`` 이면 제한 없음.
 
             ⚠️ **화면이 만들어 내는 값이 아닙니다.** 담당자가 기간을 고르면
@@ -197,6 +209,7 @@ class ReviewQuery:
     decision: str = ANY
     history: str = ANY
     candidates: str = ANY
+    policy_code: str | None = None
     batch_id: int | None = None
     ambiguous_only: bool = False
     sort: str = "purchase_id"

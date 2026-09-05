@@ -454,7 +454,22 @@ def build_review_service(db_path: str | Path | None = None) -> ReviewService:
         조립된 :class:`ReviewService`.
     """
     path: str | Path = db_path if db_path is not None else settings.db_file
-    return ReviewService(PurchaseRepository(path), ReviewRepository(path))
+    purchases = PurchaseRepository(path)
+    policies = PolicyRepository(path)
+    # 정책 필터(STEP 123) — 실적 합산이 쓰는 **그 판정**을 그대로 물어본다.
+    # ⛔ 사업자번호를 다시 비교하거나 인증 파일을 다시 읽지 않는다.
+    calculator = ProcurementAchievementCalculator(
+        purchases, CertificationRepository(path), policies
+    )
+
+    def match_policy(policy_code: str, period: PeriodFilter | None) -> set[int]:
+        policy = policies.find_by_policy_code(policy_code)
+        if policy is None or policy.policy_id is None:
+            # 없는 정책 코드로는 좁힐 수 없다. ⛔ 조용히 전체를 주지 않는다.
+            return set()
+        return calculator.find_matching_purchase_ids(policy.policy_id, period)
+
+    return ReviewService(purchases, ReviewRepository(path), policy_matcher=match_policy)
 
 
 def build_data_status_api(
@@ -1686,6 +1701,13 @@ def create_app(
         decision: str = QUERY_ANY,
         history: str = QUERY_ANY,
         candidates: str = QUERY_ANY,
+        policy: str | None = Query(
+            None,
+            description=(
+                "이 정책의 인증기업과 한 거래만 (예: WOMAN). 생략하면 전체. "
+                "실적 합산이 쓰는 매칭 판정을 그대로 씁니다 — 다시 매칭하지 않습니다."
+            ),
+        ),
         batch_id: int | None = Query(
             None, description="이 업로드 배치로 들어온 행만 (기간 필터). 생략하면 전체"
         ),
@@ -1721,6 +1743,7 @@ def create_app(
                 targets = review_service.list_targets(
                     review_filter=review_filter,
                     batch_id=batch_id,
+                    policy_code=policy,
                     limit=limit,
                     offset=offset,
                 )
@@ -1738,6 +1761,7 @@ def create_app(
                 decision=decision,
                 history=history,
                 candidates=candidates,
+                policy_code=policy,
                 batch_id=batch_id,
                 ambiguous_only=ambiguous_only,
                 sort=sort,
@@ -1769,6 +1793,13 @@ def create_app(
         decision: str = QUERY_ANY,
         history: str = QUERY_ANY,
         candidates: str = QUERY_ANY,
+        policy: str | None = Query(
+            None,
+            description=(
+                "이 정책의 인증기업과 한 거래만 (예: WOMAN). 생략하면 전체. "
+                "실적 합산이 쓰는 매칭 판정을 그대로 씁니다 — 다시 매칭하지 않습니다."
+            ),
+        ),
         batch_id: int | None = Query(
             None, description="이 업로드 배치로 들어온 행만 (기간 필터). 생략하면 전체"
         ),
@@ -1793,6 +1824,7 @@ def create_app(
                 decision=decision,
                 history=history,
                 candidates=candidates,
+                policy_code=policy,
                 batch_id=batch_id,
                 ambiguous_only=ambiguous_only,
                 sort=sort,

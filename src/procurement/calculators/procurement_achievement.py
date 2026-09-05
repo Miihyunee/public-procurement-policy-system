@@ -28,6 +28,7 @@ Dashboard 가 사용할 계산 기반(Service Layer)으로, Repository 를 주�
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -44,6 +45,7 @@ from procurement.database.certification_repository import CertificationRepositor
 from procurement.database.policy_repository import PolicyRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models.policy import Policy
+from procurement.models.purchase import Purchase
 
 #: 달성률 표기 자리수 (소수점 둘째 자리)
 _RATE_EXPONENT = Decimal("0.01")
@@ -261,9 +263,23 @@ class ProcurementAchievementCalculator:
         :class:`~procurement.calculators.rules.PolicyRule` 이 담당하며, 계산기는
         규칙이 인정한 구매의 금액만 합산합니다.
         """
+        total = Decimal("0")
+        for purchase in self._matching_purchases(policy_id, period, scope):
+            total += purchase.amount
+        return total
+
+    def _matching_purchases(
+        self, policy_id: int, period: PeriodFilter | None, scope: str
+    ) -> Iterator[Purchase]:
+        """이 정책의 인증기업과 한 구매를 하나씩 내어 줍니다.
+
+        ⭐ **판정이 사는 단 한 곳**입니다. 금액 합산도, 검토 화면의 정책 필터도
+        (:meth:`find_matching_purchase_ids`) 여기를 지납니다 — 두 곳이 서로 다른
+        답을 낼 수 없게 하려는 것입니다.
+        """
         policy = self._policy_repository.find_by_id(policy_id)
         if policy is None:
-            return Decimal("0")
+            return
 
         # company_id -> 인증 유효기간(valid_from, valid_to) 목록
         # ``valid_to`` 가 ``None`` 인 구간은 **종료일 없이 계속 유효**한 인증입니다
@@ -278,11 +294,10 @@ class ProcurementAchievementCalculator:
                 (certification.valid_from, certification.valid_to)
             )
         if not validity_ranges:
-            return Decimal("0")
+            return
 
         rule = self._rule_registry.get(policy.evaluation_basis)
 
-        total = Decimal("0")
         for purchase in self._purchase_repository.find_for_calculation(
             period, _purchase_type_of(scope)
         ):
@@ -291,8 +306,34 @@ class ProcurementAchievementCalculator:
                 continue
             context = RuleContext(purchase=purchase, validity_ranges=validity_ranges[company_id])
             if rule.matches(context):
-                total += purchase.amount
-        return total
+                yield purchase
+
+    def find_matching_purchase_ids(
+        self, policy_id: int, period: PeriodFilter | None = None
+    ) -> set[int]:
+        """이 정책의 인증기업과 한 **구매 ID** 를 돌려줍니다 (읽기 전용).
+
+        검토 화면에서 「여성기업 건만 보기」를 하려고 만든 **조회 경로**입니다
+        (STEP 123). ⛔ 사업자번호를 다시 비교하거나 인증 파일을 다시 읽지
+        않습니다 — :meth:`_matching_purchases` 를 그대로 지나므로 실적 합산과
+        **같은 판정**입니다.
+
+        .. warning::
+            ⛔ **계산에 쓰이지 않습니다.** 목록을 좁혀 보여줄 뿐이며, 어떤
+            달성률도 이 메서드 때문에 달라지지 않습니다.
+
+        Args:
+            policy_id: 정책 ID.
+            period: 기간 조건. ``None`` 이면 제한 없음.
+
+        Returns:
+            매칭된 구매 ID 집합. 없으면 빈 집합.
+        """
+        return {
+            purchase.purchase_id
+            for purchase in self._matching_purchases(policy_id, period, TOTAL)
+            if purchase.purchase_id is not None
+        }
 
     def _build_result(
         self,
