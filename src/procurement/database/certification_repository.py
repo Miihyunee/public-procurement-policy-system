@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS certification (
     company_id INTEGER NOT NULL,
     policy_id INTEGER NOT NULL,
     certificate_number TEXT,
+    policy_company_source_id INTEGER,
     valid_from DATE NOT NULL,
     valid_to DATE,
     issuing_agency TEXT,
@@ -96,6 +97,7 @@ class CertificationRepository(BaseRepository):
         with self.connection() as conn:
             conn.execute(CREATE_TABLE_SQL)
             self._migrate_valid_to_nullable(conn)
+            self._migrate_source_column(conn)
 
     @staticmethod
     def _migrate_valid_to_nullable(conn: sqlite3.Connection) -> None:
@@ -116,6 +118,38 @@ class CertificationRepository(BaseRepository):
             "FROM certification_pre_open_ended"
         )
         conn.execute("DROP TABLE certification_pre_open_ended")
+
+    @staticmethod
+    def _migrate_source_column(conn: sqlite3.Connection) -> None:
+        """인증에 «어느 등록 버전에서 왔는지» 칸을 더합니다.
+
+        이미 저장된 인증은 그 정책의 **하나뿐인 등록 버전**을 가리키게 채웁니다
+        — 지금까지 정책마다 한 번씩만 등록했으므로 그 버전이 곧 현재 자료입니다.
+        ⛔ 인증 자체는 하나도 건드리지 않습니다.
+        """
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(certification)")}
+        if "policy_company_source_id" in columns:
+            return
+        conn.execute("ALTER TABLE certification ADD COLUMN policy_company_source_id INTEGER")
+
+        tables = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        if "policy_company_source" not in tables:
+            return
+        # 등록표가 아직 버전 구조가 아닐 수 있습니다(표를 만드는 순서 때문에).
+        # 그때는 정책당 한 행뿐이라 ``is_active`` 를 물을 필요가 없습니다.
+        source_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(policy_company_source)")
+        }
+        active_clause = " AND s.is_active = 1" if "is_active" in source_columns else ""
+        conn.execute(
+            "UPDATE certification SET policy_company_source_id = ("
+            "  SELECT s.policy_company_source_id FROM policy_company_source s"
+            "  WHERE s.policy_id = certification.policy_id" + active_clause + ") "
+            "WHERE policy_company_source_id IS NULL"
+        )
 
     def insert(self, certification: Certification) -> Certification:
         """인증 정보를 저장하고 채번된 ID 와 타임스탬프를 반영해 반환합니다.
@@ -140,14 +174,15 @@ class CertificationRepository(BaseRepository):
 
         sql = (
             "INSERT INTO certification "
-            "(company_id, policy_id, certificate_number, valid_from, valid_to, "
-            "issuing_agency, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            "(company_id, policy_id, certificate_number, policy_company_source_id, "
+            "valid_from, valid_to, issuing_agency, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         params = (
             certification.company_id,
             certification.policy_id,
             certification.certificate_number,
+            certification.policy_company_source_id,
             _to_db_date(certification.valid_from),
             _to_db_date_optional(certification.valid_to),
             certification.issuing_agency,
@@ -164,11 +199,33 @@ class CertificationRepository(BaseRepository):
             company_id=certification.company_id,
             policy_id=certification.policy_id,
             certificate_number=certification.certificate_number,
+            policy_company_source_id=certification.policy_company_source_id,
             valid_from=certification.valid_from,
             valid_to=certification.valid_to,
             issuing_agency=certification.issuing_agency,
             created_at=created_at,
             updated_at=updated_at,
+        )
+
+    def assign_source(self, certification_id: int, policy_company_source_id: int | None) -> None:
+        """이미 있는 인증을 **지금 등록 버전**의 것으로 다시 표시합니다.
+
+        ⭐ 최신 목록에 그대로 들어 있는 기업은 인증 내용이 같아 새로 저장되지
+        않습니다. 그때 표시를 옮겨 주지 않으면 «예전 버전에서 온 인증» 으로
+        남아 계산에서 빠집니다 — 목록에 멀쩡히 있는 기업이 조용히 실적에서
+        사라지는 셈입니다.
+
+        ⛔ 날짜·기업·정책은 건드리지 않습니다. **어느 자료에서 확인되었는가**
+        만 갱신합니다.
+
+        Args:
+            certification_id: 대상 인증 ID.
+            policy_company_source_id: 지금 등록 버전 ID.
+        """
+        self.execute_write(
+            "UPDATE certification SET policy_company_source_id = ?, updated_at = ? "
+            "WHERE certification_id = ?",
+            (policy_company_source_id, _to_db(datetime.now()), certification_id),
         )
 
     def find_by_id(self, certification_id: int) -> Certification | None:
@@ -201,7 +258,10 @@ class CertificationRepository(BaseRepository):
         return [self._row_to_certification(row) for row in rows]
 
     def find_by_policy(self, policy_id: int) -> list[Certification]:
-        """해당 정책에 속한 인증 목록을 반환합니다.
+        """해당 정책에 속한 인증 목록을 반환합니다 — **이력 포함 전부**.
+
+        ⚠️ 계산에는 :meth:`find_active_by_policy` 를 씁니다. 이 메서드는
+        «지금까지 받은 자료 전부» 를 봅니다.
 
         Args:
             policy_id: 조회할 Policy 참조 ID.
@@ -214,6 +274,47 @@ class CertificationRepository(BaseRepository):
             (policy_id,),
         )
         return [self._row_to_certification(row) for row in rows]
+
+    def find_active_by_policy(self, policy_id: int) -> list[Certification]:
+        """**지금 계산에 쓰는** 인증만 반환합니다.
+
+        🟢 2026-09-05 고객 확정: *"기존 인증기업 데이터는 이력으로 보관하고, 새
+        파일이 올라오면 그 파일을 최신으로 선택한다. 현재 실적 계산은 최신으로
+        선택된 파일을 기준으로 한다."*
+
+        그래서 **활성 등록 버전에서 온 인증**만 봅니다. 예전 버전의 인증은
+        ⛔ 지워지지 않고 남되 계산에서 빠집니다.
+
+        어느 버전에도 매이지 않은 인증(``policy_company_source_id`` 가 ``None``)
+        은 **그대로 셉니다.** 직접 넣은 인증이 등록 이력이 없다는 이유로 조용히
+        사라지면, 저장한 사람이 모르는 사이에 실적이 줄어듭니다.
+
+        Args:
+            policy_id: 조회할 Policy 참조 ID.
+
+        Returns:
+            계산 대상 :class:`Certification` 목록.
+        """
+        if not self._has_source_table():
+            return self.find_by_policy(policy_id)
+        rows = self.execute(
+            "SELECT c.* FROM certification c "
+            "LEFT JOIN policy_company_source s "
+            "  ON s.policy_company_source_id = c.policy_company_source_id "
+            "WHERE c.policy_id = ? "
+            "  AND (c.policy_company_source_id IS NULL OR s.is_active = 1) "
+            "ORDER BY c.certification_id",
+            (policy_id,),
+        )
+        return [self._row_to_certification(row) for row in rows]
+
+    def _has_source_table(self) -> bool:
+        """등록 버전 표가 있는가 — 없으면 버전 구분 없이 전부 봅니다."""
+        rows = self.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("policy_company_source",),
+        )
+        return bool(rows)
 
     def policy_ids_with_certifications(self) -> set[int]:
         """인증이 **한 건이라도 있는** 정책 ID 집합.
@@ -260,6 +361,7 @@ class CertificationRepository(BaseRepository):
             company_id=row["company_id"],
             policy_id=row["policy_id"],
             certificate_number=row["certificate_number"],
+            policy_company_source_id=row["policy_company_source_id"],
             valid_from=_from_db_date(row["valid_from"]),
             valid_to=_from_db_date_optional(row["valid_to"]),
             issuing_agency=row["issuing_agency"],

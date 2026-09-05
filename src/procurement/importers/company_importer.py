@@ -189,7 +189,11 @@ class CompanyImporter:
         self._policies = policy_repository
 
     def import_records(
-        self, records: Iterable[CompanyRecord], *, source: str
+        self,
+        records: Iterable[CompanyRecord],
+        *,
+        source: str,
+        policy_company_source_id: int | None = None,
     ) -> CompanyImportReport:
         """기업정보를 저장합니다.
 
@@ -199,6 +203,10 @@ class CompanyImporter:
             records: 저장할 기업정보. **출처와 무관하게 같은 모양**입니다.
             source: 어디서 가져왔는지(:data:`SOURCE_FILE` · :data:`SOURCE_API`).
                 기록·표시에만 쓰이며 **판정에 쓰이지 않습니다.**
+            policy_company_source_id: 이번 등록의 **버전 ID**. 저장하는 인증마다
+                이 값을 달아, 나중에 «어느 파일에서 온 인증인가» 를 알 수 있게
+                합니다(🟢 2026-09-05 고객 확정). 주지 않으면 어느 버전에도
+                매이지 않아 항상 계산에 듭니다.
 
         Returns:
             행별 결과와 집계를 담은 :class:`CompanyImportReport`.
@@ -209,13 +217,16 @@ class CompanyImporter:
         if source not in COMPANY_SOURCES:
             raise ValueError(f"알 수 없는 기업정보 출처입니다: {source!r}")
         return CompanyImportReport(
-            source=source, rows=[self._import_one(record) for record in records]
+            source=source,
+            rows=[self._import_one(record, policy_company_source_id) for record in records],
         )
 
     # ------------------------------------------------------------------
     # 내부 헬퍼
     # ------------------------------------------------------------------
-    def _import_one(self, record: CompanyRecord) -> CompanyRowResult:
+    def _import_one(
+        self, record: CompanyRecord, policy_company_source_id: int | None = None
+    ) -> CompanyRowResult:
         """한 건을 저장합니다."""
         messages: list[str] = []
 
@@ -261,7 +272,9 @@ class CompanyImporter:
 
         certification_saved = False
         if record.has_certification:
-            saved_certification, issue = self._save_certification(record, company_id)
+            saved_certification, issue = self._save_certification(
+                record, company_id, policy_company_source_id
+            )
             certification_saved = saved_certification
             if issue is not None:
                 messages.append(issue)
@@ -276,7 +289,10 @@ class CompanyImporter:
         )
 
     def _save_certification(
-        self, record: CompanyRecord, company_id: int
+        self,
+        record: CompanyRecord,
+        company_id: int,
+        policy_company_source_id: int | None = None,
     ) -> tuple[bool, str | None]:
         """인증을 저장합니다. 같은 인증이 이미 있으면 다시 넣지 않습니다."""
         assert record.policy_code is not None
@@ -295,11 +311,26 @@ class CompanyImporter:
             return False, "인증 유효기간이 없어 인증을 넣지 않았습니다."
 
         # 재실행 안전성 — 같은 (정책, 시작일, 종료일)이면 넣지 않는다.
-        existing = {
-            (row.policy_id, row.valid_from, row.valid_to)
-            for row in self._certifications.find_by_company(company_id)
-        }
-        if (policy.policy_id, record.valid_from, record.valid_to) in existing:
+        same = next(
+            (
+                row
+                for row in self._certifications.find_by_company(company_id)
+                if (row.policy_id, row.valid_from, row.valid_to)
+                == (policy.policy_id, record.valid_from, record.valid_to)
+            ),
+            None,
+        )
+        if same is not None:
+            # ⭐ 최신 목록에 **그대로 들어 있는** 기업이다. 인증 내용이 같아
+            #    새로 저장하지는 않지만, 지금 자료에서 확인되었다는 표시는
+            #    옮겨 준다 — 옮기지 않으면 목록에 있는 기업이 예전 버전에
+            #    묶인 채 계산에서 빠진다.
+            if (
+                policy_company_source_id is not None
+                and same.certification_id is not None
+                and same.policy_company_source_id != policy_company_source_id
+            ):
+                self._certifications.assign_source(same.certification_id, policy_company_source_id)
             return False, None
 
         try:
@@ -307,6 +338,7 @@ class CompanyImporter:
                 Certification(
                     company_id=company_id,
                     policy_id=policy.policy_id,
+                    policy_company_source_id=policy_company_source_id,
                     valid_from=record.valid_from,
                     valid_to=record.valid_to,
                 )

@@ -142,6 +142,7 @@ from procurement.importers.trace_response import (
     build_trace_response,
 )
 from procurement.importers.trace_service import ImportTraceService
+from procurement.models.policy_company_source import PolicyCompanySource
 from procurement.reviews.export import export_lines, history_lines
 from procurement.reviews.query import (
     ANY as QUERY_ANY,
@@ -1288,12 +1289,40 @@ def create_app(
         저장한 뒤 구매와 연결하려면 기존 ``POST /purchases/rematch`` 를
         호출합니다 — ⛔ 새 매칭 기능을 만들지 않았습니다.
         """
+        # ⭐ 등록 버전은 **검증을 통과한 뒤에** 만들어진다. 그래야 저장할 수
+        #    없는 파일이 최신 자료로 바뀌지 않는다. 버전 ID 를 먼저 받아야
+        #    저장하는 인증마다 «어느 파일에서 왔는지» 를 달 수 있다.
+        recorded: PolicyCompanySource | None = None
+
+        def begin_version(checksum: str) -> int | None:
+            nonlocal recorded
+            if payload.policy_code is None:
+                return None
+            policy = company_policy_repository.find_by_policy_code(payload.policy_code)
+            if policy is None or policy.policy_id is None:
+                return None
+            recorded = company_source_registry.record(
+                policy.policy_id,
+                source="FILE",
+                company_count=0,
+                certification_count=0,
+                source_label=Path(payload.file_path).name,
+                file_checksum=checksum,
+            )
+            return recorded.policy_company_source_id
+
         validation, report = company_source_service.import_file(
-            payload.file_path, policy_code=payload.policy_code
+            payload.file_path,
+            policy_code=payload.policy_code,
+            begin_version=begin_version,
         )
-        if report is not None and payload.policy_code is not None:
-            _record_company_source(
-                payload.policy_code, "FILE", report, source_label=Path(payload.file_path).name
+        # 건수는 적재가 끝나야 알 수 있어 여기서 채운다.
+        if report is not None and recorded is not None:
+            assert recorded.policy_company_source_id is not None
+            company_source_registry.update_counts(
+                recorded.policy_company_source_id,
+                company_count=report.created_count + report.existing_count,
+                certification_count=report.certification_count,
             )
         return _company_import_response("FILE", report, validation)
 

@@ -269,7 +269,9 @@ class ProcurementAchievementCalculator:
         # ``valid_to`` 가 ``None`` 인 구간은 **종료일 없이 계속 유효**한 인증입니다
         # (🟢 2026-09-04 고객 확정 · 사회적기업·사회적협동조합).
         validity_ranges: dict[int, list[tuple[date, date | None]]] = {}
-        for certification in self._certification_repository.find_by_policy(policy_id):
+        # 🟢 2026-09-05 고객 확정 — 계산은 **활성 등록 버전**의 인증만 봅니다.
+        #    예전 버전은 이력으로 남되 여기에 들어오지 않습니다.
+        for certification in self._certification_repository.find_active_by_policy(policy_id):
             if certification.company_id is None:
                 continue
             validity_ranges.setdefault(certification.company_id, []).append(

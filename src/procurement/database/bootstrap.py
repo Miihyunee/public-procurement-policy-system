@@ -289,6 +289,9 @@ def init_db(db_path: str | Path | None = None) -> None:
     path = resolve_db_path(db_path)
     CompanyRepository(path).create_table()
     PolicyRepository(path).create_table()
+    # ⭐ 등록 버전 표를 **인증표보다 먼저** 만든다. 인증에 «어느 버전에서
+    #    왔는가» 를 채우려면 그 표가 이미 버전 구조여야 한다.
+    PolicyCompanySourceRepository(path).create_table()
     CertificationRepository(path).create_table()
     PurchaseRepository(path).create_table()
     ImportBatchRepository(path).create_table()
@@ -300,9 +303,6 @@ def init_db(db_path: str | Path | None = None) -> None:
     # ⛔ 기존 policy 테이블과 그 target_rate 컬럼은 건드리지 않는다. 기존 DB 에
     #    이 호출이 더해져도 잃는 데이터가 없다.
     PolicyTargetRepository(path).create_table()
-    # 정책별 기업정보 등록 여부(STEP 96 §8) — **신규 테이블만** 추가한다.
-    # 이 기록이 없는 정책은 '조회불가'다. ⛔ 미해당이 아니다.
-    PolicyCompanySourceRepository(path).create_table()
     migrate_schema(path)
     # 확정 규칙이 바뀌어 풀린 제약을 기존 DB 에도 반영한다(멱등).
     relax_purchase_date_constraints(path)

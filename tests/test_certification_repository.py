@@ -76,13 +76,25 @@ class TestCreateTable:
         assert cols["valid_to"]["notnull"] == 0
 
     def test_columns_match_design(self, repo: CertificationRepository) -> None:
-        """DATABASE_DESIGN.md 정의 컬럼과 정확히 일치해야 합니다."""
+        """DATABASE_DESIGN.md 정의 컬럼과 정확히 일치해야 합니다.
+
+        .. note::
+            분류 A · 고객 확정 반영 (2026-09-05). *"기존 인증기업 데이터는
+            이력으로 보관하고, 새 파일이 올라오면 그 파일을 최신으로 선택한다"*
+            를 반영하면서 ``policy_company_source_id`` 가 더해졌습니다 —
+            이 인증이 **어느 등록 버전에서 왔는지**를 가리키며, 계산은 활성
+            버전의 인증만 봅니다.
+
+            ⛔ 컬럼을 마음대로 늘리지 않는다는 감시는 그대로입니다. 늘어난
+            것은 이 하나뿐입니다.
+        """
         names = [row["name"] for row in repo.execute("PRAGMA table_info(certification)")]
         assert names == [
             "certification_id",
             "company_id",
             "policy_id",
             "certificate_number",
+            "policy_company_source_id",
             "valid_from",
             "valid_to",
             "issuing_agency",

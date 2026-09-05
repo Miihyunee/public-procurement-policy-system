@@ -25,6 +25,8 @@ procurement.uploads.company_source_service
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Callable
 from datetime import date
 from typing import Protocol
 
@@ -123,7 +125,11 @@ class CompanySourceService:
         )
 
     def import_file(
-        self, file_path: str, *, policy_code: str | None = None
+        self,
+        file_path: str,
+        *,
+        policy_code: str | None = None,
+        begin_version: Callable[[str], int | None] | None = None,
     ) -> tuple[ValidationReport, CompanyImportReport | None]:
         """기업정보 파일을 검증하고, **오류가 하나도 없을 때만** 저장합니다.
 
@@ -136,13 +142,22 @@ class CompanySourceService:
             policy_code: 사용자가 **화면에서 고른** 정책. 주면 파일의 모든 행을
                 이 정책의 인증으로 저장합니다 — ⛔ 파일 안에 다른 인증명이 적혀
                 있어도 **다른 정책에 등록하지 않습니다**(STEP 96 §5).
+            begin_version: 저장이 확정된 **뒤에** 등록 버전을 만드는 함수.
+                파일 내용의 지문을 받아 버전 ID 를 돌려줍니다.
+
+                ⭐ **검증을 통과한 다음에만** 부릅니다. 오류가 있는 파일로
+                버전이 늘어나면, 올린 적 없는 자료가 최신으로 바뀝니다.
 
         Returns:
             ``(검증 결과, 적재 결과)``. 저장하지 않았으면 적재 결과는 ``None``.
         """
         report = self.validate_file(file_path, policy_code=policy_code)
         if not report.ok:
+            # ⛔ 오류가 있으면 버전도 만들지 않는다. 저장할 수 없는 파일이
+            #    최신 자료가 되면 안 된다.
             return report, None
+
+        source_id = None if begin_version is None else begin_version(file_checksum(file_path))
 
         records = [
             CompanyRecord(
@@ -158,7 +173,9 @@ class CompanySourceService:
             )
             for row in report.rows
         ]
-        return report, self._importer.import_records(records, source=SOURCE_FILE)
+        return report, self._importer.import_records(
+            records, source=SOURCE_FILE, policy_company_source_id=source_id
+        )
 
     # ------------------------------------------------------------------
     # ② 조회 방식
@@ -234,6 +251,26 @@ def _text(value: object) -> str | None:
 def _date(value: object) -> date | None:
     """검증 단계가 만든 날짜 값을 그대로 돌려줍니다."""
     return value if isinstance(value, date) else None
+
+
+def file_checksum(file_path: str) -> str:
+    """파일 **내용**의 지문.
+
+    같은 내용이면 새 버전을 만들지 않고, 다르면 만듭니다. ⛔ 파일명으로
+    판단하지 않습니다 — 이름이 같아도 내용이 다르면 다른 자료이고, 이름이
+    달라도 내용이 같으면 같은 자료입니다.
+
+    Args:
+        file_path: 읽을 파일 경로.
+
+    Returns:
+        SHA-256 16진 문자열.
+    """
+    digest = hashlib.sha256()
+    with open(file_path, "rb") as handle:  # noqa: PTH123 - 기존 코드와 같은 방식
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _has_company_fields(record: object) -> bool:
