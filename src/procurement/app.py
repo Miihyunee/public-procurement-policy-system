@@ -29,6 +29,7 @@ FastAPI 애플리케이션과 **의존성 조립(composition root)** 을 정의�
 
 from __future__ import annotations
 
+import calendar
 from datetime import date
 from pathlib import Path
 from typing import Annotated
@@ -549,18 +550,35 @@ class UploadImportRequestModel(UploadRequestModel):
 
     Attributes:
         file_path: 저장할 ``.xlsx`` 파일의 로컬 경로.
-        year: 대상 회계연도. **필수입니다.** 이 값으로 대상 기간을
-            ``1/1 ~ 12/31`` (D-23 역년)로 만듭니다.
+        year: 대상 회계연도. **필수입니다.**
+        month: 대상 월(1~12). **선택입니다.**
+
+            🟢 2026-09-05 고객 확정: 지출 데이터는 **매월 올리고 연간으로
+            누적**한다. 그래서 월을 주면 그 달 하루치 범위가 대상 기간이
+            되고, 달마다 배치가 따로 생겨 **다음 달을 올려도 지난달이
+            남습니다.** 같은 달을 다시 올리면 그 달만 교체됩니다.
+
+            생략하면 예전처럼 ``1/1 ~ 12/31`` 한 덩어리입니다 — 한 해치를
+            한 번에 올리던 방식이 그대로 동작합니다.
 
             ⛔ 파일 내용에서 기간을 유추하지 않습니다. 어느 날짜로 연도를
             나눌지는 운영자 설정 사항이므로(D-24), 파일에서 추론하면 확정되지
-            않은 규칙이 생깁니다.
+            않은 규칙이 생깁니다. **올린 사람이 어느 달인지 지정합니다.**
     """
 
     year: int = Field(
         ge=1900,
         le=2999,
-        description="대상 회계연도. 1/1 ~ 12/31 로 환산합니다(D-23).",
+        description="대상 회계연도. 월을 주지 않으면 1/1 ~ 12/31 로 환산합니다(D-23).",
+    )
+    month: int | None = Field(
+        default=None,
+        ge=1,
+        le=12,
+        description=(
+            "대상 월(1~12). 주면 그 달이 대상 기간이 되어 **달마다 누적**됩니다. "
+            "생략하면 한 해 전체가 한 덩어리입니다."
+        ),
     )
     replace_existing: bool = Field(
         default=False,
@@ -686,6 +704,26 @@ class CompanyImportResponseModel(BaseModel):
     file_errors: list[str] = []
     issues: list[str] = []
     rows: list[CompanyRowResultModel] = []
+
+
+def _upload_period(year: int, month: int | None) -> tuple[date, date]:
+    """업로드 대상 기간을 정합니다.
+
+    🟢 2026-09-05 고객 확정: 지출 데이터는 **매월 올리고 연간으로 누적**한다.
+    달마다 기간이 다르면 배치도 따로 생기므로, 다음 달을 올려도 지난달이
+    그대로 남습니다. 같은 달을 다시 올릴 때만 그 달이 교체됩니다.
+
+    Args:
+        year: 대상 회계연도.
+        month: 대상 월(1~12). ``None`` 이면 한 해 전체입니다.
+
+    Returns:
+        ``(시작일, 종료일)``. 월을 주면 그 달의 1일 ~ 말일, 아니면 1/1 ~ 12/31.
+    """
+    if month is None:
+        return date(year, 1, 1), date(year, 12, 31)
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, 1), date(year, month, last_day)
 
 
 def _company_import_response(
@@ -1346,8 +1384,14 @@ def create_app(
         목록을 돌려줍니다 — 사용자가 무엇을 고쳐야 하는지 한 번에 보게 하기
         위함입니다.
 
-        대상 기간은 ``year`` 로 받아 ``1/1 ~ 12/31`` (D-23)로 환산합니다.
-        같은 기간의 이전 배치는 기존 규칙대로 대체됩니다(D-25).
+        대상 기간은 ``year`` (와 주어졌다면 ``month``)로 정합니다. 월을 주면
+        **그 달**이 기간이 되어 달마다 배치가 따로 생기고, 다음 달을 올려도
+        지난달 데이터가 남습니다 — 화면의 실적은 그 해의 **누적**입니다
+        (🟢 2026-09-05 고객 확정). 월을 생략하면 예전처럼 ``1/1 ~ 12/31``
+        한 덩어리입니다(D-23).
+
+        같은 기간의 이전 배치는 기존 규칙대로 대체됩니다(D-25) — 월을 주면
+        **그 달만** 교체되고 다른 달은 그대로입니다.
 
         저장은 기존 :class:`BatchImportService` 가 수행합니다. 업로드 전용
         저장 로직을 만들지 않았습니다.
@@ -1364,11 +1408,15 @@ def create_app(
         # 배치의 대상 기간은 **단순 날짜 범위**다. 어느 날짜 컬럼으로 연도를
         # 나눌지(D-24)와는 별개이므로 PeriodFilter 를 쓰지 않는다 — 여기서
         # date_field 를 고르면 확정되지 않은 의미가 붙는다.
+        period_start, period_end = _upload_period(payload.year, payload.month)
+        label = f"{payload.year}년"
+        if payload.month is not None:
+            label += f" {payload.month}월"
         try:
             result = upload_service.import_file(
                 payload.file_path,
-                period_start=date(payload.year, 1, 1),
-                period_end=date(payload.year, 12, 31),
+                period_start=period_start,
+                period_end=period_end,
                 replace_existing=payload.replace_existing,
             )
         except ExistingPeriodBatchError as exc:
@@ -1376,11 +1424,12 @@ def create_app(
                 status_code=409,
                 detail={
                     "code": "EXISTING_PERIOD",
-                    "message": f"{payload.year}년 데이터가 이미 등록되어 있습니다.",
+                    "message": f"{label} 데이터가 이미 등록되어 있습니다.",
                     "existing_batch_id": exc.existing.batch_id,
                     "existing_file_name": exc.existing.file_name,
                     "existing_row_count": exc.existing.row_count,
                     "year": payload.year,
+                    "month": payload.month,
                 },
             ) from exc
         except ImportBatchValidationError as exc:

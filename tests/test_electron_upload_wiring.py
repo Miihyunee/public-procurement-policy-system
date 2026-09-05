@@ -168,9 +168,18 @@ class TestRendererUsesBackendOnly:
         for banned in ("-01-01", "-12-31", "setFullYear", "toISOString"):
             assert banned not in source, banned
 
-        # ``new Date`` 는 연도 선택지를 채울 때 **올해가 몇 년인지** 묻는
-        # 용도로만 쓴다. 그 외 날짜 조립은 없다.
-        assert set(re.findall(r"new Date\([^)]*\)[.\w()]*", source)) == {"new Date().getFullYear()"}
+        # ``new Date`` 는 선택지의 **기본값**을 정할 때 "지금 몇 년/몇 월인가"
+        # 를 묻는 용도로만 쓴다. 그 외 날짜 조립은 없다.
+        #
+        # ⚠️ 규칙 변경(2026-09-05 · STEP 113). 월별 누적을 위해 업로드에 「대상
+        #    월」 선택이 더해지면서 ``getMonth`` 가 등장한다. 막으려던 것은
+        #    **화면이 기간을 만들어 보내는 것**이며, 기본값으로 이번 달을 고르는
+        #    것은 연도 선택지를 채우던 것과 같은 일이다. 그래서 허용 목록에
+        #    ``getMonth()`` 를 더하되 **그 둘만** 남긴다.
+        assert set(re.findall(r"new Date\([^)]*\)[.\w()]*", source)) == {
+            "new Date().getFullYear()",
+            "new Date().getMonth()",
+        }
 
         # ③ 기간 값의 출처는 **백엔드가 준 목록**뿐이다.
         #    STEP 15 에서 업로드 이력에 기간 필터가 붙어 ``period_start`` 가
