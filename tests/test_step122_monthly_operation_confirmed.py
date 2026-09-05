@@ -17,21 +17,20 @@ STEP 120 — 월별 운영 확정과 **연도·월이 무엇으로 정해지는�
 드러낸다. STEP 119 가 만든 월별 현황·교체·겹침 차단은 그대로 두고, 여기서는
 **연도 분리**와 **예시 데이터가 코드에 스며들지 않았는지**를 본다.
 
-⚠️ 두 축이 다르다 (§9 · §10 — 새 규칙을 만들지 않았다)
-========================================================
+두 축이 무엇인가 (§9 · §10)
+============================
 
 ===================  ==================================================
 **배치 기간**        올린 사람이 고른 연도·월 (``2026년 8월`` → 8/1~8/31)
 **연도·월 귀속**     파일 안의 **결의일자** (🟢 §0.10 · STEP 86)
 ===================  ==================================================
 
-둘은 서로 검사하지 않는다. 그래서 「2026년 8월」로 올린 파일에 7월이나 2025년
-12월 행이 섞여 있으면 **그 행은 결의일자대로** 7월·2025년에 잡힌다.
+🟢 **2026-09-05 고객 확정(STEP 121)** — 둘은 **서로 맞아야 한다.** 고른 기간
+밖의 결의일자가 하나라도 있으면 파일 전체를 거절한다(확인 요청서 ⑯ → ③안).
 
-⭐ **연도 귀속은 고객 확정과 어긋나지 않는다** — 2025년 거래는 2025년으로 간다.
-⚠️ 다만 「고른 달과 다른 달의 행이 섞여 있을 때 받아 줄 것인가」는 아직 정해진
-규칙이 없다. :class:`TestWhatDecidesTheYearAndMonth` 가 현재 동작을 고정하고,
-확인 요청서 ⑯ 으로 올렸다. ⛔ 여기서 새 날짜 규칙을 만들지 않았다.
+이 STEP 을 쓸 때는 그것이 정해지지 않아 「받아들이는 현재 동작」을 기록해 두었고,
+답이 온 뒤 :class:`TestWhatDecidesTheYearAndMonth` 에서 기대값을 뒤집었다.
+거절 동작의 상세한 시험은 ``test_step123_upload_period_mismatch.py`` 에 있다.
 
 .. note::
     합성 데이터만 쓴다. 실제 기업명·사업자등록번호·파일명은 넣지 않는다.
@@ -297,49 +296,69 @@ class TestTheYearsAreIndependent:
 
 
 # ======================================================================
-# §9 · §10  ⚠️ 연도·월을 정하는 것은 무엇인가 (현재 동작 · 규칙 아님)
+# §9 · §10  연도·월을 정하는 것은 무엇인가
 # ======================================================================
 class TestWhatDecidesTheYearAndMonth:
-    """⚠️ **현재 동작을 기록한다. 규칙을 만들지 않았다**(확인 요청서 ⑯).
-
-    두 축이 서로를 검사하지 않는다.
+    """두 축이 무엇인지, 그리고 **이제는 서로 맞아야 한다**는 것.
 
     * **배치 기간** — 올린 사람이 고른 연도·월
     * **연도·월 귀속** — 파일 안의 결의일자
 
-    그래서 「2026년 8월」로 올린 파일에 7월·2025년 12월 행이 섞여 있어도
-    거절하지 않고, 그 행들은 **결의일자대로** 잡힌다.
+    .. note::
+        🟢 **2026-09-05 고객 확정(STEP 121) — 확인 요청서 ⑯ 은 ③안으로 정해졌다.**
 
-    ⭐ 연도 귀속 자체는 고객 확정과 맞다 — 2025년 거래는 2025년으로 간다.
-    ⚠️ 문제는 「섞여 있을 때 받아 줄 것인가」이며, 그것은 아직 정해지지 않았다.
+        이 STEP 을 쓸 때는 「섞여 있을 때 받아 줄 것인가」가 정해지지 않아
+        **받아들이는 현재 동작**을 기록해 두고, 답이 오면 뒤집기로 했다.
+        답이 왔으므로 **여기서 뒤집는다** — 고른 기간 밖의 결의일자가 하나라도
+        있으면 파일 전체를 거절한다.
+
+        어긋난 파일을 거절하는 상세한 시험은
+        ``test_step123_upload_period_mismatch.py`` 에 있다. 이 클래스는 **두 축이
+        무엇인가**만 남겨 둔다.
     """
 
     @pytest.fixture
-    def mixed(self, client: TestClient, tmp_path: Path) -> TestClient:
-        """「2026년 8월」로 올리지만 파일에는 8월·7월·2025년 12월이 섞여 있다."""
+    def august(self, client: TestClient, tmp_path: Path) -> TestClient:
+        """「2026년 8월」로 올리고 파일도 모두 8월이다."""
         path = _purchase_file(
-            tmp_path / "mixed.xlsx",
-            [("2026-08-10", 1_000), ("2026-07-10", 2_000), ("2025-12-10", 3_000)],
+            tmp_path / "august.xlsx",
+            [("2026-08-10", 1_000), ("2026-08-20", 2_000)],
         )
         assert _upload(client, path, year=2026, month=8).status_code == 200
         return client
 
-    def test_10_the_file_is_accepted_as_is(self, mixed: TestClient) -> None:
-        """⚠️ 지금은 거절하지 않는다 — 세 행이 모두 적재된다."""
-        assert _total(mixed, 2026) + _total(mixed, 2025) == 6_000
+    def test_10_a_mixed_file_is_now_refused_whole(self, client: TestClient, tmp_path: Path) -> None:
+        """⭐ 8월·7월·2025년 12월이 섞인 파일은 **전체가 거절**된다."""
+        path = _purchase_file(
+            tmp_path / "mixed.xlsx",
+            [("2026-08-10", 1_000), ("2026-07-10", 2_000), ("2025-12-10", 3_000)],
+        )
 
-    def test_11_the_resolution_date_decides_the_year(self, mixed: TestClient) -> None:
-        """⭐ 2025년 12월 행은 **2025년**으로 간다 — 고객 확정과 맞다."""
-        assert _total(mixed, 2025) == 3_000
-        assert _uploaded(mixed, 2025) == [12]
+        response = _upload(client, path, year=2026, month=8)
 
-    def test_12_the_resolution_date_decides_the_month_too(self, mixed: TestClient) -> None:
-        """⚠️ 8월로 올렸는데 **7월도 완료**로 나온다 — 7월 행의 결의일자 때문이다."""
-        assert _uploaded(mixed, 2026) == [7, 8]
-        assert _total(mixed, 2026) == 3_000
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "UPLOAD_PERIOD_MISMATCH"
+        assert _total(client, 2026) == 0
+        assert _total(client, 2025) == 0
+
+    def test_11_the_resolution_date_decides_the_year(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """⭐ 연도 귀속은 여전히 결의일자다 — 2025년 거래는 2025년으로 간다."""
+        path = _purchase_file(tmp_path / "y2025.xlsx", [("2025-12-10", 3_000)])
+        assert _upload(client, path, year=2025, month=12).status_code == 200
+
+        assert _total(client, 2025) == 3_000
+        assert _uploaded(client, 2025) == [12]
+        assert _total(client, 2026) == 0
+
+    def test_12_the_resolution_date_decides_the_month(self, august: TestClient) -> None:
+        """월 귀속도 결의일자다 — 이제 고른 달과 반드시 같다."""
+        assert _uploaded(august, 2026) == [8]
+        assert _total(august, 2026) == 3_000
 
     def test_13_the_batch_period_is_what_the_uploader_chose(
-        self, db: Path, mixed: TestClient
+        self, db: Path, august: TestClient
     ) -> None:
         """배치 기간은 **고른 값 그대로**다 — 파일 내용으로 넓히지 않는다."""
         import sqlite3

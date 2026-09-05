@@ -2629,6 +2629,32 @@
     );
   }
 
+  /**
+   * 고른 기간과 결의일자가 달라 **파일 전체**가 거절되었음을 알린다.
+   *
+   * ⭐ 「일부 행만 빠졌다」 로 읽히면 안 된다. 담당자가 「나머지는 들어갔겠지」
+   *    라고 넘기면 그 달 실적이 통째로 비어 있는 채 남는다(STEP 121 §7 · §8).
+   * ⛔ 화면이 판정하지 않는다 — 백엔드가 준 값을 그대로 옮긴다.
+   */
+  function renderPeriodMismatch(detail) {
+    uploadNotice("");
+    var label = detail.year + "년" + (detail.month ? " " + detail.month + "월" : "");
+    var found = (detail.found_periods || []).map(function (item) {
+      return item.period + " " + numberFormat(item.count) + "건";
+    }).join(" · ");
+
+    uploadError(
+      "업로드할 수 없습니다. 고르신 업로드 기간은 " + label + "입니다. "
+      + "파일에 " + label + "이 아닌 결의일자가 "
+      + numberFormat(detail.mismatch_count) + "건 있어 "
+      + "전체 " + numberFormat(detail.total_rows) + "건이 "
+      + "**하나도 등록되지 않았습니다**"
+      + (found ? " (발견된 결의일자: " + found + ")" : "") + ". "
+      + "기존에 등록되어 있던 데이터는 그대로 있습니다. "
+      + "파일의 결의일자를 확인하신 뒤 다시 올려 주십시오."
+    );
+  }
+
   // 업로드 요청 하나를 보내고 결과를 그린다.
   // 검증과 저장은 **엔드포인트만 다르고** 화면 처리는 같다.
   function sendUpload(url, payload, buttons) {
@@ -2647,6 +2673,12 @@
           // 이 시점에 DB 는 아직 아무것도 바뀌지 않았다.
           if (res.status === 409 && body.detail && body.detail.code === "EXISTING_PERIOD") {
             return { needsConfirm: true, detail: body.detail };
+          }
+          // 고른 기간과 결의일자가 다른 행이 있어 **파일 전체**가 거절된 경우.
+          // ⭐ 「일부만 빠졌다」 로 읽히지 않도록 문장을 따로 만든다(STEP 121 §7).
+          if (res.status === 409 && body.detail
+              && body.detail.code === "UPLOAD_PERIOD_MISMATCH") {
+            return { rejected: true, detail: body.detail };
           }
           if (!res.ok) {
             var message = body.detail;
@@ -2668,6 +2700,10 @@
           Object.keys(payload).forEach(function (key) { confirmed[key] = payload[key]; });
           confirmed.replace_existing = true;
           sendUpload(url, confirmed, buttons);
+          return null;
+        }
+        if (outcome.rejected) {
+          renderPeriodMismatch(outcome.detail);
           return null;
         }
         renderUploadResult(outcome.body);

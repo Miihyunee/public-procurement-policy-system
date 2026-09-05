@@ -40,7 +40,7 @@ procurement.uploads.upload_service
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -186,18 +186,23 @@ class UploadService:
     ) -> UploadResult:
         """파일을 검증하고, **오류가 하나도 없을 때만** 저장합니다.
 
-        처리 순서(PM-006 · PM-007)::
+        처리 순서(PM-006 · PM-007 · STEP 119 · STEP 121)::
 
             1. 파일 읽기 · 전체 행 검증
             2. 오류가 하나라도 있으면 → 저장하지 않고 반환 (기존 데이터 그대로)
-            3. 같은 기간 ACTIVE 배치 확인
-            4. 있는데 replace_existing 이 False → ExistingPeriodBatchError
-            5. 새 배치 저장 → **저장에 성공한 뒤에야** 이전 배치를 SUPERSEDED
+            3. 고른 기간 밖의 결의일자 확인 → 하나라도 있으면 UploadPeriodMismatchError
+            4. 기간이 겹치는 다른 배치 확인 → 있으면 OverlappingPeriodBatchError
+            5. 같은 기간 ACTIVE 배치 확인
+            6. 있는데 replace_existing 이 False → ExistingPeriodBatchError
+            7. 새 배치 저장 → **저장에 성공한 뒤에야** 이전 배치를 SUPERSEDED
+
+        ⭐ **거절은 전부 교체보다 앞에 있습니다.** 올릴 수 없는 파일로 기존
+        데이터를 지울지 물을 이유가 없기 때문입니다(STEP 121 §4 · §11).
 
         **검증 실패 때문에 기존 정상 데이터가 사라지는 상황은 발생하지
-        않습니다.** 2단계에서 이미 반환하므로 적재 계층을 호출조차 하지 않고,
-        5단계의 무효화는 기존 :class:`BatchImportService` 안에서 새 배치 적재가
-        끝난 뒤에 일어납니다.
+        않습니다.** 2~6단계에서 이미 반환·예외가 나므로 적재 계층을 호출조차
+        하지 않고, 7단계의 무효화는 기존 :class:`BatchImportService` 안에서
+        새 배치 적재가 끝난 뒤에 일어납니다.
 
         Args:
             source: 읽을 ``.xlsx`` 파일 경로.
@@ -216,6 +221,9 @@ class UploadService:
             ExistingPeriodBatchError: 같은 기간에 이미 데이터가 있는데
                 ``replace_existing`` 이 ``False`` 인 경우. **DB 는 변경되지
                 않습니다.**
+            UploadPeriodMismatchError: 고른 기간 밖의 결의일자가 하나라도 있는
+                경우. **파일 전체를 거절**하며 DB 는 변경되지 않습니다.
+            OverlappingPeriodBatchError: 기간이 겹치는 다른 배치가 있는 경우.
         """
         if self._batch_import_service is None:
             raise UploadStorageUnavailableError(
@@ -227,6 +235,18 @@ class UploadService:
             # ⛔ 오류가 있으면 적재 계층을 **호출하지 않는다.** DB 는 그대로다.
             #    교체 여부도 묻지 않는다 — 저장할 수 없는 파일이기 때문이다.
             return _with_note(result, NOT_STORED_NOTE)
+
+        # 🟢 고른 기간과 결의일자가 다른 행이 하나라도 있으면 **파일 전체를
+        #    거절한다**(STEP 121 · 고객 확정). ⛔ 교체 확인보다 **먼저** 본다 —
+        #    올릴 수 없는 파일로 기존 데이터를 지울지 물을 이유가 없다.
+        mismatched = _rows_outside_period(result, period_start, period_end)
+        if mismatched:
+            raise UploadPeriodMismatchError(
+                mismatched=mismatched,
+                total_rows=result.valid_rows,
+                period_start=period_start,
+                period_end=period_end,
+            )
 
         # ⛔ 기간이 **겹치기만 하는** 기존 데이터가 있으면 적재하지 않는다.
         #    교체하면 다른 달까지 사라지고, 두면 그 달이 이중 집계된다(STEP 119).
@@ -360,6 +380,97 @@ class OverlappingPeriodBatchError(RuntimeError):
             f"{period_start}~{period_end} 와 겹치는 데이터가 이미 등록되어 있습니다"
             f"({periods}). 겹치는 기간이 서로 다르므로 그 달만 바꿀 수 없습니다."
         )
+
+
+class UploadPeriodMismatchError(RuntimeError):
+    """고른 기간 밖의 결의일자가 있어 **파일 전체를 거절**할 때 발생합니다.
+
+    🟢 **2026-09-05 고객 확정 (STEP 121)**
+
+        올릴 때 고른 연도·월과 거래의 **결의일자**가 일치해야 한다. 하나라도
+        다르면 **파일 전체를 거절**한다. ⛔ 일부 행만 빼고 나머지를 적재하지
+        않는다.
+
+    왜 전체를 거절하는가
+    ====================
+    일부만 적재하면 담당자가 「몇 건이 빠졌는지」를 매번 확인해야 하고, 빠진
+    행은 어느 달에도 올라가지 않은 채 조용히 사라진다. 파일을 통째로 돌려주면
+    담당자가 원본을 고쳐 다시 올리므로 빠지는 행이 없다.
+
+    .. warning::
+        ⛔ **결의일자를 고쳐 맞추지 않습니다.** 신고기준일·계약일자·지급일로
+        대신하지도, 고른 달로 옮기지도 않습니다.
+
+    **DB 는 전혀 변경되지 않은 상태**에서 발생합니다 — 교체 확인보다 먼저
+    검사하므로, 기존 그 달 데이터도 그대로 남습니다.
+
+    Attributes:
+        mismatched: 어긋난 결의일자의 **연월별 건수**. ⛔ 거래 원본을 담지
+            않습니다 — 오류 메시지에 실제 거래를 늘어놓지 않기 위함입니다.
+        total_rows: 검증을 통과한 전체 행 수.
+        period_start: 고른 기간 시작일.
+        period_end: 고른 기간 종료일.
+    """
+
+    def __init__(
+        self,
+        *,
+        mismatched: Mapping[str, int],
+        total_rows: int,
+        period_start: date,
+        period_end: date,
+    ) -> None:
+        """오류를 만듭니다."""
+        self.mismatched = dict(mismatched)
+        self.total_rows = total_rows
+        self.period_start = period_start
+        self.period_end = period_end
+        found = ", ".join(f"{month}({count}건)" for month, count in sorted(self.mismatched.items()))
+        super().__init__(
+            f"고른 기간({period_start}~{period_end}) 밖의 결의일자가 "
+            f"{self.mismatch_count}건 있어 파일 전체를 등록하지 않았습니다: {found}"
+        )
+
+    @property
+    def mismatch_count(self) -> int:
+        """어긋난 행 수."""
+        return sum(self.mismatched.values())
+
+
+def _rows_outside_period(
+    result: UploadResult, period_start: date, period_end: date
+) -> dict[str, int]:
+    """고른 기간 밖의 결의일자를 **연월별로** 셉니다.
+
+    ⛔ 판정 기준은 ``resolution_date`` 하나뿐입니다 — 신고기준일·계약일자·
+    지급일은 보지 않습니다(🟢 §0.10 · STEP 86).
+
+    .. note::
+        결의일자가 비어 있는 행은 여기까지 오지 않습니다. 표준 양식에서
+        **필수 컬럼**이라 검증 단계에서 이미 오류로 걸리고, 그러면 파일 전체가
+        저장되지 않습니다. ⛔ 그래서 여기서 빈 값에 대한 규칙을 새로 만들지
+        않습니다.
+
+    Args:
+        result: 검증을 통과한 업로드 결과.
+        period_start: 고른 기간 시작일.
+        period_end: 고른 기간 종료일.
+
+    Returns:
+        ``{"2026-07": 2, "2025-12": 1}`` 처럼 연월 → 건수. 모두 맞으면 빈 사전.
+    """
+    if result.report is None:
+        return {}
+    outside: dict[str, int] = {}
+    for row in result.report.rows:
+        resolution_date = row.values.get("resolution_date")
+        if not isinstance(resolution_date, date):
+            continue  # 필수 컬럼이라 여기 올 일이 없다 — 와도 판정하지 않는다
+        if period_start <= resolution_date <= period_end:
+            continue
+        label = f"{resolution_date.year:04d}-{resolution_date.month:02d}"
+        outside[label] = outside.get(label, 0) + 1
+    return outside
 
 
 def _with_note(result: UploadResult, note: str) -> UploadResult:

@@ -188,6 +188,7 @@ from procurement.uploads.upload_response import UploadResponseModel, build_uploa
 from procurement.uploads.upload_service import (
     ExistingPeriodBatchError,
     OverlappingPeriodBatchError,
+    UploadPeriodMismatchError,
     UploadService,
 )
 from procurement.uploads.validation import ValidationReport
@@ -1496,6 +1497,30 @@ def create_app(
                     "existing_row_count": exc.existing.row_count,
                     "year": payload.year,
                     "month": payload.month,
+                },
+            ) from exc
+        except UploadPeriodMismatchError as exc:
+            # 🟢 고객 확정(STEP 121) — 고른 기간과 결의일자가 다른 행이 하나라도
+            #    있으면 **파일 전체를 거절**한다. ⛔ 일부만 적재하지 않는다.
+            #    교체 확인보다 먼저 걸리므로 기존 그 달 데이터는 그대로 남는다.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "UPLOAD_PERIOD_MISMATCH",
+                    "message": (
+                        f"고르신 업로드 기간은 {label}입니다. 파일에 {label}이 아닌 "
+                        f"결의일자가 {exc.mismatch_count}건 있어 **파일 전체**를 "
+                        "등록하지 않았습니다."
+                    ),
+                    "year": payload.year,
+                    "month": payload.month,
+                    "mismatch_count": exc.mismatch_count,
+                    "total_rows": exc.total_rows,
+                    # ⛔ 거래 원본을 늘어놓지 않는다 — 어느 연월이 몇 건인지만 준다.
+                    "found_periods": [
+                        {"period": period, "count": count}
+                        for period, count in sorted(exc.mismatched.items())
+                    ],
                 },
             ) from exc
         except OverlappingPeriodBatchError as exc:

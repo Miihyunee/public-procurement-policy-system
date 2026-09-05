@@ -54,6 +54,19 @@ ROW_B: list[object] = [
     "부품 구매",
     "",
 ]
+#: 2025년 행 — 「다른 연도」 시험에 쓴다. 고른 기간과 결의일자가 맞아야 하므로
+#: 2026년 행을 2025년으로 올리던 예전 방식은 이제 거절된다(STEP 121).
+ROW_2025: list[object] = [
+    date(2025, 3, 15),
+    date(2025, 2, 20),
+    date(2025, 4, 1),
+    "한빛산업개발",
+    "220-81-62517",
+    1000000,
+    date(2025, 3, 10),
+    "사무용품 구매",
+    "소모성물품구입비",
+]
 BAD_ROW: list[object] = [
     "2026.13.45",
     date(2026, 2, 20),
@@ -119,10 +132,19 @@ class TestFirstUpload:
     def test_different_period_does_not_ask(
         self, client: TestClient, db_path: Path, tmp_path: Path
     ) -> None:
-        """다른 연도는 교체 대상이 아니므로 묻지 않는다."""
+        """다른 연도는 교체 대상이 아니므로 묻지 않는다.
+
+        .. note::
+            🟢 **2026-09-05 고객 확정(STEP 121)에 맞춰 자료를 고쳤다.** 예전에는
+            2026년 결의일자 행을 ``year=2025`` 로 올려도 통과했으므로 그 행을
+            그대로 썼다. 이제 고른 기간 밖의 결의일자는 파일 전체가 거절되므로,
+            2025년 행으로 바꾸었다.
+
+            ⛔ 확인하는 내용은 그대로다 — 「다른 연도는 묻지 않고 둘 다 남는다」.
+        """
         _upload(client, _excel(tmp_path / "a.xlsx", [ROW_A]), year=2026)
 
-        response = _upload(client, _excel(tmp_path / "b.xlsx", [ROW_A]), year=2025)
+        response = _upload(client, _excel(tmp_path / "b.xlsx", [ROW_2025]), year=2025)
 
         assert response.status_code == 200
         assert response.json()["stored"] is True
