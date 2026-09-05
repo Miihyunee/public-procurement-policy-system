@@ -237,7 +237,11 @@ def _date(value: object) -> date | None:
 
 
 def _has_company_fields(record: object) -> bool:
-    """조회 결과가 기업을 만들 수 있을 만큼 값을 주었는가."""
+    """조회 결과가 기업을 만들 수 있을 만큼 값을 주었는가.
+
+    🟢 2026-09-05 PM 확정에 따라 **기업명만** 봅니다 — 사업자등록번호는 조회의
+    입력값이라 이미 있고, 대표자명은 선택값입니다. ⛔ 대표자명이 없다고 기업을
+    버리지 않습니다.
+    """
     name = getattr(record, "company_name", None)
-    representative = getattr(record, "representative_name", None)
-    return bool((name or "").strip()) and bool((representative or "").strip())
+    return bool((name or "").strip())

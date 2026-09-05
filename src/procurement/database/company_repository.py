@@ -38,14 +38,18 @@ CREATE TABLE IF NOT EXISTS company (
     company_id INTEGER PRIMARY KEY,
     business_no TEXT UNIQUE NOT NULL,
     company_name TEXT NOT NULL,
-    representative_name TEXT NOT NULL,
+    representative_name TEXT,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 )
 """
 
 # 필수 입력값 (business_no 는 UNIQUE 제약과 별개로 NOT NULL/비어있지 않아야 함)
-_REQUIRED_FIELDS = ("business_no", "company_name", "representative_name")
+#
+# 🟢 2026-09-05 PM 확정: 기업을 식별하는 값은 **기업명과 사업자등록번호 둘**
+#    이며, 대표자명은 선택값이다. 그래서 여기에 없다.
+#    ⛔ 없는 대표자명을 "미상" 같은 값으로 채우지 않는다.
+_REQUIRED_FIELDS = ("business_no", "company_name")
 
 #: 저장된 값에 구분자가 남아 있는가 — **정리 대상이 있는지 빠르게 보는 조건**.
 #:
@@ -128,6 +132,29 @@ class CompanyRepository(BaseRepository):
         """
         with self.connection() as conn:
             conn.execute(CREATE_TABLE_SQL)
+            self._migrate_representative_name_nullable(conn)
+
+    @staticmethod
+    def _migrate_representative_name_nullable(conn: sqlite3.Connection) -> None:
+        """구 스키마(``representative_name NOT NULL``)를 선택값으로 바꿉니다.
+
+        SQLite 는 ``NOT NULL`` 을 떼지 못하므로 테이블을 다시 만들고 기존 행을
+        **값 그대로** 옮깁니다. 옮기는 동안 어떤 값도 바꾸지 않습니다.
+        """
+        columns = conn.execute("PRAGMA table_info(company)").fetchall()
+        representative = next((c for c in columns if c["name"] == "representative_name"), None)
+        if representative is None or not representative["notnull"]:
+            return  # 이미 선택값입니다.
+
+        conn.execute("ALTER TABLE company RENAME TO company_pre_optional_representative")
+        conn.execute(CREATE_TABLE_SQL)
+        conn.execute(
+            "INSERT INTO company "
+            "(company_id, business_no, company_name, representative_name, created_at, updated_at) "
+            "SELECT company_id, business_no, company_name, representative_name, "
+            "created_at, updated_at FROM company_pre_optional_representative"
+        )
+        conn.execute("DROP TABLE company_pre_optional_representative")
 
     def insert(self, company: Company) -> Company:
         """기업을 등록하고 채번된 ``company_id`` 와 타임스탬프를 반영해 반환합니다.
@@ -147,12 +174,19 @@ class CompanyRepository(BaseRepository):
         않습니다 — 지우는 것은 표기용 구분자뿐입니다.
 
         Raises:
-            CompanyValidationError: 필수값(사업자번호·기업명·대표자명)이 비어 있는 경우.
+            CompanyValidationError: 필수값(사업자번호·기업명)이 비어 있는 경우.
                 구분자만 들어온 값(예: ``"--"``)도 지우고 나면 비므로 여기서 걸립니다.
             DuplicateBusinessNoError: 동일한 사업자등록번호가 이미 존재하는 경우.
         """
         stored_business_no = to_storage_business_no(company.business_no)
-        company = replace(company, business_no=stored_business_no)
+        # 대표자명은 선택값입니다(🟢 2026-09-05 PM 확정). 빈 문자열과 "없음" 이
+        # 서로 다른 값으로 남으면 조회하는 쪽이 둘을 각각 다뤄야 하므로, 저장
+        # 직전에 **하나로** 맞춥니다. ⛔ 대체값을 넣는 것이 아니라 비웁니다.
+        company = replace(
+            company,
+            business_no=stored_business_no,
+            representative_name=(company.representative_name or "").strip() or None,
+        )
         self._validate_required(company)
 
         now = datetime.now()

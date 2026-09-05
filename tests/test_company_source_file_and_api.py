@@ -193,12 +193,22 @@ class TestFileValidation:
         assert body["issues"] != []
         assert CompanyRepository(db_path).count() == 0
 
-    def test_missing_representative_is_rejected(
+    def test_a_missing_representative_is_stored_empty(
         self, client: TestClient, db_path: Path, tmp_path: Path
     ) -> None:
-        """④ 대표자명이 없는 행은 저장하지 않는다.
+        """④ 대표자명이 없어도 저장한다 — 그 칸만 비운다.
 
-        ⛔ 기업명·사업자등록번호로 **대신 채우지 않는다.**
+        .. note::
+            분류 A · PM 확정 반영 (2026-09-05): 기업을 식별하는 값은 기업명과
+            사업자등록번호 둘이며, 대표자명은 선택값이다. 이 시험은 그전까지
+            *"대표자명이 없는 행은 저장하지 않는다"* 였다.
+
+            실제 사회적기업 자료 6,128행 중 1,491행에 대표자명이 없었고, 그
+            때문에 등록되지 못한 거래처가 달성/미달 판정을 뒤집었다.
+
+        .. warning::
+            ⛔ 기업명·사업자등록번호로 **대신 채우지 않는다.** 지어내지도
+            않는다 — 빈 값은 ``None`` 으로 남는다.
         """
         row: list[object] = [
             BUSINESS_NO,
@@ -212,8 +222,12 @@ class TestFileValidation:
 
         body = client.post(UPLOAD_URL, json={"file_path": str(path)}).json()
 
-        assert body["stored"] is False
-        assert CompanyRepository(db_path).count() == 0
+        assert body["stored"] is True
+        assert body["created"] == 1
+        stored = CompanyRepository(db_path).find_by_business_no(BUSINESS_NO)
+        assert stored is not None
+        assert stored.company_name == "가나산업"
+        assert stored.representative_name is None
 
     def test_bad_date_is_rejected(self, client: TestClient, db_path: Path, tmp_path: Path) -> None:
         """⑤ 날짜 형식이 잘못되면 저장하지 않는다."""
@@ -386,7 +400,31 @@ class TestMatchingIsUnchanged:
         assert PurchaseRepository(db_path).find_all()[0].company_id is not None
 
     def test_certification_needs_a_company_first(self, db_path: Path) -> None:
-        """⑫ 기업이 만들어지지 않으면 인증도 연결되지 않는다."""
+        """⑫ 기업이 만들어지지 않으면 인증도 연결되지 않는다.
+
+        .. note::
+            분류 A · PM 확정 반영 (2026-09-05). 이 시험은 «기업을 만들 수 없는
+            조회 결과» 로 **대표자명 없음**을 썼는데, 대표자명이 선택값이 되어
+            더 이상 기업을 못 만드는 사유가 아니다. 지키려던 것 — *기업이
+            없으면 인증도 붙지 않는다* — 은 그대로 두고, 사유만 여전히 필수인
+            **기업명 없음**으로 바꾼다.
+        """
+        service = build_company_source_service(
+            db_path,
+            _FakeApiClient([_api_record(company_name=None)], policy_code="WOMAN"),
+        )
+
+        service.import_from_api(SOURCE_WOMAN, [NORMALIZED], stdr_date=date(2026, 6, 1))
+
+        assert CompanyRepository(db_path).count() == 0
+        assert CertificationRepository(db_path).count() == 0
+
+    def test_a_company_without_a_representative_is_still_created(self, db_path: Path) -> None:
+        """③ 대표자명이 없어도 기업이 만들어진다 — 그 칸만 비어 있다.
+
+        분류 A · PM 확정 반영 (2026-09-05). 대표자명 없는 조회 결과는 예전에
+        기업 자체를 만들지 못했다.
+        """
         service = build_company_source_service(
             db_path,
             _FakeApiClient([_api_record(representative_name=None)], policy_code="WOMAN"),
@@ -394,8 +432,10 @@ class TestMatchingIsUnchanged:
 
         service.import_from_api(SOURCE_WOMAN, [NORMALIZED], stdr_date=date(2026, 6, 1))
 
-        assert CompanyRepository(db_path).count() == 0
-        assert CertificationRepository(db_path).count() == 0
+        company = CompanyRepository(db_path).find_by_business_no(NORMALIZED)
+        assert company is not None
+        assert company.company_name == "가나산업"
+        assert company.representative_name is None
 
 
 # ======================================================================

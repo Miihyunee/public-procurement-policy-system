@@ -309,24 +309,31 @@ class TestNoCertificationWithoutACompany:
 class TestTheCompanyShape:
     """§14.2 — 기업을 넣으려면 무엇이 필요한가."""
 
-    def test_a_company_needs_a_representative_name(self, db: Path) -> None:
-        """⚠️ 대표자명이 **필수다** — 「작업」 시트에는 그 칸이 없다(§14.2).
+    def test_a_company_does_not_need_a_representative_name(self, db: Path) -> None:
+        """대표자명은 **선택값이다** — 기업명과 사업자등록번호만 있으면 된다.
 
         .. note::
-            현재 구조의 사실을 적어 둡니다. 원천이 정해져 기업 적재 경로가
-            생길 때 이 값을 어디서 채울지가 함께 정해져야 합니다.
-            ⛔ 우리가 빈 값이나 대체값을 넣지 않았습니다.
-        """
-        from procurement.database.company_repository import CompanyValidationError
+            분류 A · PM 확정 반영 (2026-09-05). 이 시험은 STEP 108 까지
+            *"대표자명이 필수다"* 였고, 그 note 에 *"원천이 정해져 적재 경로가
+            생길 때 이 값을 어디서 채울지가 함께 정해져야 한다"* 고 적어
+            두었습니다. 그 답이 왔습니다 — 채우는 것이 아니라 **비워 둡니다.**
 
-        with pytest.raises(CompanyValidationError):
-            CompanyRepository(db).insert(
-                Company(
-                    business_no=_BUSINESS_NO,
-                    company_name="합성기업 가",
-                    representative_name="",
-                )
+            실제 사회적기업 자료 6,128행 중 1,491행에 대표자명이 없었고, 그
+            때문에 등록되지 못한 거래처가 달성/미달 판정을 뒤집었습니다.
+
+        .. warning::
+            ⛔ 여전히 지어내지 않습니다 — 빈 문자열은 ``None`` 이 되며
+            "미상" 같은 값이 들어가지 않습니다.
+        """
+        stored = CompanyRepository(db).insert(
+            Company(
+                business_no=_BUSINESS_NO,
+                company_name="합성기업 가",
+                representative_name="",
             )
+        )
+        assert stored.company_id is not None
+        assert stored.representative_name is None  # 빈 값은 비운 채로 남는다
 
     def test_the_company_has_no_size_field(self) -> None:
         """⛔ 업체 규모를 저장하는 자리가 없다 — 규모로 판정하지 않는다(§16)."""

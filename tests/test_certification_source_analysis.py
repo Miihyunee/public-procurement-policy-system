@@ -262,7 +262,15 @@ class TestNoAutomaticCertificationPath:
         source = (_SRC / "importers" / "company_importer.py").read_text(encoding="utf-8")
         # 값이 없으면 그 행을 실패로 돌려보낸다 — 다른 값으로 채우지 않는다.
         assert '"기업명이 없습니다."' in source
-        assert '"대표자명이 없습니다."' in source
+
+        # 분류 A · PM 확정 반영 (2026-09-05). 대표자명은 **선택값**이 되어
+        # 없다고 행을 버리지 않는다. ⛔ 그렇다고 지어내지도 않는다 — 빈 값은
+        # ``None`` 으로 둔다.
+        assert '"대표자명이 없습니다."' not in source
+        # 코드에서 대표자명에 값을 **넣는** 곳이 없어야 한다. 문구를 통째로
+        # 금지하면 "미상 을 넣지 않는다" 는 설명까지 걸리므로, 대입 형태만 본다.
+        assert 'representative_name = "' not in source
+        assert 'representative_name="' not in source
         # 이미 있는 기업을 덮어쓰지 않는다.
         assert "ALREADY_EXISTS" in source
 

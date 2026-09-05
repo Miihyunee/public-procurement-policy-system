@@ -16,8 +16,10 @@ procurement.importers.company_importer
     기존 판정 규칙 · 기존 계산기가 그대로 동작합니다.
 
 .. warning::
-    ⛔ **없는 값을 지어내지 않습니다.** 대표자명이 없으면 그 행을 실패로
-    돌려보내며, 기업명·사업자등록번호로 대신 채우지 않습니다.
+    ⛔ **없는 값을 지어내지 않습니다.** 기업명이 없으면 그 행을 실패로
+    돌려보내며, 사업자등록번호로 대신 채우지 않습니다. 대표자명은 선택값이라
+    (🟢 2026-09-05 PM 확정) 비어 있으면 **비운 채로** 저장합니다 — "미상" ·
+    "없음" 같은 값을 넣지 않습니다.
 
 .. warning::
     ⛔ **이미 있는 기업을 덮어쓰지 않습니다.** 같은 사업자등록번호가 다시
@@ -70,7 +72,7 @@ class CompanyRecord:
     Attributes:
         business_no: 사업자등록번호. 정규화 전 값이어도 됩니다.
         company_name: 기업명. **없으면 저장하지 않습니다.**
-        representative_name: 대표자명. **없으면 저장하지 않습니다.**
+        representative_name: 대표자명. **선택값입니다** — 없으면 ``None``.
         policy_code: 인증 정책 코드. 인증까지 넣을 때만 채웁니다.
         valid_from: 인증 유효 시작일.
         valid_to: 인증 유효 종료일. 비어 있어도 되는 정책은
@@ -228,9 +230,9 @@ class CompanyImporter:
         company_name = (record.company_name or "").strip()
         if not company_name:
             return self._failed(record, [*messages, "기업명이 없습니다."], business_no)
-        representative_name = (record.representative_name or "").strip()
-        if not representative_name:
-            return self._failed(record, [*messages, "대표자명이 없습니다."], business_no)
+        # 🟢 2026-09-05 PM 확정: 대표자명은 **선택값**입니다. 비어 있으면
+        #    ``None`` 으로 둡니다 — ⛔ "미상" 같은 값을 지어내지 않습니다.
+        representative_name = (record.representative_name or "").strip() or None
 
         existing = self._companies.find_by_business_no(business_no)
         if existing is not None and existing.company_id is not None:
