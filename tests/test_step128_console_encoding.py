@@ -130,10 +130,23 @@ class TestTheProgramStartsUnderKoreanWindowsEncoding:
         completed = subprocess.run(
             [sys.executable, "-m", "procurement", "init", "--db", str(tmp_path / "t.db")],
             capture_output=True,
-            text=True,
+            # ⛔ ``text=True`` 만 쓰면 **로케일 기본값**으로 디코딩한다. 한글
+            #    Windows 에서는 그것이 cp949 라, UTF-8 로 나오는 프로그램
+            #    출력을 읽다가 읽기 스레드가 UnicodeDecodeError 로 죽는다.
+            #    그러면 stderr 가 빈 채로 단언을 통과해 **시험이 아무것도
+            #    보지 못한다**(STEP 126-2 에서 경고로 드러남).
+            encoding="utf-8",
+            errors="replace",
             env=environment,
             cwd=tmp_path,
         )
 
+        # ⭐ 먼저 «읽기는 했는가»를 본다. 출력을 못 읽은 채로 아래 단언을
+        #    통과해 버리면, 이 시험은 아무것도 지키지 못한다.
+        assert completed.stdout.strip(), "프로그램 출력을 읽지 못했다"
+
         assert "UnicodeEncodeError" not in completed.stderr, completed.stderr
         assert completed.returncode == 0, completed.stderr
+
+        # 줄표가 온전히 실려 왔다 — 인코딩이 실제로 통했다는 증거다.
+        assert EM_DASH in completed.stdout
