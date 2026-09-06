@@ -328,6 +328,31 @@ class CertificationRepository(BaseRepository):
         )
         return [self._row_to_certification(row) for row in rows]
 
+    def count_by_source(self, policy_company_source_id: int) -> tuple[int, int]:
+        """등록 버전 하나에 **실제로 매여 있는** 인증·기업 수.
+
+        ⛔ 업로드 **처리 결과**(새로 만든 건수)를 세지 않습니다. 같은 파일을
+        다시 올리면 새로 만드는 것이 하나도 없어 처리 결과는 0 이 되지만,
+        그 버전에 매인 인증은 그대로 있습니다. 그때 0 을 적으면 담당자에게
+        **등록이 사라진 것처럼 보입니다**(STEP 131 에서 실제로 발견 · STEP 132).
+
+        ⛔ ``created + already_exists`` 로 어림하지 않습니다. 그것도 처리
+        결과이지 저장된 실체가 아닙니다.
+
+        Args:
+            policy_company_source_id: 대상 등록 버전 ID.
+
+        Returns:
+            ``(인증 수, 서로 다른 기업 수)``.
+        """
+        row = self.execute(
+            "SELECT COUNT(*) AS certifications, "
+            "       COUNT(DISTINCT company_id) AS companies "
+            "FROM certification WHERE policy_company_source_id = ?",
+            (policy_company_source_id,),
+        )[0]
+        return int(row["certifications"]), int(row["companies"])
+
     def _has_source_table(self) -> bool:
         """등록 버전 표가 있는가 — 없으면 버전 구분 없이 전부 봅니다."""
         rows = self.execute(

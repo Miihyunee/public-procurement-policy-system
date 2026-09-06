@@ -911,6 +911,11 @@ def create_app(
     company_source_registry = PolicyCompanySourceRepository(
         db_path if db_path is not None else settings.db_file
     )
+    # 등록 버전에 **실제로 매인** 인증을 세기 위한 저장소(STEP 132).
+    # ⛔ 업로드 처리 결과를 집계로 쓰지 않는다.
+    company_certification_repository = CertificationRepository(
+        db_path if db_path is not None else settings.db_file
+    )
     # 월별 적재 현황 조회용 — 계산과 **같은 저장소**를 본다(STEP 119 §7).
     purchase_repository = PurchaseRepository(db_path if db_path is not None else settings.db_file)
     # 확정 규칙으로만 구매유형을 자동 확정한다(STEP 122). ⛔ 추측하지 않는다.
@@ -1397,12 +1402,22 @@ def create_app(
             begin_version=begin_version,
         )
         # 건수는 적재가 끝나야 알 수 있어 여기서 채운다.
+        #
+        # ⛔ 업로드 **처리 결과**(created / already_exists)를 적지 않는다.
+        #    같은 파일을 다시 올리면 새로 만드는 것이 없어 처리 결과는 0 이
+        #    되지만, 그 버전에 매인 인증은 그대로 있다. 0 을 적으면 담당자에게
+        #    등록이 사라진 것처럼 보인다(STEP 131 에서 발견 · STEP 132).
+        #
+        # ⭐ **그 버전에 실제로 매여 있는 레코드**를 센다.
         if report is not None and recorded is not None:
             assert recorded.policy_company_source_id is not None
+            certifications, companies = company_certification_repository.count_by_source(
+                recorded.policy_company_source_id
+            )
             company_source_registry.update_counts(
                 recorded.policy_company_source_id,
-                company_count=report.created_count + report.existing_count,
-                certification_count=report.certification_count,
+                company_count=companies,
+                certification_count=certifications,
             )
         return _company_import_response("FILE", report, validation)
 
