@@ -28,6 +28,7 @@ Windows 이므로 똑같이 시작 단계에서 죽는다.
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -119,11 +120,12 @@ class TestTheProgramStartsUnderKoreanWindowsEncoding:
 
         ⛔ 고객 데이터를 쓰지 않는다 — 빈 임시 DB 하나를 만들 뿐이다.
         """
-        environment = {
-            "PATH": "/usr/bin:/bin",
-            "PYTHONPATH": str(ROOT / "src"),
-            "PYTHONIOENCODING": "cp949",
-        }
+        # ⛔ 환경을 통째로 물려받고 **필요한 것만** 덮어쓴다.
+        #    예전에는 PATH 를 "/usr/bin:/bin" 으로 못 박아, Windows 에서
+        #    파이썬이 제 DLL 조차 못 찾고 죽었다(STEP 126-2 에서 발견).
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(ROOT / "src")
+        environment["PYTHONIOENCODING"] = "cp949"
 
         completed = subprocess.run(
             [sys.executable, "-m", "procurement", "init", "--db", str(tmp_path / "t.db")],
