@@ -17,6 +17,14 @@
  *
  *     node scripts/verify-backend.js
  *     PROCUREMENT_PYTHON=.venv/bin/python node scripts/verify-backend.js
+ *
+ * PyInstaller 로 묶은 실행파일을 대신 검증할 수도 있다(STEP 126-2 §6)::
+ *
+ *     # Windows
+ *     $env:PROCUREMENT_BACKEND_EXE = "dist\procurement\procurement.exe"
+ *     node scripts/verify-backend.js
+ *
+ * 이때는 Python 을 전혀 쓰지 않는다 — 실행파일만으로 도는지 보는 것이다.
  */
 
 "use strict";
@@ -39,21 +47,33 @@ function report(ok, label, detail = "") {
 
 async function main() {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "procurement-userdata-"));
-  const pythonPath = process.env.PROCUREMENT_PYTHON || path.join(PROJECT_ROOT, ".venv/bin/python");
+
+  // 묶은 실행파일을 가리키면 그것을, 아니면 개발용 Python 을 쓴다.
+  // ⛔ 가상환경 경로는 OS 마다 다르다 — Windows 는 Scripts\python.exe 다.
+  const backendExecutable = process.env.PROCUREMENT_BACKEND_EXE;
+  const venvPython =
+    process.platform === "win32" ? ".venv\\Scripts\\python.exe" : ".venv/bin/python";
+  const pythonPath = process.env.PROCUREMENT_PYTHON || path.join(PROJECT_ROOT, venvPython);
 
   console.log("Electron 백엔드 생명주기 검증");
   console.log(`  userData: ${userDataDir}`);
-  console.log(`  python  : ${pythonPath}\n`);
+  console.log(`  backend : ${backendExecutable ? `${backendExecutable} (묶은 실행파일)` : pythonPath}\n`);
 
   const results = [];
   let handle = null;
 
   try {
     handle = await startBackend({
-      pythonPath,
-      cwd: PROJECT_ROOT,
+      // 실행파일을 쓸 때는 cwd·PYTHONPATH 를 넘기지 않는다 — 그 둘에
+      // 기대지 않고 도는지가 이 검증의 요점이다(STEP 126-2 §7).
+      ...(backendExecutable
+        ? { backendExecutable }
+        : {
+            pythonPath,
+            cwd: PROJECT_ROOT,
+            env: { ...process.env, PYTHONPATH: path.join(PROJECT_ROOT, "src") },
+          }),
       userDataDir,
-      env: { ...process.env, PYTHONPATH: path.join(PROJECT_ROOT, "src") },
       timeoutMs: 40000,
     });
     results.push(report(true, "백엔드 기동", `포트 ${handle.port}`));

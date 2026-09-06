@@ -42,6 +42,16 @@ let mainWindow = null;
 function backendConfig() {
   const projectRoot = path.resolve(__dirname, "..");
 
+  // 아직 설치본을 만들기 전에, **묶은 실행파일을 그대로** 띄워 보기 위한
+  // 통로다(STEP 126-2 §9). 설치본에서는 아래 배포 경로가 쓰이므로 이
+  // 값이 배포 동작을 바꾸지 않는다.
+  //
+  // ⛔ 고객에게 나가는 길이 아니다 — 개발자가 손으로 지정할 때만 쓰인다.
+  const override = process.env.PROCUREMENT_BACKEND_EXE;
+  if (override) {
+    return { backendExecutable: override, userDataDir: app.getPath("userData") };
+  }
+
   if (isDev) {
     return {
       // 개발 환경에서는 저장소의 가상환경 Python 을 사용한다.

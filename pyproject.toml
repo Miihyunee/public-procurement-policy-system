@@ -45,6 +45,17 @@ dev = [
     "httpx>=0.27",
 ]
 
+# Windows 배포본을 만들 때만 필요하다. 런타임 의존성이 아니다.
+#
+# ⛔ 정확한 버전으로 못 박는다(범위가 아니다). 빌드는 PyInstaller 버전에
+#    민감해서, 되던 빌드가 다음 판올림에서 깨지는 일이 잦다. 올릴 때는
+#    실제로 빌드해 보고 올린다.
+#
+# 🟢 6.22.2 — 2026-09-06 Windows 개발 PC 에서 확인한 판(win_amd64).
+packaging = [
+    "pyinstaller==6.22.2",
+]
+
 [project.scripts]
 procurement = "procurement.__main__:main"
 

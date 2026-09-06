@@ -178,3 +178,67 @@ class TestTheBuildIsDocumented:
         """⛔ UPX 압축을 쓰지 않는다 — 백신 오탐을 늘린다."""
         assert "upx=False" in spec
         assert "upx=True" not in spec
+
+
+# ======================================================================
+# STEP 126-2 — 빌드 도구를 **못 박았는가**
+# ======================================================================
+class TestTheBuildToolIsPinned:
+    def test_15_pyinstaller_is_declared(self) -> None:
+        """⭐ 어디에도 안 적혀 있으면 사람마다 다른 판이 깔린다."""
+        import tomllib
+
+        config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        extras = config["project"]["optional-dependencies"]
+
+        assert extras["packaging"] == ["pyinstaller==6.22.2"]
+
+    def test_16_it_is_an_exact_version_not_a_range(self) -> None:
+        """⛔ 범위(``>=``)로 두지 않는다 — 판올림에 빌드가 깨진다."""
+        import tomllib
+
+        config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        pinned = config["project"]["optional-dependencies"]["packaging"][0]
+
+        assert "==" in pinned
+        assert ">=" not in pinned
+
+    def test_17_it_is_not_a_runtime_dependency(self) -> None:
+        """빌드 도구가 고객 실행에 필요한 것처럼 섞이지 않았다."""
+        import tomllib
+
+        config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+        for requirement in config["project"]["dependencies"]:
+            assert "pyinstaller" not in requirement.lower()
+
+
+# ======================================================================
+# STEP 126-2 §9 — 설치본을 만들기 전에 실행파일을 띄워 볼 수 있는가
+# ======================================================================
+class TestTheBuiltExecutableCanBeTriedBeforePackaging:
+    def test_18_electron_accepts_an_explicit_executable(self, main_js: str) -> None:
+        """⭐ 손으로 지정한 실행파일을 Electron 이 그대로 띄운다."""
+        assert "PROCUREMENT_BACKEND_EXE" in main_js
+
+    def test_19_the_override_does_not_change_the_shipped_path(self, main_js: str) -> None:
+        """⛔ 배포본 경로 계산은 그대로 남아 있다.
+
+        통로를 하나 열었을 뿐, 고객에게 나가는 길을 바꾸지 않았다.
+        """
+        assert 'path.join(process.resourcesPath, "backend", executable)' in main_js
+        assert '"procurement.exe"' in main_js
+
+    def test_20_the_check_script_can_drive_the_executable(self) -> None:
+        """GUI 없이도 묶은 실행파일을 검증할 수 있다."""
+        script = (ROOT / "scripts" / "verify-backend.js").read_text(encoding="utf-8")
+
+        assert "PROCUREMENT_BACKEND_EXE" in script
+        assert "backendExecutable" in script
+
+    def test_21_the_check_script_finds_python_on_windows(self) -> None:
+        """⚠️ 가상환경 경로가 OS 마다 다르다 — 예전엔 POSIX 자리만 알았다."""
+        script = (ROOT / "scripts" / "verify-backend.js").read_text(encoding="utf-8")
+
+        assert ".venv\\\\Scripts\\\\python.exe" in script
+        assert 'process.platform === "win32"' in script
