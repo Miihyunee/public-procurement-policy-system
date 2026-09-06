@@ -246,8 +246,23 @@ class TestTheRealDatabaseIsStillAbsent:
     """⛔ 합성 숫자를 고객 데이터 현황으로 적지 않는다."""
 
     def test_the_operational_database_is_empty(self) -> None:
+        """운영 DB 에 실제 고객 데이터가 들어 있지 않다.
+
+        .. note::
+            ``database/`` 는 ``.gitignore`` 에 걸려 있어 **저장소에 없다.**
+            새로 clone 한 곳에는 폴더째 없고, 개발 중에 앱을 한 번이라도
+            돌린 곳에는 빈 파일이 남는다. **둘 다 「실제 고객 DB 부재」이며**
+            없는 쪽이 오히려 더 확실하다.
+
+            예전에는 ``path.exists()`` 를 요구해서, 새로 clone 한 곳에서
+            반드시 실패했다(STEP 126-1 · Windows 에서 발견).
+
+        ⛔ 지키려는 것은 그대로다 — **내용이 든 DB 가 있으면 실패한다.**
+        """
         path = _ROOT / "database" / "procurement.db"
-        assert path.exists()
+        if not path.exists():
+            return
+
         assert path.stat().st_size == 0
 
     def test_no_data_file_is_committed(self) -> None:
