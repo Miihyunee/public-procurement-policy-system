@@ -52,6 +52,20 @@ hiddenimports = [
     *collect_submodules("uvicorn"),
     # pydantic v2 의 native 코어. 보통 자동으로 잡히지만 명시해 둔다.
     "pydantic_core",
+    # ⛔ 우리 패키지 **전체**. 이것이 없으면 빌드는 되는데 실행이 안 된다.
+    #
+    #    `__main__.py` 는 서버를 이렇게 띄운다::
+    #
+    #        uvicorn.run("procurement.app:app", ...)
+    #
+    #    **문자열**이라 정적 분석이 보지 못한다. 그래서 `procurement.app`
+    #    이 번들에서 통째로 빠지고, 실행하면 이렇게 죽는다::
+    #
+    #        Error loading ASGI app. Could not import module "procurement.app".
+    #
+    #    app.py 를 통해서만 닿는 것들(계산기·저장소·업로드·검토·web)도
+    #    같이 빠지므로, 패키지 전부를 담는다(STEP 126-2 에서 실제로 겪음).
+    *collect_submodules("procurement"),
 ]
 
 a = Analysis(

@@ -87,6 +87,26 @@ class TestTheBuildInputsAgree:
 # 화면 파일이 실행파일 안에 들어가는가
 # ======================================================================
 class TestTheScreenTravelsWithTheBackend:
+    def test_5b_the_spec_bundles_our_whole_package(self, spec: str) -> None:
+        """⭐ 문자열로만 부르는 모듈이 있어 패키지 전부를 담아야 한다.
+
+        ``__main__.py`` 가 ``uvicorn.run("procurement.app:app", ...)`` 로
+        서버를 띄운다. **문자열**이라 정적 분석이 보지 못하고,
+        ``procurement.app`` 이 번들에서 빠져 실행이 안 된다
+        (STEP 126-2 에서 실제로 겪은 일).
+        """
+        assert 'collect_submodules("procurement")' in spec
+
+    def test_5c_the_server_is_still_started_by_name(self) -> None:
+        """위 조치가 **왜** 필요한지를 코드로 고정한다.
+
+        누군가 문자열 대신 객체를 넘기도록 바꾸면 이 시험이 깨지고,
+        그때 spec 의 저 줄이 아직 필요한지 다시 보게 된다.
+        """
+        source = (ROOT / "src" / "procurement" / "__main__.py").read_text(encoding="utf-8")
+
+        assert '"procurement.app:app"' in source
+
     def test_6_the_spec_bundles_the_page(self, spec: str) -> None:
         """``index.html`` 을 패키지 안 **제자리**에 넣는다."""
         assert '"procurement/web/static"' in spec
