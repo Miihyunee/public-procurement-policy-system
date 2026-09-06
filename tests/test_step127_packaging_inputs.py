@@ -149,6 +149,36 @@ class TestTheCustomerDataSurvives:
 
         assert user_data_root().name == package["name"]
 
+    def test_9b_the_data_folder_name_is_pinned(self, main_js: str) -> None:
+        """⭐ Electron 이 데이터 폴더 이름을 스스로 고르게 두지 않는다.
+
+        정하지 않으면 ``name`` 과 ``productName`` 중 하나가 쓰이고, 개발
+        모드와 설치본에서 서로 다를 수 있다. 그러면 고객에게는 **프로그램을
+        새로 깔았더니 자료가 사라진 것**으로 보인다(STEP 127).
+        """
+        assert 'app.setName("procurement-desktop")' in main_js
+
+    def test_9c_all_three_places_agree_on_the_name(self, package: dict[str, object]) -> None:
+        """⭐ 세 곳이 **같은 이름**이라야 같은 자리를 본다.
+
+        ``package.json`` 의 이름 · Electron 이 쓰는 이름 · 백엔드가 혼자 돌
+        때 쓰는 이름.
+        """
+        from procurement.core.config.settings import user_data_root
+
+        main_js = MAIN_JS.read_text(encoding="utf-8")
+        name = package["name"]
+
+        assert user_data_root().name == name
+        assert f'app.setName("{name}")' in main_js
+
+    def test_10b_the_pin_comes_before_the_first_use(self, main_js: str) -> None:
+        """⛔ 순서가 중요하다 — 폴더를 처음 물어보기 **전에** 정해야 한다."""
+        pinned = main_js.index('app.setName("procurement-desktop")')
+        first_use = main_js.index('app.getPath("userData")')
+
+        assert pinned < first_use
+
     def test_11_the_installer_output_is_not_committed(self) -> None:
         """⛔ 빌드 결과물을 저장소에 넣지 않는다(지시서 §37)."""
         ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()

@@ -25,6 +25,24 @@ const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { startBackend } = require("./backend");
 const { saveTemplate, selectExcelFile } = require("./uploads");
 
+/**
+ * 사용자 데이터 폴더 이름을 **못 박는다**.
+ *
+ * ⛔ 이것을 정하지 않으면 Electron 이 스스로 이름을 고른다 — `package.json`
+ *    의 `name` 이거나 `productName` 이며, 개발 모드와 설치본에서 서로 다를
+ *    수 있다. 그러면 데이터가 이런 식으로 갈린다.
+ *
+ *        %APPDATA%\procurement-desktop\database\procurement.db
+ *        %APPDATA%\공공구매정책관리시스템\database\procurement.db
+ *
+ *    고객에게는 **프로그램을 새로 깔았더니 자료가 사라진 것**으로 보인다.
+ *
+ * 백엔드가 혼자 돌 때 쓰는 이름(`settings.py` 의 `_APP_DIR_NAME`)과 같아야
+ * 어느 쪽으로 켜든 같은 자리를 본다. `getPath("userData")` 를 처음 부르기
+ * **전에** 정해야 한다(STEP 127).
+ */
+app.setName("procurement-desktop");
+
 /** 개발 모드 여부. 배포본에서는 번들된 백엔드 실행파일을 사용한다. */
 const isDev = !app.isPackaged;
 
