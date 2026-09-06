@@ -459,6 +459,101 @@
   .empty { color: var(--muted); font-size: 12.5px; padding: 26px 0; text-align: center; }
   .foot-note { font-size: 11.5px; color: var(--muted); margin: 12px 0 0; }
   footer { margin-top: 22px; font-size: 11.5px; color: var(--muted); text-align: center; }
+
+  /* ==================================================================
+     STEP 128 — 첫 화면 재구성
+
+     ⛔ 여기 있는 색은 전부 서버가 준 status 에서 온다. 화면이 등급을
+        새로 나누지 않는다(표시용 5구간 levelColor 는 첫 화면에서 쓰지
+        않는다 — 2026-09-06 PM 확정 ③).
+     ================================================================== */
+
+  /* ---- 탭 ---- */
+  .tabs { display: flex; gap: 2px; margin: 16px 0 0; border-bottom: 2px solid var(--line); }
+  .tab {
+    appearance: none; background: none; border: 0; cursor: pointer;
+    padding: 10px 18px; font: inherit; font-size: 13.5px; font-weight: 600;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
+  }
+  .tab:hover { color: var(--fg); }
+  .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .panel { margin-top: 16px; }
+
+  /* ---- 전체 실적 (첫 화면 머리) ---- */
+  .headline {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 36px;
+    padding: 20px 22px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--card);
+  }
+  .headline-main { display: flex; flex-direction: column; gap: 2px; }
+  .headline-label { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .headline-value {
+    font-size: 34px; font-weight: 800; letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums; line-height: 1.15;
+  }
+  .headline-side { display: flex; gap: 28px; margin-left: auto; }
+  .headline-side .headline-value { font-size: 19px; font-weight: 700; }
+  @media (max-width: 900px) { .headline-side { margin-left: 0; } }
+
+  /* ---- 정책별 달성 표 ---- */
+  .ach-head { display: flex; align-items: baseline; gap: 12px; margin: 22px 0 8px; }
+  .ach-head h2 { font-size: 15px; font-weight: 700; margin: 0; }
+  .ach-head .card-sub { margin: 0; }
+  .ach-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  table.ach { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.ach th, table.ach td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+  table.ach thead th {
+    font-size: 11px; font-weight: 700; color: var(--muted);
+    letter-spacing: .04em; white-space: nowrap;
+  }
+  table.ach tbody tr:last-child td { border-bottom: 0; }
+  table.ach td.n, table.ach th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ach-name { font-weight: 600; }
+  .ach-scope td:first-child { padding-left: 30px; color: var(--muted); font-weight: 400; }
+  .ach-scope td { border-bottom-style: dotted; }
+
+  /* 인라인 막대 — 폭은 달성률, 색은 서버 판정 상태 */
+  .bar { position: relative; width: 100px; height: 8px; border-radius: 4px; background: var(--line); }
+  .bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; display: block; }
+  .bar-NORMAL > i { background: var(--normal); }
+  .bar-WARNING > i { background: var(--warning); }
+  .bar-SHORTAGE > i { background: var(--shortage); }
+
+  .state {
+    display: inline-block; padding: 1px 9px; border-radius: 10px;
+    font-size: 11.5px; font-weight: 700; white-space: nowrap;
+    border: 1px solid currentColor;
+  }
+
+  /* ---- 확인이 필요한 정책 ---- */
+  .attention { margin-top: 22px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .attention-head {
+    display: flex; align-items: center; gap: 8px; padding: 11px 16px;
+    background: var(--card); border-bottom: 1px solid var(--line);
+    font-size: 13.5px; font-weight: 700;
+  }
+  .attention-row {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px;
+    padding: 11px 16px; background: var(--card); border-bottom: 1px solid var(--line);
+  }
+  .attention-row:last-child { border-bottom: 0; }
+  .attention-row .ach-name { flex: 0 0 auto; }
+  .attention-row .gap { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .attention-clear {
+    padding: 13px 16px; background: var(--card);
+    font-size: 13px; color: var(--normal); font-weight: 600;
+  }
+
+  /* ---- 바로가기 ---- */
+  .jump { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+  .jump button {
+    appearance: none; cursor: pointer; font: inherit; font-size: 12.5px;
+    padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg);
+  }
+  .jump button:hover { border-color: var(--accent); color: var(--accent); }
+  .jump button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>
 </head>
 <body>
@@ -479,6 +574,84 @@
 
   <div id="period-notice" class="notice">기간 필터 미적용 — 전체 데이터 기준입니다.</div>
   <div id="error-box" class="error" hidden></div>
+
+  <!--
+    STEP 128 — 성격이 다른 일을 갈라 놓는다.
+
+      실적       매일 본다        → 첫 화면
+      자료 관리  월 1회 쓴다      → 두 번째
+      점검       문제 있을 때 본다 → 세 번째
+
+    ⛔ 기능을 없애지 않았다. 자리만 옮겼다.
+  -->
+  <div class="tabs" role="tablist" aria-label="화면 전환">
+    <button class="tab" type="button" role="tab" id="tab-perf"
+            aria-controls="panel-perf" aria-selected="true">실적</button>
+    <button class="tab" type="button" role="tab" id="tab-data"
+            aria-controls="panel-data" aria-selected="false">자료 관리</button>
+    <button class="tab" type="button" role="tab" id="tab-check"
+            aria-controls="panel-check" aria-selected="false">점검</button>
+  </div>
+
+  <!-- ============================================================ 실적 -->
+  <div class="panel" id="panel-perf" role="tabpanel" aria-labelledby="tab-perf">
+
+    <!-- 1. 전체 실적 -->
+    <div class="headline">
+      <div class="headline-main">
+        <span class="headline-label">전체 구매액</span>
+        <span class="headline-value" id="hl-total">—</span>
+      </div>
+      <div class="headline-side">
+        <div class="headline-main">
+          <span class="headline-label">계산 대상</span>
+          <span class="headline-value" id="hl-count">—</span>
+        </div>
+        <div class="headline-main">
+          <span class="headline-label">기준일</span>
+          <span class="headline-value" id="hl-basis">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 정책별 달성 현황 -->
+    <div class="ach-head">
+      <h2>정책별 달성 현황</h2>
+      <p class="card-sub" id="ach-sub"></p>
+    </div>
+    <div class="ach-wrap">
+      <table class="ach">
+        <thead>
+          <tr>
+            <th>정책</th>
+            <th class="n">목표</th>
+            <th class="n">실적</th>
+            <th class="n">달성률</th>
+            <th>진행</th>
+            <th>상태</th>
+          </tr>
+        </thead>
+        <tbody id="ach-body"></tbody>
+      </table>
+    </div>
+    <p class="foot-note" id="ach-note"></p>
+
+    <!-- 3. 확인이 필요한 정책 -->
+    <div class="attention" id="attention"></div>
+
+    <!-- 4. 바로가기 — ⛔ 실적 영역보다 크지 않게 둔다 -->
+    <div class="jump">
+      <button type="button" data-go="data" data-focus="upload-card">구매실적 올리기</button>
+      <button type="button" data-go="data" data-focus="company-card">기업정보 등록</button>
+      <button type="button" data-go="data" data-focus="review-card">구매유형 검토</button>
+      <button type="button" data-go="data" data-focus="target-card">목표비율 관리</button>
+      <button type="button" data-go="check" data-focus="unmatched-card">미매칭 기업</button>
+      <button type="button" data-go="check" data-focus="status-card">적재 현황</button>
+    </div>
+  </div>
+
+  <!-- ======================================================== 점검 시작 -->
+  <div class="panel" id="panel-check" role="tabpanel" aria-labelledby="tab-check" hidden>
 
   <!-- 1. KPI + 적재 건수 -->
   <div class="row row-kpi">
@@ -522,7 +695,7 @@
     </section>
 
     <section class="card">
-      <h2 class="card-title">데이터 적재 현황</h2>
+      <h2 class="card-title" id="status-card">데이터 적재 현황</h2>
       <table class="kv"><tbody id="status-table"></tbody></table>
       <p class="foot-note" id="status-note"></p>
     </section>
@@ -541,45 +714,6 @@
     </section>
   </div>
 
-  <!--
-    2-B. 목표비율 관리 — 연도 × 정책.
-
-    「정책별 달성률」 바로 아래에 둔다. 목표비율이 없어 달성률이 안 나온다는
-    사실을 보는 그 자리에서 바로 입력할 수 있어야 하기 때문이다.
-
-    ⛔ 기업(구매처)을 고르는 칸이 없다. 목표비율의 축은 **연도 × 정책** 뿐이다
-       (DECISIONS §0.20). 거래처 단위로 목표를 나누지 않는다.
-    ⛔ 정책 목록을 화면이 들고 있지 않는다. 서버(/policy-targets)가 준다.
-    ⛔ 목표비율을 20/40/60/80/100 으로 제한하지 않는다 — 그것은 달성률 **표시
-       구간**이지 입력값 제한이 아니다.
-  -->
-  <div class="row" style="margin-top:16px">
-    <section class="card" style="flex:1 1 100%">
-      <div class="card-head">
-        <div>
-          <h2 class="card-title">목표비율 관리</h2>
-          <p class="card-sub">
-            연도별로 정책마다 목표비율을 정합니다. 기관 전체 지출 중 그 정책의
-            인증기업에 지출해야 하는 비율입니다
-          </p>
-        </div>
-        <span class="control">
-          <span class="control-label">연도</span>
-          <select id="pt-year" class="control-input"
-                  aria-label="목표비율 대상 연도"></select>
-        </span>
-        <button id="pt-save" class="control" type="button">저장</button>
-      </div>
-
-      <div id="pt-notice" class="notice" hidden></div>
-      <div id="pt-error" class="error" hidden></div>
-      <table class="kv"><tbody id="pt-rows"></tbody></table>
-      <p class="foot-note">
-        비워 두면 <b>미설정</b>입니다 — 0% 가 아니며 그 정책의 달성률은
-        계산하지 않습니다. 연도마다 따로 관리되어 다른 연도 값은 바뀌지 않습니다.
-      </p>
-    </section>
-  </div>
 
   <!-- 3. 매칭률 게이지 + 정책 카드 -->
   <div class="row row-bottom">
@@ -604,7 +738,7 @@
     <section class="card" style="flex:1 1 100%">
       <div class="card-head">
         <div>
-          <h2 class="card-title">미매칭 기업</h2>
+          <h2 class="card-title" id="unmatched-card">미매칭 기업</h2>
           <p class="card-sub">
             기업정보가 없어 연결되지 않은 구매를 사업자등록번호별로 묶은 것입니다
           </p>
@@ -664,12 +798,58 @@
     </section>
   </div>
 
+  </div>
+  <!-- ======================================================== 점검 끝 -->
+
+  <!-- ==================================================== 자료 관리 -->
+  <div class="panel" id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>
+
+  <!--
+    2-B. 목표비율 관리 — 연도 × 정책.
+
+    「정책별 달성률」 바로 아래에 둔다. 목표비율이 없어 달성률이 안 나온다는
+    사실을 보는 그 자리에서 바로 입력할 수 있어야 하기 때문이다.
+
+    ⛔ 기업(구매처)을 고르는 칸이 없다. 목표비율의 축은 **연도 × 정책** 뿐이다
+       (DECISIONS §0.20). 거래처 단위로 목표를 나누지 않는다.
+    ⛔ 정책 목록을 화면이 들고 있지 않는다. 서버(/policy-targets)가 준다.
+    ⛔ 목표비율을 20/40/60/80/100 으로 제한하지 않는다 — 그것은 달성률 **표시
+       구간**이지 입력값 제한이 아니다.
+  -->
+  <div class="row" style="margin-top:16px">
+    <section class="card" style="flex:1 1 100%">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title" id="target-card">목표비율 관리</h2>
+          <p class="card-sub">
+            연도별로 정책마다 목표비율을 정합니다. 기관 전체 지출 중 그 정책의
+            인증기업에 지출해야 하는 비율입니다
+          </p>
+        </div>
+        <span class="control">
+          <span class="control-label">연도</span>
+          <select id="pt-year" class="control-input"
+                  aria-label="목표비율 대상 연도"></select>
+        </span>
+        <button id="pt-save" class="control" type="button">저장</button>
+      </div>
+
+      <div id="pt-notice" class="notice" hidden></div>
+      <div id="pt-error" class="error" hidden></div>
+      <table class="kv"><tbody id="pt-rows"></tbody></table>
+      <p class="foot-note">
+        비워 두면 <b>미설정</b>입니다 — 0% 가 아니며 그 정책의 달성률은
+        계산하지 않습니다. 연도마다 따로 관리되어 다른 연도 값은 바뀌지 않습니다.
+      </p>
+    </section>
+  </div>
+
   <!-- 4. 구매실적 업로드 (데스크톱 앱 전용) -->
   <div class="row" style="margin-top:16px">
     <section class="card" style="flex:1 1 100%">
       <div class="card-head">
         <div>
-          <h2 class="card-title">구매실적 업로드</h2>
+          <h2 class="card-title" id="upload-card">구매실적 업로드</h2>
           <p class="card-sub">표준 양식을 내려받아 채운 뒤 올리면 전체 행을 검증합니다</p>
         </div>
       </div>
@@ -783,7 +963,7 @@
       <section class="card" style="flex:1 1 100%">
         <div class="card-head">
           <div>
-            <h2 class="card-title">기업정보 등록</h2>
+            <h2 class="card-title" id="company-card">기업정보 등록</h2>
             <p class="card-sub">
               정책마다 기업 목록을 받습니다. 목록을 받지 못한 정책은
               <b>조회불가</b>이며 — 해당 기업이 없다는 뜻이 아닙니다
@@ -908,7 +1088,7 @@
     <section class="card" style="flex:1 1 100%">
       <div class="card-head">
         <div>
-          <h2 class="card-title">구매유형 검토</h2>
+          <h2 class="card-title" id="review-card">구매유형 검토</h2>
           <p class="card-sub">
             원본을 보고 담당자가 직접 확정합니다. 원본 데이터는 수정되지 않습니다
           </p>
@@ -1086,6 +1266,9 @@
       </div>
     </section>
   </div>
+
+  </div>
+  <!-- ==================================================== 자료 관리 끝 -->
 
   <footer id="footer-note"></footer>
 </div>
@@ -1837,6 +2020,194 @@
     box.appendChild(table);
   }
 
+  // ==================================================================
+  // STEP 128 — 첫 화면(실적)
+  //
+  // ⛔ 여기서 판정하지 않는다. 상태·목표·실적·달성률은 전부 서버가 준
+  //    값을 그대로 쓴다. 막대의 **색도** status 에서 온다 — 화면이 등급을
+  //    새로 나누지 않는다(2026-09-06 PM 확정 ③).
+  // ⛔ 부족 «금액» 을 만들지 않는다. 서버가 주는 것은 비율뿐이다
+  //    (2026-09-06 PM 확정 ②).
+  // ==================================================================
+
+  /** 서버가 준 상태에 따라 눈에 띄어야 하는 정책인가. */
+  function needsAttention(status) {
+    return status === "SHORTAGE" || status === "WARNING";
+  }
+
+  /** 달성률 막대. 폭은 달성률(100% 에서 멈춘다), 색은 서버 판정 상태. */
+  function achievementBar(rate, status) {
+    var bar = make("div", "bar bar-" + status);
+    var fill = document.createElement("i");
+    var value = Math.max(0, Math.min(100, parseFloat(rate)));
+    fill.style.width = value + "%";
+    bar.appendChild(fill);
+    return bar;
+  }
+
+  /** 상태 알약. ⛔ 문구는 서버의 status_label 을 그대로 쓴다. */
+  function stateChip(status, label) {
+    var chip = make("span", "state st-" + status, label);
+    return chip;
+  }
+
+  /**
+   * 정책 한 줄. 구매유형별로 갈리는 정책(여성기업)은 아래에 유형 줄을 편다.
+   *
+   * ⛔ 달성률이 없는 정책(목표율 미설정·계산 보류·조회불가)은 «—» 로 두고
+   *    상태 문구만 적는다. 0% 가 아니다.
+   */
+  function achievementRows(item, display, tbody) {
+    var onHold = !!display && display.development_status === "ON_HOLD";
+    var tr = document.createElement("tr");
+
+    tr.appendChild(make("td", "ach-name", item.policy_name));
+    tr.appendChild(make("td", "n", item.target_rate === null ? "—" : item.target_rate + "%"));
+    tr.appendChild(make("td", "n",
+      item.purchase_amount === null ? "—" : numberFormat(item.purchase_amount) + " 원"));
+
+    var calculable = !onHold && item.achievement_rate !== null;
+    tr.appendChild(make("td", "n", calculable ? item.achievement_rate + "%" : "—"));
+
+    var barCell = make("td", null);
+    if (calculable) { barCell.appendChild(achievementBar(item.achievement_rate, item.status)); }
+    tr.appendChild(barCell);
+
+    var stateCell = make("td", null);
+    stateCell.appendChild(onHold
+      ? stateChip("HOLD", "계산 보류")
+      : stateChip(item.status, item.status_label));
+    tr.appendChild(stateCell);
+    tbody.appendChild(tr);
+
+    (item.scoped_achievements || []).forEach(function (scoped) {
+      var sub = make("tr", "ach-scope");
+      sub.appendChild(make("td", null, scoped.scope_label));
+      sub.appendChild(make("td", "n", scoped.target_rate + "%"));
+      sub.appendChild(make("td", "n", numberFormat(scoped.purchase_amount) + " 원"));
+
+      var has = scoped.achievement_rate !== null;
+      sub.appendChild(make("td", "n", has ? scoped.achievement_rate + "%" : "—"));
+
+      var sBar = make("td", null);
+      if (has) { sBar.appendChild(achievementBar(scoped.achievement_rate, scoped.status)); }
+      sub.appendChild(sBar);
+
+      var sState = make("td", null);
+      sState.appendChild(stateChip(scoped.status, scoped.status_label));
+      sub.appendChild(sState);
+      tbody.appendChild(sub);
+    });
+  }
+
+  /** 정책별 달성 현황 표. 확인이 필요한 것이 위로 온다. */
+  function renderAchievementTable(summary, displayMap) {
+    var tbody = el("ach-body");
+    clear(tbody);
+
+    var items = (summary.policies || []).slice();
+    // ⛔ 순서만 바꾼다. 어떤 값도 다시 계산하지 않는다.
+    items.sort(function (a, b) {
+      var aHit = needsAttention(a.status) ? 0 : 1;
+      var bHit = needsAttention(b.status) ? 0 : 1;
+      if (aHit !== bHit) { return aHit - bHit; }
+      var aRate = a.achievement_rate === null ? Infinity : parseFloat(a.achievement_rate);
+      var bRate = b.achievement_rate === null ? Infinity : parseFloat(b.achievement_rate);
+      return aRate - bRate;
+    });
+
+    items.forEach(function (item) {
+      achievementRows(item, displayMap[item.policy_code], tbody);
+    });
+
+    text(el("ach-sub"), items.length + "종");
+    text(el("ach-note"),
+      "목표율이 없거나 계산이 보류된 정책은 달성률 자리에 «—» 로 표시합니다. "
+      + "0% 가 아닙니다.");
+  }
+
+  /** 달성률을 계산할 수 없을 때 — 숫자를 지어내지 않는다. */
+  function renderAchievementTableUnavailable(reason) {
+    var tbody = el("ach-body");
+    clear(tbody);
+    var tr = document.createElement("tr");
+    var td = make("td", "empty", reason || "달성률을 계산할 수 없습니다.");
+    td.colSpan = 6;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    text(el("ach-sub"), "");
+    text(el("ach-note"), "");
+  }
+
+  /** 전체 실적 한 줄. */
+  function renderHeadline(status, summaryResult) {
+    text(el("hl-total"),
+      summaryResult.ok && summaryResult.body.total_purchase_amount !== null
+        ? numberFormat(summaryResult.body.total_purchase_amount) + " 원"
+        : numberFormat(status.purchase_total_amount) + " 원");
+    text(el("hl-count"), numberFormat(status.calculation_target_count) + " 건");
+    text(el("hl-basis"), dateFieldLabel(status.period_date_field));
+  }
+
+  /** 확인이 필요한 정책만 모아 올린다. 없으면 한 줄로 접는다. */
+  function renderAttention(summary, displayMap) {
+    var box = el("attention");
+    clear(box);
+
+    var hits = (summary.policies || []).filter(function (item) {
+      var display = displayMap[item.policy_code];
+      if (display && display.development_status === "ON_HOLD") { return false; }
+      return needsAttention(item.status);
+    });
+
+    if (!hits.length) {
+      box.appendChild(make("div", "attention-clear",
+        "확인이 필요한 정책이 없습니다 — 계산된 정책이 모두 목표를 채웠습니다."));
+      return;
+    }
+
+    box.appendChild(make("div", "attention-head", "확인이 필요한 정책 " + hits.length + "종"));
+    hits.forEach(function (item) {
+      var row = make("div", "attention-row");
+      row.appendChild(make("span", "ach-name", item.policy_name));
+      row.appendChild(make("span", "card-sub",
+        "목표 " + item.target_rate + "% · 달성 " + item.achievement_rate + "%"));
+      // ⛔ 부족 «비율» 만 적는다. 금액으로 바꾸지 않는다.
+      if (item.shortage_rate !== null) {
+        row.appendChild(make("span", "gap card-sub", "부족 " + item.shortage_rate + "%p"));
+      }
+      row.appendChild(stateChip(item.status, item.status_label));
+      box.appendChild(row);
+    });
+  }
+
+  // ------------------------------------------------------------ 탭 전환
+  var TABS = ["perf", "data", "check"];
+
+  function showTab(name) {
+    TABS.forEach(function (key) {
+      var selected = key === name;
+      el("tab-" + key).setAttribute("aria-selected", String(selected));
+      el("panel-" + key).hidden = !selected;
+    });
+  }
+
+  function setupTabs() {
+    TABS.forEach(function (key) {
+      el("tab-" + key).addEventListener("click", function () { showTab(key); });
+    });
+
+    // 바로가기 — 탭을 옮기고 그 카드로 스크롤한다.
+    // ⛔ 기능을 새로 만들지 않는다. 기존 화면으로 데려다 줄 뿐이다.
+    Array.prototype.forEach.call(document.querySelectorAll(".jump button"), function (button) {
+      button.addEventListener("click", function () {
+        showTab(button.getAttribute("data-go"));
+        var target = el(button.getAttribute("data-focus"));
+        if (target) { target.scrollIntoView({ block: "start" }); }
+      });
+    });
+  }
+
   function draw(status, summaryResult, displayMap, uploadMonths) {
     renderKpi(status);
     renderStatusTable(status);
@@ -1845,11 +2216,18 @@
     renderGauge(status);
     renderMissingResolutionDate(summaryResult);
 
+    // ---- 첫 화면(실적) — STEP 128 ----
+    renderHeadline(status, summaryResult);
+
     if (summaryResult.ok) {
       el("summary-error").hidden = true;
+      renderAchievementTable(summaryResult.body, displayMap);
+      renderAttention(summaryResult.body, displayMap);
       renderPolicies(summaryResult.body, displayMap);
       renderAchievement(summaryResult.body, displayMap);
     } else {
+      renderAchievementTableUnavailable(summaryResult.reason);
+      clear(el("attention"));
       // 계산 결과가 없어도 정책 목록과 개발 상태는 보여준다.
       var box = el("summary-error");
       box.hidden = false;
@@ -4895,6 +5273,7 @@
   initCompanySource();
   initReview();
   initUnmatched();
+  setupTabs();
   load();
 })();
 </script>
