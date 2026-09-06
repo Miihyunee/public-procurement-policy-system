@@ -476,9 +476,31 @@ class TestItReachesTheWomanCalculation:
         return client
 
     def test_f1_goods_is_calculated(self, seeded: TestClient) -> None:
-        """§22-F — 물품 1,000 ÷ 10,000 = 10% · 목표 5% → 달성률 200%."""
+        """§22-F — 물품 1,000 ÷ 10,000 = 10% · 목표 5% → 달성률 200%.
+
+        🟢 2026-09-06 PM 확정(STEP 140) — 규칙이 못 정한 거래가 하나라도
+        남아 있으면 분모가 덜 찬 것이므로 달성률을 내지 않는다. 규칙이
+        분모·분자를 제대로 채운다는 이 시험의 요지는 그대로 두고, 남은
+        한 건을 확정한 뒤에 확인한다.
+        """
         entry = _scoped(seeded)[GOODS]
 
+        # 규칙이 세운 분모·분자는 확정 여부와 무관하게 이미 제자리다.
+        assert _won(entry["purchase_amount"]) == 1_000
+        assert _won(entry["total_purchase_amount"]) == 10_000
+        # ⭐ 아직 외주용역비 한 건이 미확정이라 달성률은 보류다.
+        assert entry["achievement_rate"] is None
+        assert entry["status"] == "CALCULATION_ON_HOLD"
+
+        # 남은 한 건까지 확정하면 달성률이 선다.
+        assert (
+            seeded.put(
+                "/reviews/3", json={"final_purchase_type": SERVICE, "reviewed_by": "담당자"}
+            ).status_code
+            == 200
+        )
+
+        entry = _scoped(seeded)[GOODS]
         assert _won(entry["purchase_amount"]) == 1_000
         assert _won(entry["total_purchase_amount"]) == 10_000
         assert _won(entry["achievement_rate"]) == Decimal("200.00")

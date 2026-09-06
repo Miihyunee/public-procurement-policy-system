@@ -448,9 +448,15 @@ class TestPartialConfirmationIsVisiblySo:
     def test_12_confirming_only_the_woman_rows_makes_the_rate_look_perfect(
         self, db: Path, client: TestClient, tmp_path: Path
     ) -> None:
-        """여성기업 거래만 확정하면 분모 = 분자가 되어 달성률이 매우 높게 나온다.
+        """여성기업 거래만 확정하면 분모 = 분자가 된다 — 그때는 달성률을 내지 않는다.
 
-        ⛔ 계산을 고칠 문제가 아니다 — 확정을 **끝까지** 해야 한다는 뜻이다.
+        🟢 2026-09-06 PM 확정(STEP 140) — 예전에는 이 상태에서 2000% 가
+        「정상」으로 화면에 떴다. 담당자가 그대로 대외 보고에 쓸 수 있는
+        숫자였다. 그래서 분모가 다 채워지기 전에는 «계산 보류» 로 둔다.
+
+        ⛔ 계산을 고친 것이 아니다. 분모·분자·목표율 어느 것도 그대로이며,
+           **덜 찬 분모로 낸 값을 보여 주지 않는** 것뿐이다. 확정을 끝까지
+           해야 한다는 뜻은 그대로다.
         """
         _register_woman(client, tmp_path)
         spend = _purchase_file(
@@ -469,7 +475,9 @@ class TestPartialConfirmationIsVisiblySo:
         entry = _scoped(client)[GOODS]
         assert _won(entry["purchase_amount"]) == 1_000_000
         assert _won(entry["total_purchase_amount"]) == 1_000_000  # ⚠️ 아직 1건뿐
-        assert _won(entry["achievement_rate"]) == Decimal("2000.00")
+        # ⭐ 분모가 덜 찼으므로 달성률을 만들지 않는다(STEP 140).
+        assert entry["achievement_rate"] is None
+        assert entry["status"] == "CALCULATION_ON_HOLD"
 
         # 나머지를 확정하면 분모가 제자리를 찾는다.
         assert _confirm(client, _active_ids(db)[1], GOODS).status_code == 200

@@ -1607,6 +1607,26 @@
     return wrap;
   }
 
+  /*
+    구매유형 확인 진행률 (STEP 140).
+
+    ⛔ 달성률이 아니다. 분모도 아니다. 「무엇이 남았는가」만 적는다.
+       달성률처럼 보이지 않도록 막대·색·퍼센트 강조를 쓰지 않고
+       주석 글씨로만 둔다.
+  */
+  function coverageNote(coverage) {
+    if (!coverage || coverage.complete) { return null; }
+    var box = make("div", "note");
+    box.appendChild(make("div", null,
+      "구매유형 확인이 끝나지 않아 달성률을 계산할 수 없습니다."));
+    box.appendChild(make("div", null,
+      "확인 완료 " + numberFormat(coverage.confirmed_count) +
+      " / " + numberFormat(coverage.total_count) + "건" +
+      "  ·  " + numberFormat(coverage.confirmed_amount) +
+      " / " + numberFormat(coverage.total_amount) + " 원"));
+    return box;
+  }
+
   // ------------------------------------------------------------ 정책 카드
   function policyCard(item, display) {
     var card = make("div", "policy");
@@ -1665,6 +1685,8 @@
     // ⛔ 이걸 그리지 않으면 서버가 낸 세 결과가 화면에서 사라진다.
     if (item.scoped_achievements && item.scoped_achievements.length > 0) {
       card.appendChild(scopedTable(item.scoped_achievements));
+      var note = coverageNote(item.purchase_type_coverage);
+      if (note) { card.appendChild(note); }
     }
 
     var reason = "";
@@ -2130,6 +2152,22 @@
       sub.appendChild(sState);
       tbody.appendChild(sub);
     });
+
+    // 왜 계산 보류인지 한 줄로 적는다 (STEP 140).
+    // ⛔ 달성률 칸에 넣지 않는다 — 진행률과 달성률을 섞으면 안 된다.
+    var cov = item.purchase_type_coverage;
+    if ((item.scoped_achievements || []).length > 0 && cov && !cov.complete) {
+      var noteRow = make("tr", "ach-scope");
+      var cell = make("td", "ach-support",
+        "구매유형 확인이 끝나지 않아 달성률을 계산할 수 없습니다. " +
+        "확인 완료 " + numberFormat(cov.confirmed_count) +
+        " / " + numberFormat(cov.total_count) + "건 · " +
+        numberFormat(cov.confirmed_amount) + " / " +
+        numberFormat(cov.total_amount) + " 원");
+      cell.colSpan = 6;
+      noteRow.appendChild(cell);
+      tbody.appendChild(noteRow);
+    }
   }
 
   /** 정책별 달성 현황 표. 확인이 필요한 것이 위로 온다. */

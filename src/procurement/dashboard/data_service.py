@@ -31,6 +31,7 @@ from procurement.dashboard.models import (
     DashboardSummary,
     MissingResolutionDate,
     PolicySummary,
+    PurchaseTypeCoverage,
     ScopedAchievement,
 )
 from procurement.database.certification_repository import CertificationRepository
@@ -424,14 +425,32 @@ class DashboardDataService:
             ⛔ **분모가 0 이면 달성률을 만들지 않습니다.** 그 유형의 구매가
             아직 없거나 담당자가 유형을 확정하지 않았다는 뜻이므로,
             0% 나 100% 가 아니라 «계산 보류» 로 둡니다(§7).
+
+        .. warning::
+            ⛔ **분모가 다 채워지지 않아도 달성률을 만들지 않습니다**
+            (🟢 STEP 140).
+
+            분모에 들어가는 것은 담당자가 **확정한** 행뿐입니다. 확정이 일부만
+            되어 있으면 분모가 실제보다 작아지고, 달성률은 실제보다 **높게**
+            나옵니다. 부분 분모는 크기와 무관하게 늘 그렇습니다.
+
+            실제로 그렇게 됐습니다. 여성기업 124건만 확정된 상태에서 공사
+            달성률이 3333% 로, 그것도 「정상」으로 표시됐습니다 — 분모와
+            분자가 같은 124건이었기 때문입니다. 담당자가 그 숫자를 그대로
+            대외 보고에 쓸 수 있는 화면이었습니다.
+
+            ⛔ 「몇 % 이상이면 계산한다」는 기준을 만들지 않았습니다. 한
+            건이라도 유형이 정해지지 않았으면 그만큼 분모가 비어 있다는
+            뜻이며, 임계값을 고르는 것은 **고객 확인 사항**입니다(§6).
         """
         assert policy.policy_id is not None  # 호출부에서 보장
+        coverage = self._purchase_type_coverage(period)
         achievements: list[ScopedAchievement] = []
         for scope in sorted(scoped):
             target_rate = scoped[scope]
             denominator = self._calculator.calculate_total_purchase(period, scope)
             numerator = self._calculator.calculate_policy_purchase(policy.policy_id, period, scope)
-            if denominator == 0:
+            if denominator == 0 or (coverage is not None and not coverage.complete):
                 rate: Decimal | None = None
                 status = DashboardStatus.CALCULATION_ON_HOLD
             else:
@@ -463,6 +482,30 @@ class DashboardDataService:
             shortage_rate=None,
             status=DashboardStatus.SCOPED_BY_PURCHASE_TYPE,
             scoped_achievements=tuple(achievements),
+            purchase_type_coverage=coverage,
+        )
+
+    def _purchase_type_coverage(self, period: PeriodFilter | None) -> PurchaseTypeCoverage | None:
+        """구매유형이 얼마나 확정되었는지 세어 옵니다(STEP 140).
+
+        ⛔ 세기만 합니다. 이 값을 분모로 쓰지 않습니다.
+
+        .. note::
+            ``purchase_repository`` 가 없으면 **셀 수 없으므로** ``None`` 을
+            돌려주고, 그때는 예전처럼 동작합니다. 운영 조립부(``app.py``)는
+            항상 주입하므로 실제 화면에서는 이 경로를 타지 않습니다 —
+            그 사실 자체를 시험으로 묶어 두었습니다.
+        """
+        if self._purchase_repository is None:
+            return None
+        confirmed, total, confirmed_amount, total_amount = (
+            self._purchase_repository.count_purchase_type_coverage(period)
+        )
+        return PurchaseTypeCoverage(
+            confirmed_count=confirmed,
+            total_count=total,
+            confirmed_amount=confirmed_amount,
+            total_amount=total_amount,
         )
 
     def _to_uncalculated_summary(

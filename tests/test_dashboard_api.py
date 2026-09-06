@@ -156,6 +156,9 @@ class TestDashboardResponseModel:
                     # STEP 103 — 구매유형별 목표를 가진 정책만 채워진다.
                     # 일반 정책(중소기업)은 비어 있다.
                     "scoped_achievements": [],
+                    # STEP 140 — 구매유형 확인 진행률도 유형별 목표를 가진
+                    # 정책만 채워진다. 일반 정책은 ``null`` 이다.
+                    "purchase_type_coverage": None,
                 }
             ],
         }

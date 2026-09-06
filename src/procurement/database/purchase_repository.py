@@ -335,6 +335,77 @@ class PurchaseRepository(BaseRepository):
 
         return self._select_purchases(conditions, params)
 
+    def count_purchase_type_coverage(
+        self, period: PeriodFilter | None = None
+    ) -> tuple[int, int, Decimal, Decimal]:
+        """구매유형이 **몇 건이나 확정되었는지** 셉니다(STEP 140).
+
+        왜 필요한가
+        ===========
+        유형별 달성률의 분모는 「기관 전체의 그 유형 구매금액」입니다. 그런데
+        분모에 들어가는 것은 담당자가 **확정한** 행뿐입니다. 확정이 일부만
+        되어 있으면 분모가 실제보다 작아지고, 달성률은 실제보다 **높게**
+        나옵니다.
+
+        실제로 그렇게 됐습니다. 여성기업 124건만 확정된 상태에서 공사
+        달성률이 3333% 로, 그것도 「정상」으로 표시됐습니다(STEP 138 §4).
+        분모와 분자가 같은 124건이었기 때문입니다.
+
+        그래서 달성률을 내기 전에 **분모가 다 채워졌는지** 먼저 묻습니다.
+
+        .. warning::
+            ⛔ 「몇 % 이상이면 계산한다」는 기준을 만들지 않았습니다. 이
+            메서드는 세기만 하고, 판단은 하지 않습니다. 부분 분모는 크기와
+            무관하게 달성률을 높게 만들므로, 임계값을 고르는 것은 고객
+            확인 사항입니다(STEP 140 §6).
+
+        .. note::
+            **계산 모집단과 같은 조건으로 셉니다.** :meth:`find_for_calculation`
+            이 쓰는 배치·기간·실적제외 조건을 그대로 붙입니다. 다른 모집단을
+            세면 「분모는 다 찼는데 화면은 덜 찼다고 한다」는 어긋남이 생깁니다.
+
+        Args:
+            period: 적용할 기간 조건. ``None`` 이면 기간 제한 없이 전체.
+
+        Returns:
+            ``(확정 건수, 전체 건수, 확정 금액, 전체 금액)``. 대상이 없으면
+            ``(0, 0, Decimal("0"), Decimal("0"))``.
+        """
+        conditions, params = self._review_scope_conditions(period)
+        exclusion_conditions, exclusion_params = self._performance_exclusion_conditions()
+        conditions.extend(exclusion_conditions)
+        params.extend(exclusion_params)
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        total_rows = self.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM purchase{where}", tuple(params)
+        )
+        total_count, total_amount = (total_rows[0][0], total_rows[0][1]) if total_rows else (0, 0)
+
+        if not self._has_review_table():
+            # 구 스키마 DB — 확정값이 존재할 수 없으므로 0 건입니다.
+            return 0, int(total_count), Decimal("0"), Decimal(str(total_amount))
+
+        confirmed_condition = (
+            "EXISTS (SELECT 1 FROM purchase_review r "
+            "WHERE r.purchase_id = purchase.purchase_id "
+            "AND r.final_purchase_type IS NOT NULL)"
+        )
+        confirmed_rows = self.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM purchase"
+            f"{where}{' AND ' if where else ' WHERE '}{confirmed_condition}",
+            tuple(params),
+        )
+        confirmed_count, confirmed_amount = (
+            (confirmed_rows[0][0], confirmed_rows[0][1]) if confirmed_rows else (0, 0)
+        )
+        return (
+            int(confirmed_count),
+            int(total_count),
+            Decimal(str(confirmed_amount)),
+            Decimal(str(total_amount)),
+        )
+
     def _confirmed_purchase_type_condition(self, purchase_type: str) -> tuple[str, list[object]]:
         """담당자가 **확정한** 구매유형이 주어진 값인 행만 남기는 조건.
 

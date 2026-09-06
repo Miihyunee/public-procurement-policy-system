@@ -154,6 +154,48 @@ class ScopedAchievement:
 
 
 @dataclass(frozen=True, kw_only=True)
+class PurchaseTypeCoverage:
+    """구매유형이 **얼마나 확정되었는지**(STEP 140).
+
+    유형별 달성률의 분모는 「기관 전체의 그 유형 구매금액」인데, 분모에
+    들어가는 것은 담당자가 확정한 행뿐입니다. 확정이 일부만 되어 있으면
+    분모가 작아지고 달성률이 실제보다 **높게** 나옵니다.
+
+    실제로 여성기업 124건만 확정된 상태에서 공사 달성률이 3333% 로, 그것도
+    「정상」으로 표시됐습니다. 분모와 분자가 같은 124건이었기 때문입니다.
+
+    .. warning::
+        ⛔ **달성률이 아닙니다.** 업무 진행 상황일 뿐이며, 분모로도 쓰지
+        않습니다. 화면에서 달성률처럼 보이지 않게 두어야 합니다.
+
+    Attributes:
+        confirmed_count: 구매유형이 확정된 건수.
+        total_count: 계산 대상 전체 건수.
+        confirmed_amount: 확정된 건의 금액 합.
+        total_amount: 계산 대상 전체 금액 합.
+    """
+
+    confirmed_count: int
+    total_count: int
+    confirmed_amount: Decimal
+    total_amount: Decimal
+
+    @property
+    def complete(self) -> bool:
+        """분모를 낼 수 있을 만큼 **다 채워졌는가.**
+
+        ⛔ 「몇 % 이상」이라는 기준을 고른 것이 아닙니다. 한 건이라도 유형이
+        정해지지 않았으면 그 건은 어느 유형 분모에도 들어가지 못하므로,
+        분모가 그만큼 비어 있다는 뜻입니다. 임계값을 두는 것은 **고객 확인
+        사항**입니다(STEP 140 §6).
+
+        대상이 하나도 없으면(``total_count == 0``) 채울 것이 없으므로
+        ``True`` 입니다 — 이때는 분모가 0 이라 어차피 계산 보류가 됩니다.
+        """
+        return self.confirmed_count >= self.total_count
+
+
+@dataclass(frozen=True, kw_only=True)
 class PolicySummary:
     """정책 하나에 대한 대시보드 요약(DTO).
 
@@ -189,6 +231,9 @@ class PolicySummary:
     #: 일반 정책은 비어 있습니다(``()``). ⛔ 여기에 값이 있으면 정책 한 줄의
     #: ``achievement_rate`` 는 ``None`` 입니다 — 대표값을 고르지 않기 때문입니다.
     scoped_achievements: tuple[ScopedAchievement, ...] = ()
+    #: 구매유형 확인 진행 상황. 유형별 목표를 가진 정책만 채워집니다.
+    #: ⛔ 달성률도 분모도 아닙니다 — 「무엇이 남았는가」를 보여 줄 뿐입니다.
+    purchase_type_coverage: PurchaseTypeCoverage | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

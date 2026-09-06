@@ -30,10 +30,53 @@ from procurement.dashboard.models import (
     DashboardSummary,
     MissingResolutionDate,
     PolicySummary,
+    PurchaseTypeCoverage,
     ScopedAchievement,
 )
 from procurement.models.purchase import Purchase
 from procurement.reviews.response import PurchaseSourceResponseModel
+
+
+class PurchaseTypeCoverageResponseModel(BaseModel):
+    """구매유형 확인 진행 상황 응답 모델(🟢 STEP 140).
+
+    ⛔ **달성률이 아닙니다.** 분모로도 쓰지 않습니다. 「전체 몇 건 중 몇 건의
+    구매유형이 확인되었는가」 하나만 답합니다.
+
+    유형별 달성률의 분모는 담당자가 **확정한** 행만으로 만들어집니다. 확정이
+    일부만 되어 있으면 분모가 작아져 달성률이 실제보다 **높게** 나오므로,
+    다 채워지기 전에는 달성률 대신 이 진행 상황을 보여 줍니다.
+
+    Attributes:
+        confirmed_count: 구매유형이 확인된 건수.
+        total_count: 계산 대상 전체 건수.
+        confirmed_amount: 확인된 건의 금액 합(직렬화 시 문자열).
+        total_amount: 계산 대상 전체 금액 합(직렬화 시 문자열).
+        complete: 다 채워졌는가. ``false`` 면 달성률이 ``null`` 입니다.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    confirmed_count: int
+    total_count: int
+    confirmed_amount: Decimal
+    total_amount: Decimal
+    complete: bool
+
+    @field_serializer("confirmed_amount", "total_amount", when_used="always")
+    def _serialize_decimal(self, value: Decimal) -> str:
+        return str(value)
+
+    @classmethod
+    def from_coverage(cls, coverage: PurchaseTypeCoverage) -> PurchaseTypeCoverageResponseModel:
+        """:class:`PurchaseTypeCoverage` 로부터 응답 모델을 만듭니다."""
+        return cls(
+            confirmed_count=coverage.confirmed_count,
+            total_count=coverage.total_count,
+            confirmed_amount=coverage.confirmed_amount,
+            total_amount=coverage.total_amount,
+            complete=coverage.complete,
+        )
 
 
 class ScopedAchievementResponseModel(BaseModel):
@@ -137,6 +180,10 @@ class PolicySummaryResponseModel(BaseModel):
     # ⚠️ tuple 이 아니라 list 입니다. ``model_dump()`` 는 tuple 을 그대로 두는데
     #    JSON 은 배열이 되어, 두 표현이 어긋나면 직렬화 왕복이 깨집니다.
     scoped_achievements: list[ScopedAchievementResponseModel] = []
+    #: 구매유형 확인 진행 상황(🟢 STEP 140). 유형별 목표를 가진 정책만 채워집니다.
+    #: ⛔ **달성률이 아닙니다.** 분모로도 쓰지 않습니다 — 「무엇이 남았는가」일
+    #: 뿐입니다. 화면에서 달성률처럼 보이지 않게 두어야 합니다.
+    purchase_type_coverage: PurchaseTypeCoverageResponseModel | None = None
 
     @field_serializer(
         "purchase_amount",
@@ -175,6 +222,13 @@ class PolicySummaryResponseModel(BaseModel):
                 ScopedAchievementResponseModel.from_scoped_achievement(item)
                 for item in summary.scoped_achievements
             ],
+            purchase_type_coverage=(
+                None
+                if summary.purchase_type_coverage is None
+                else PurchaseTypeCoverageResponseModel.from_coverage(
+                    summary.purchase_type_coverage
+                )
+            ),
         )
 
 
