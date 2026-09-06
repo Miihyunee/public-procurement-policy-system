@@ -293,6 +293,22 @@ class CertificationRepository(BaseRepository):
         은 **그대로 셉니다.** 직접 넣은 인증이 등록 이력이 없다는 이유로 조용히
         사라지면, 저장한 사람이 모르는 사이에 실적이 줄어듭니다.
 
+        .. warning::
+            ⛔ **취소일자(``cancelled_on``)를 여기서 보지 않습니다.**
+
+            🟢 2026-09-06 PM 확정(STEP 130 §2·§3): *취소일자가 존재한다는
+            이유만으로 과거 거래의 실적을 제외하지 않는다.*
+
+            취소일자만 놓고는 다음을 가릴 수 없습니다.
+
+            - 정상 발급 후 사후 변동으로 취소된 것인가
+            - 거짓·부정한 방법으로 발급되어 취소된 것인가
+            - 취소 효력이 과거로 소급되는가
+
+            그래서 취소일자는 **인증 데이터의 상태·이력**으로만 보관하고,
+            실적 인정 여부에는 쓰지 않습니다. 소급 인정 기준은 향후
+            고도화에서 정합니다(DECISIONS §0.51).
+
         Args:
             policy_id: 조회할 Policy 참조 ID.
 
@@ -300,22 +316,13 @@ class CertificationRepository(BaseRepository):
             계산 대상 :class:`Certification` 목록.
         """
         if not self._has_source_table():
-            # 등록 버전 표가 없는 옛 DB. 버전 구분은 못 하지만 **취소 여부는
-            # 같은 기준으로** 본다(STEP 129 §12 — 판정이 갈리면 안 된다).
-            return [
-                certification
-                for certification in self.find_by_policy(policy_id)
-                if not certification.is_cancelled
-            ]
+            return self.find_by_policy(policy_id)
         rows = self.execute(
             "SELECT c.* FROM certification c "
             "LEFT JOIN policy_company_source s "
             "  ON s.policy_company_source_id = c.policy_company_source_id "
             "WHERE c.policy_id = ? "
             "  AND (c.policy_company_source_id IS NULL OR s.is_active = 1) "
-            # 🟢 2026-09-06 PM 확정(STEP 129 §4) — 취소된 인증은 유효한
-            #    인증기업이 아니다. ⛔ 취소일과 거래일을 견주지 않는다.
-            "  AND c.cancelled_on IS NULL "
             "ORDER BY c.certification_id",
             (policy_id,),
         )

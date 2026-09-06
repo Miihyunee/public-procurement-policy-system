@@ -117,11 +117,22 @@ class TestWhetherACertificationCountsAsCancelled:
 
 
 # ======================================================================
-# §4  계산에 쓰는 「유효 인증」에서 빠지는가
+# §3·§4  취소일자만으로 과거 거래를 빼지 않는다
 # ======================================================================
-class TestCancelledCertificationsAreNotValidOnes:
-    def test_a_cancelled_one_is_left_out(self, tmp_path: Path) -> None:
-        """⭐ 취소된 인증은 계산 대상에서 빠진다."""
+class TestACancellationDateDoesNotRemovePastPurchases:
+    """⭐ 이 묶음이 STEP 130 의 핵심이다.
+
+    STEP 129 에서는 취소된 인증을 계산 대상에서 **뺐다.** 그러면 취소일자
+    이전에 이미 이루어진 거래까지 함께 빠진다.
+
+    🟢 2026-09-06 PM 확정(STEP 130 §2): *취소일자가 존재한다는 이유만으로
+    과거 거래의 실적을 제외하지 않는다.* 취소일자만 놓고는 정상적인 사후
+    변동인지, 거짓·부정한 발급인지, 효력이 소급되는지를 가릴 수 없기
+    때문이다.
+    """
+
+    def test_case_5_a_cancelled_certification_still_counts(self, tmp_path: Path) -> None:
+        """CASE 5 — ⭐ 취소일자가 있어도 계산 대상에서 빠지지 않는다."""
         repository = CertificationRepository(str(tmp_path / "t.db"))
         repository.create_table()
         repository.insert(_certification(company_id=1, cancelled_on=None))
@@ -129,10 +140,20 @@ class TestCancelledCertificationsAreNotValidOnes:
 
         active = repository.find_active_by_policy(1)
 
-        assert [item.company_id for item in active] == [1]
+        assert sorted(item.company_id for item in active) == [1, 2]
 
-    def test_the_cancelled_one_is_still_kept(self, tmp_path: Path) -> None:
-        """⛔ 빠지는 것이지 **지워지는 것이 아니다** — 이력으로 남는다."""
+    def test_the_cancellation_date_rides_along(self, tmp_path: Path) -> None:
+        """빠지지는 않되, 취소일자는 **그대로 실려 온다** — 보관되어 있다."""
+        repository = CertificationRepository(str(tmp_path / "t.db"))
+        repository.create_table()
+        repository.insert(_certification(company_id=2, cancelled_on=date(2026, 6, 1)))
+
+        active = repository.find_active_by_policy(1)
+
+        assert [item.cancelled_on for item in active] == [date(2026, 6, 1)]
+
+    def test_it_is_stored_and_read_back(self, tmp_path: Path) -> None:
+        """§7 — 읽기·해석·저장·조회는 유지된다."""
         repository = CertificationRepository(str(tmp_path / "t.db"))
         repository.create_table()
         repository.insert(_certification(company_id=2, cancelled_on=date(2026, 6, 1)))
@@ -142,12 +163,26 @@ class TestCancelledCertificationsAreNotValidOnes:
         assert len(everything) == 1
         assert everything[0].cancelled_on == date(2026, 6, 1)
 
-    def test_case_5_no_date_comparison_anywhere(self) -> None:
-        """CASE 5 — ⛔ 취소일과 거래일을 견주는 코드를 만들지 않았다.
+    def test_nothing_anywhere_judges_on_the_cancellation_date(self) -> None:
+        """⛔ 취소일자로 **판정하는 곳이 하나도 없다.**
 
-        「취소일이 거래일 이후이므로 인정」 같은 소급 판정은 이번 단계의
-        범위가 아니다(지시서 §2·§5).
+        저장소·계산기·판정 규칙 어디에도 취소일자를 조건으로 쓰는 코드가
+        없어야 한다. 있으면 그것이 곧 소급 판정이다(§5).
         """
+        root = Path(__file__).resolve().parents[1] / "src" / "procurement"
+        forbidden = (
+            "cancelled_on IS NULL",
+            "cancelled_on is None",
+            "not certification.is_cancelled",
+            "if certification.is_cancelled",
+        )
+        for path in root.rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            for pattern in forbidden:
+                assert pattern not in source, (path.name, pattern)
+
+    def test_the_calculation_side_never_sees_it(self) -> None:
+        """계산기와 판정 규칙은 취소일자를 알지도 못한다."""
         import procurement.calculators.procurement_achievement as calculator
         import procurement.calculators.rules.date_rules as rules
 
