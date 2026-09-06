@@ -43,10 +43,23 @@ from procurement.uploads.format import (
 
 #: 허용하는 날짜 문자열 형식.
 #:
-#: 샘플 데이터에서 관찰된 두 표기를 받습니다. 그 밖의 표기는 사용자가 의도한
-#: 날짜를 확정할 수 없으므로 오류로 처리합니다(예: ``03/04/2026`` 은 3월 4일인지
-#: 4월 3일인지 알 수 없습니다).
+#: 실제 자료에서 관찰된 표기만 받습니다. 그 밖의 표기는 사용자가 의도한 날짜를
+#: 확정할 수 없으므로 오류로 처리합니다(예: ``03/04/2026`` 은 3월 4일인지 4월
+#: 3일인지 알 수 없습니다).
+#:
+#: 🟢 2026-09-06 PM 확정(STEP 133 §2) — ``20241023`` 같은 **여덟 자리**를
+#: 더합니다. 고객 기관 명단이 이 표기를 쓰며, 여덟 자리는 ``YYYYMMDD`` 로만
+#: 읽히므로 모호하지 않습니다.
+#:
+#: ⛔ 날짜를 **읽는 표기**를 넓힌 것일 뿐입니다. 유효기간 판정 규칙은 그대로입니다.
 _DATE_FORMATS: tuple[str, ...] = ("%Y-%m-%d", "%Y/%m/%d")
+
+#: 구분자 없는 여덟 자리 표기.
+#:
+#: ⛔ **정확히 여덟 자리**일 때만 씁니다. ``strptime`` 은 ``2024102`` 같은
+#: 일곱 자리도 받아들여 «2024-10-02» 로 읽어 버립니다. 그것은 사용자가 무엇을
+#: 적으려 했는지 알 수 없는 값이므로 오류로 두어야 합니다.
+_EIGHT_DIGITS = re.compile(r"\d{8}")
 
 #: 금액에서 제거할 문자(천 단위 구분자·공백·원화 기호).
 _AMOUNT_NOISE = re.compile(r"[,\s₩]")
@@ -350,18 +363,40 @@ def _parse_amount(
 
 
 def _parse_date(raw: object) -> date | None:
-    """날짜를 해석합니다. 해석할 수 없으면 ``None``."""
+    """날짜를 해석합니다. 해석할 수 없으면 ``None``.
+
+    .. note::
+        엑셀은 ``20241023`` 을 **숫자**로 넘겨줍니다. 서식에 따라 정수로도,
+        실수(``20241023.0``)로도 올 수 있어 둘 다 같은 여덟 자리로 읽습니다.
+        ⛔ 소수점 아래가 있는 값은 날짜로 보지 않습니다.
+    """
     if isinstance(raw, datetime):
         return raw.date()
     if isinstance(raw, date):
         return raw
 
-    text = str(raw).strip()
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        text = str(raw)
+    elif isinstance(raw, float):
+        if not raw.is_integer():
+            return None
+        text = str(int(raw))
+    else:
+        text = str(raw).strip()
+
     for pattern in _DATE_FORMATS:
         try:
             return datetime.strptime(text, pattern).date()
         except ValueError:
             continue
+
+    if _EIGHT_DIGITS.fullmatch(text):
+        try:
+            return datetime.strptime(text, "%Y%m%d").date()
+        except ValueError:
+            return None
     return None
 
 
