@@ -4403,3 +4403,94 @@ Python 표준 `.gitignore` 의 `*.spec` 은 PyInstaller **자동 생성** 파일
 확정 · 「조회불가」와 「미해당」의 뜻 어느 것도 이 STEP 의 관심사가 아니다.
 API 키를 실행파일에 넣지 않았고, 빌드 결과물을 저장소에 넣지 않았으며,
 실제 고객 데이터를 쓰지 않았다.
+
+---
+
+## 0.46 🟢 Windows 실행파일이 실제로 돈다 (2026-09-06 · STEP 126-2)
+
+### 0.46.1 무엇이 됐는가
+
+Windows 개발 PC 에서 백엔드를 실행파일 하나로 묶어, **Python 이 깔려 있지
+않아도** 도는 것까지 확인했다.
+
+```
+dist\procurement\procurement.exe        8,037,467 bytes
+PyInstaller 6.22.2 (win_amd64) · Python 3.13.14
+```
+
+- 기동 · 대시보드 · 정책 API · 엑셀 양식 내려받기 · 업로드 → DB 저장 ·
+  종료 정리 — 14가지 확인(`npm run verify:backend`)
+- 껐다 켜도 데이터가 남는다 — 8가지 확인(`npm run verify:restart`)
+- DB 가 `%APPDATA%\procurement-desktop\database\` 에 생긴다.
+  ⛔ 임시 해제 폴더(`_MEIPASS`) 안에는 없다 — 직접 뒤져 확인했다.
+- 우선순위 그대로: 환경변수 > 사용자 데이터 폴더의 `.env` > 기본값
+- Electron 이 이 실행파일을 띄우고 화면이 뜬다
+
+### 0.46.2 ⭐ 빌드해 봐야만 나온 결함 **2건**
+
+Linux 시험 4,373개가 전부 통과하는 상태에서도 **둘 다 잡히지 않았다.**
+
+**① 한글 Windows 에서 프로그램이 시작조차 못 했다**
+
+```
+UnicodeEncodeError: 'cp949' codec can't encode character '—'
+```
+
+한글 Windows 의 기본 출력 인코딩은 `cp949` 인데, 안내문에 쓰는 줄표(`—`)를
+쓸 수 없다. 초기화 보고문을 찍는 순간 죽었다. **고객 PC 도 한글 Windows 이니
+100% 재현될 문제였다.**
+
+진입점에서 출력을 UTF-8 로 고정했다. ⛔ 글자를 골라 지우지 않았다 —
+`bootstrap.py` 한 파일에만 줄표가 29개이고, 그 방식은 다음에 누가 기호
+하나만 써도 같은 일이 다시 난다.
+
+**② 애플리케이션 본체가 번들에 없었다**
+
+```
+Error loading ASGI app. Could not import module "procurement.app".
+```
+
+`__main__.py` 가 서버를 `uvicorn.run("procurement.app:app", ...)` 로 띄운다.
+**문자열**이라 PyInstaller 의 정적 분석이 보지 못했고, `procurement.app` 과
+그것을 통해서만 닿는 것들(계산기·저장소·업로드·검토·web)이 통째로 빠졌다.
+저장소 전체에서 이 모듈을 정적으로 import 하는 곳이 하나도 없음을 확인했다.
+
+spec 의 `hiddenimports` 에 `collect_submodules("procurement")` 를 더했다.
+EXE 크기가 6.7MB → 8.0MB 로 늘었고, **늘어난 만큼이 빠져 있던 본체다.**
+
+### 0.46.3 내 시험이 틀렸던 것 3건
+
+제품이 아니라 시험이 잘못돼 있었다. 셋 다 **지우거나 skip 하지 않고** 고쳤고,
+고치기 전 상태에서 여전히 실패하는지 확인해 가드가 살아 있음을 확인했다.
+
+| | 무엇 | 왜 |
+|---|---|---|
+| ③ | `database/` 가 있다고 전제 | `.gitignore` 대상이라 새로 clone 하면 항상 실패 |
+| ④ | `PATH` 를 POSIX 로 못 박음 | Windows 에서 파이썬이 제 DLL 을 못 찾음 |
+| ⑤ | 출력을 못 읽은 채 통과 | `text=True` 가 로케일(cp949)로 디코딩 → stderr 가 빈 문자열 |
+
+⑤ 가 특히 고약했다. **초록불이 켜졌는데 아무것도 보고 있지 않았다.**
+경고 한 줄이 아니었으면 그대로 넘어갔을 것이다. 지금은 출력을 읽지 못하면
+통과할 수 없다.
+
+### 0.46.4 고정한 것
+
+- `pyproject.toml` 에 `packaging` extra 신설 · `pyinstaller==6.22.2`
+  ⛔ 범위가 아니라 **정확한 판**이다. 빌드는 PyInstaller 판올림에 민감하다.
+- `PROCUREMENT_BACKEND_EXE` — 설치본을 만들기 전에 묶은 실행파일을
+  Electron 에 물려 볼 수 있다. ⛔ 배포본 경로 계산은 그대로다.
+
+### 0.46.5 ⛔ 바꾸지 않은 것
+
+업무 로직 전부 — 계산 · 매칭 · 인증기간 · 월별 누적 · 구매유형 확정 ·
+정책 필터 · 「조회불가」와 「미해당」의 뜻. 소스 변경은 출력 인코딩 한 곳뿐이고,
+나머지는 packaging 설정과 검증 스크립트다.
+
+고객 데이터 · 실제 DB · 원본 엑셀을 쓰지 않았다. API 키를 실행파일에 넣지
+않았다. 빌드 산출물을 저장소에 넣지 않았다(`dist` 검색 결과 `.db`·엑셀·
+`.csv`·`.env` 모두 0건).
+
+### 0.46.6 아직 없는 것
+
+Setup.exe. 코드 서명이 없어 SmartScreen 경고가 뜰 것이다 — 고객 기관에
+배포하기 전에 서명을 살지 결정해야 한다(STEP 127).
