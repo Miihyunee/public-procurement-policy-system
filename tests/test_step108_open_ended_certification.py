@@ -543,16 +543,36 @@ class TestTheRealFileShapeHasNoCancellation:
     def test_the_upload_form_has_no_status_or_cancellation_column(self) -> None:
         from procurement.uploads.company_format import COMPANY_REQUIRED_HEADERS
 
-        for absent in ("인증상태", "인증취소일", "취소일"):
+        for absent in ("인증상태", "인증취소일", "취소일자"):
             assert absent not in COMPANY_REQUIRED_HEADERS, absent
 
-    def test_no_source_file_judges_on_a_cancellation(self) -> None:
-        """⛔ 취소로 판정하는 코드가 소스 어디에도 없습니다."""
+    def test_no_source_file_judges_on_a_cancellation_reason(self) -> None:
+        """⛔ 취소 **사유**로 판정하는 코드가 어디에도 없습니다.
+
+        .. note::
+            예전에는 「취소」라는 개념 자체가 소스에 없어야 했습니다. 그때는
+            고객이 취소를 어떻게 볼지 정하지 않았기 때문입니다.
+
+            🟢 2026-09-06 PM 확정(STEP 129 §1)으로 기준이 생겼습니다 —
+            취소일자가 비어 있으면 유효, 값이 있으면 취소입니다. 그래서
+            개념은 이제 소스에 있으며, 여기서는 **아직도 정해지지 않은 것**을
+            지킵니다: 취소 사유와 소급 효력입니다.
+        """
         source_root = Path(__file__).resolve().parents[1] / "src" / "procurement"
-        for term in ("인증취소", "취소일", "cancell", "revoke"):
+        for term in ("인증취소", "취소사유", "revoke"):
             hits = [
                 path.name
                 for path in source_root.rglob("*.py")
                 if term.lower() in path.read_text(encoding="utf-8").lower()
             ]
             assert hits == [], (term, hits)
+
+    def test_the_calculation_side_never_sees_a_cancellation_date(self) -> None:
+        """⭐ 계산 쪽은 취소일을 쳐다보지 않습니다 — 소급 판정이 없다는 뜻."""
+        source_root = Path(__file__).resolve().parents[1] / "src" / "procurement"
+        for relative in (
+            "calculators/procurement_achievement.py",
+            "calculators/rules/date_rules.py",
+        ):
+            source = (source_root / relative).read_text(encoding="utf-8")
+            assert "cancelled_on" not in source, relative

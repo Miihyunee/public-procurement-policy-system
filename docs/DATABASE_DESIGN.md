@@ -107,6 +107,7 @@
 | certificate_number | TEXT | No | 인증서 번호 |
 | valid_from | DATE | Yes | 인증 시작일 |
 | valid_to | DATE | Yes | 인증 종료일 |
+| cancelled_on | DATE | No | 인증 취소일. 비어 있으면 취소되지 않은 인증이다(🟢 2026-09-06 PM 확정 · STEP 129). ⛔ 취소 사유를 구분하지 않으며, 이 날짜로 과거 실적을 소급 판정하지 않는다 |
 | issuing_agency | TEXT | No | 발급기관 |
 | created_at | DATETIME | Yes | 데이터 생성일시 |
 | updated_at | DATETIME | Yes | 데이터 최종 수정일시 |

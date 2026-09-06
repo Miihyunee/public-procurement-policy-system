@@ -75,6 +75,9 @@ class CompanyRecord:
         representative_name: 대표자명. **선택값입니다** — 없으면 ``None``.
         policy_code: 인증 정책 코드. 인증까지 넣을 때만 채웁니다.
         valid_from: 인증 유효 시작일.
+        cancelled_on: 인증이 취소된 날짜. ``None`` 이면 취소되지 않은 인증
+            입니다. ⛔ 취소 사유를 구분하지 않으며, 이 날짜로 과거 실적을
+            소급 판정하지 않습니다(STEP 129 §1·§2).
         valid_to: 인증 유효 종료일. 비어 있어도 되는 정책은
             :data:`~procurement.core.open_ended_certification.OPEN_ENDED_POLICY_CODES`
             뿐입니다 — 그 경우 시작일 이후로 계속 유효한 인증이 됩니다.
@@ -87,6 +90,7 @@ class CompanyRecord:
     policy_code: str | None = None
     valid_from: date | None = None
     valid_to: date | None = None
+    cancelled_on: date | None = None
     source_row: int = 0
 
     @property
@@ -341,6 +345,7 @@ class CompanyImporter:
                     policy_company_source_id=policy_company_source_id,
                     valid_from=record.valid_from,
                     valid_to=record.valid_to,
+                    cancelled_on=record.cancelled_on,
                 )
             )
         except CertificationValidationError as error:

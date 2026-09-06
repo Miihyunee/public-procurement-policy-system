@@ -98,6 +98,39 @@ CERTIFICATION_COLUMNS: Final[tuple[StandardColumn, ...]] = (
     ),
 )
 
+#: 인증이 **취소되었는지** 적는 칸.
+#:
+#: 🟢 2026-09-06 PM 확정(STEP 129 §1)
+#:     비어 있으면 → 현재 유효한 인증
+#:     값이 있으면 → 취소된 인증으로 보관
+#:
+#: ⛔ 취소 **사유**를 추정하지 않습니다. 정상 발급 후 사후 변동으로 취소된
+#:    것과 거짓·부정한 방법으로 발급되어 취소된 것을 현재 버전은 구분하지
+#:    않습니다. 과거 거래에 대한 소급 인정 여부도 판단하지 않습니다.
+#:
+#: ⛔ **머리글 검증에는 넣지 않습니다.** 선택 항목이므로 없는 파일도 그대로
+#:    통과해야 합니다(기존 표준 양식 · STEP 129 §10).
+CANCELLATION_COLUMN: Final[StandardColumn] = StandardColumn(
+    key="cancelled_on",
+    header="취소일자",
+    required=False,
+    description=(
+        "인증이 취소된 날짜입니다. **비워 두면 유효한 인증**입니다. 값이 있으면 "
+        "취소된 인증으로 보관합니다."
+    ),
+    example="",
+)
+
+
+def row_columns(columns: tuple[StandardColumn, ...]) -> tuple[StandardColumn, ...]:
+    """**행을 읽을 때** 쓸 컬럼 목록.
+
+    머리글 검증용 목록에 선택 항목인 취소일자를 더한 것입니다. 머리글 검증은
+    넘긴 컬럼을 **모두 필수로** 보므로, 두 목록을 갈라 둡니다.
+    """
+    return columns + (CANCELLATION_COLUMN,)
+
+
 #: 기업정보 파일의 전체 컬럼(기업 + 인증).
 STANDARD_COMPANY_COLUMNS: Final[tuple[StandardColumn, ...]] = (
     COMPANY_COLUMNS + CERTIFICATION_COLUMNS

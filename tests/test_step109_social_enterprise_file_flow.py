@@ -408,23 +408,75 @@ class TestTheExistingPoliciesAreUntouched:
 
 
 class TestNothingInventsACancellationRule:
-    """§8 · §21 — ⛔ 인증취소일로 판정하는 코드가 어디에도 없다."""
+    """§8 · §21 — 인증 취소를 **시스템이 지어내지 않는다.**
 
-    @pytest.mark.parametrize("term", ["인증취소", "cancell", "revoke", "취소일"])
-    def test_the_term_appears_nowhere_in_the_source(self, term: str) -> None:
+    .. note::
+        이 시험은 STEP 109 에서 「취소 규칙을 아예 만들지 않았다」를 지키려고
+        세웠습니다. 그때는 고객이 취소를 어떻게 볼지 정하지 않았기 때문입니다.
+
+        🟢 2026-09-06 PM 확정(STEP 129 §1)으로 **기준이 생겼습니다.**
+
+            취소일자가 비어 있으면 → 현재 유효한 인증
+            취소일자에 값이 있으면 → 취소된 인증으로 보관
+
+        그래서 「낱말이 소스에 없어야 한다」는 단언은 더 이상 맞지 않습니다.
+        대신 **아직도 금지된 것**을 지킵니다 — 소급 판정과 사유 추정입니다.
+    """
+
+    def test_the_confirmed_rule_is_the_only_one(self) -> None:
+        """확정된 기준은 «값이 있는가» 하나뿐이다."""
+        from procurement.models.certification import Certification
+
+        cancelled = Certification(
+            company_id=1, policy_id=1, valid_from=_FROM, valid_to=_TO, cancelled_on=_TO
+        )
+        alive = Certification(company_id=1, policy_id=1, valid_from=_FROM, valid_to=_TO)
+
+        assert cancelled.is_cancelled is True
+        assert alive.is_cancelled is False
+
+    @pytest.mark.parametrize("term", ["인증취소", "revoke", "취소사유"])
+    def test_no_reason_was_invented(self, term: str) -> None:
+        """⛔ 취소 **사유**를 추정하지 않았다(STEP 129 §2).
+
+        확정된 것은 「취소되었는가」뿐이다. 왜 취소되었는지는 정해진 바 없다.
+
+        .. note::
+            「소급」은 여기서 찾지 않는다. 소급하지 **않는다는 것을 적어 둔**
+            주석에 그 낱말이 들어 있어, 낱말만 세면 금지를 설명한 글이
+            금지를 어긴 것처럼 잡힌다. 소급 판정이 실제로 없는지는 아래
+            계산기 시험이 본다.
+        """
         source_root = Path(__file__).resolve().parents[1] / "src" / "procurement"
         hits = [
             path.name
             for path in source_root.rglob("*.py")
             if term.lower() in path.read_text(encoding="utf-8").lower()
         ]
+
         assert hits == [], hits
 
+    def test_the_calculator_never_compares_the_cancellation_date(self) -> None:
+        """⭐ 계산 쪽은 취소일을 **쳐다보지도 않는다.**
+
+        취소된 인증이 계산에서 빠지는 것은 저장소가 고를 때 이미 걸러지기
+        때문이며, 거래일과 견주어서가 아니다.
+        """
+        source_root = Path(__file__).resolve().parents[1] / "src" / "procurement"
+        for relative in (
+            "calculators/procurement_achievement.py",
+            "calculators/rules/date_rules.py",
+        ):
+            source = (source_root / relative).read_text(encoding="utf-8")
+            assert "cancelled_on" not in source, relative
+
     def test_the_upload_form_has_no_cancellation_column(self) -> None:
+        """⛔ 취소일자는 **선택** 항목이다 — 없는 파일도 그대로 올라간다."""
         from procurement.uploads.company_format import COMPANY_REQUIRED_HEADERS
 
         assert "인증취소일" not in COMPANY_REQUIRED_HEADERS
         assert "인증상태" not in COMPANY_REQUIRED_HEADERS
+        assert "취소일자" not in COMPANY_REQUIRED_HEADERS
 
 
 def _unused() -> Certification:  # pragma: no cover - import 유지용

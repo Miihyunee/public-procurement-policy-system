@@ -264,6 +264,8 @@ def _parse_value(
         # 기업정보 양식의 인증 유효기간 — **같은 날짜 규칙**을 씁니다.
         "valid_from",
         "valid_to",
+        # 인증 취소일 — 같은 날짜 규칙을 씁니다(STEP 129).
+        "cancelled_on",
     ):
         parsed_date = _parse_date(raw)
         if parsed_date is None:

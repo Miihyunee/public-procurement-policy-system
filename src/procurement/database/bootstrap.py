@@ -334,6 +334,10 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("purchase_review", "exclusion_reason", "TEXT"),
     ("purchase_review", "excluded_by", "TEXT"),
     ("purchase_review", "excluded_at", "DATETIME"),
+    # 2026-09-06 PM 확정(STEP 129 §1) — 인증 취소일. 기존 행은 NULL 이 되며,
+    # NULL 은 「취소되지 않은 인증」을 뜻한다. 따라서 마이그레이션만으로
+    # 기존 달성률이 달라지지 않는다.
+    ("certification", "cancelled_on", "DATE"),
 )
 
 

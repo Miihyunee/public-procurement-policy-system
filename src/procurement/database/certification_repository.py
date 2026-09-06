@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS certification (
     policy_company_source_id INTEGER,
     valid_from DATE NOT NULL,
     valid_to DATE,
+    -- 인증 취소일. NULL 이면 취소되지 않은 인증이다(STEP 129).
+    cancelled_on DATE,
     issuing_agency TEXT,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
@@ -175,8 +177,8 @@ class CertificationRepository(BaseRepository):
         sql = (
             "INSERT INTO certification "
             "(company_id, policy_id, certificate_number, policy_company_source_id, "
-            "valid_from, valid_to, issuing_agency, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "valid_from, valid_to, cancelled_on, issuing_agency, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         params = (
             certification.company_id,
@@ -185,6 +187,7 @@ class CertificationRepository(BaseRepository):
             certification.policy_company_source_id,
             _to_db_date(certification.valid_from),
             _to_db_date_optional(certification.valid_to),
+            _to_db_date_optional(certification.cancelled_on),
             certification.issuing_agency,
             _to_db(created_at),
             _to_db(updated_at),
@@ -202,6 +205,7 @@ class CertificationRepository(BaseRepository):
             policy_company_source_id=certification.policy_company_source_id,
             valid_from=certification.valid_from,
             valid_to=certification.valid_to,
+            cancelled_on=certification.cancelled_on,
             issuing_agency=certification.issuing_agency,
             created_at=created_at,
             updated_at=updated_at,
@@ -296,13 +300,22 @@ class CertificationRepository(BaseRepository):
             계산 대상 :class:`Certification` 목록.
         """
         if not self._has_source_table():
-            return self.find_by_policy(policy_id)
+            # 등록 버전 표가 없는 옛 DB. 버전 구분은 못 하지만 **취소 여부는
+            # 같은 기준으로** 본다(STEP 129 §12 — 판정이 갈리면 안 된다).
+            return [
+                certification
+                for certification in self.find_by_policy(policy_id)
+                if not certification.is_cancelled
+            ]
         rows = self.execute(
             "SELECT c.* FROM certification c "
             "LEFT JOIN policy_company_source s "
             "  ON s.policy_company_source_id = c.policy_company_source_id "
             "WHERE c.policy_id = ? "
             "  AND (c.policy_company_source_id IS NULL OR s.is_active = 1) "
+            # 🟢 2026-09-06 PM 확정(STEP 129 §4) — 취소된 인증은 유효한
+            #    인증기업이 아니다. ⛔ 취소일과 거래일을 견주지 않는다.
+            "  AND c.cancelled_on IS NULL "
             "ORDER BY c.certification_id",
             (policy_id,),
         )
@@ -364,6 +377,7 @@ class CertificationRepository(BaseRepository):
             policy_company_source_id=row["policy_company_source_id"],
             valid_from=_from_db_date(row["valid_from"]),
             valid_to=_from_db_date_optional(row["valid_to"]),
+            cancelled_on=_from_db_date_optional(row["cancelled_on"]),
             issuing_agency=row["issuing_agency"],
             created_at=_from_db(row["created_at"]),
             updated_at=_from_db(row["updated_at"]),

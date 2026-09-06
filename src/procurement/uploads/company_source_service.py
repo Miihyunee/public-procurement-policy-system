@@ -41,7 +41,9 @@ from procurement.importers.company_importer import (
 from procurement.uploads.company_format import (
     STANDARD_COMPANY_COLUMNS,
     policy_scoped_columns,
+    row_columns,
 )
+from procurement.uploads.company_header_aliases import COMPANY_HEADER_ALIASES
 from procurement.uploads.excel_adapter import ExcelReadError, read_standard_workbook
 from procurement.uploads.validation import (
     ValidationReport,
@@ -110,7 +112,11 @@ class CompanySourceService:
             STANDARD_COMPANY_COLUMNS if policy_code is None else policy_scoped_columns(policy_code)
         )
         try:
-            workbook = read_standard_workbook(file_path)
+            # ⭐ 고객 원본 머리글을 표준 이름으로 옮긴 뒤 검증합니다.
+            #    담당자가 원본을 고치지 않아도 되게 하려는 것입니다(STEP 129 §8).
+            workbook = read_standard_workbook(
+                file_path, header_aliases=COMPANY_HEADER_ALIASES
+            )
         except ExcelReadError as error:
             return ValidationReport(file_errors=[str(error)])
 
@@ -118,10 +124,12 @@ class CompanySourceService:
         if header_errors:
             return ValidationReport(file_errors=header_errors, total_rows=workbook.row_count)
 
+        # 머리글 검증은 필수 항목만 보고(위), 행 해석에는 선택 항목인
+        # 취소일자를 더합니다. ⛔ 취소일자가 없는 기존 파일도 그대로 통과합니다.
         return validate_rows(
             workbook.rows,
             first_row_number=workbook.first_row_number,
-            columns=columns,
+            columns=row_columns(columns),
         )
 
     def import_file(
@@ -169,6 +177,8 @@ class CompanySourceService:
                 policy_code=policy_code or _text(row.values.get("policy_code")),
                 valid_from=_date(row.values.get("valid_from")),
                 valid_to=_date(row.values.get("valid_to")),
+                # 비어 있으면 None — 곧 취소되지 않은 인증이다(STEP 129 §1).
+                cancelled_on=_date(row.values.get("cancelled_on")),
                 source_row=row.row_number,
             )
             for row in report.rows

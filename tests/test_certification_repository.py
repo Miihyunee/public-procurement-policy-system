@@ -85,8 +85,13 @@ class TestCreateTable:
             이 인증이 **어느 등록 버전에서 왔는지**를 가리키며, 계산은 활성
             버전의 인증만 봅니다.
 
+            🟢 2026-09-06 PM 확정(STEP 129 §1)으로 ``cancelled_on`` 이
+            더해졌습니다 — 인증이 취소된 날짜이며, ``NULL`` 이면 취소되지
+            않은 인증입니다. 기존 행은 ``NULL`` 이 되므로 이 컬럼이 생겼다는
+            이유만으로 달성률이 달라지지 않습니다.
+
             ⛔ 컬럼을 마음대로 늘리지 않는다는 감시는 그대로입니다. 늘어난
-            것은 이 하나뿐입니다.
+            것은 위 둘뿐입니다.
         """
         names = [row["name"] for row in repo.execute("PRAGMA table_info(certification)")]
         assert names == [
@@ -97,6 +102,7 @@ class TestCreateTable:
             "policy_company_source_id",
             "valid_from",
             "valid_to",
+            "cancelled_on",
             "issuing_agency",
             "created_at",
             "updated_at",

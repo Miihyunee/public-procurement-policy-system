@@ -43,6 +43,17 @@ class Certification:
             **활성 버전의 인증만** 씁니다. 예전 버전의 인증은 지워지지 않고
             이력으로 남습니다. 직접 넣은 인증은 ``None`` 이며, 그때는 어느
             버전에도 매이지 않아 **항상** 계산에 듭니다.
+        cancelled_on: 인증이 **취소된 날짜**. ``None`` 이면 취소되지 않은
+            — 즉 현재 유효한 — 인증입니다.
+
+            🟢 2026-09-06 PM 확정(STEP 129 §1): *비어 있으면 현재 유효한
+            인증으로 인정하고, 값이 있으면 취소된 인증 상태로 보관한다.*
+
+            ⛔ 취소 **사유**를 구분하지 않습니다. 정상 발급 후 사후 변동으로
+            취소된 것과 거짓·부정한 방법으로 발급되어 취소된 것을 현재
+            버전은 같게 봅니다.
+            ⛔ 이 날짜를 거래일자와 견주어 **과거 실적을 소급 판정하지
+            않습니다.** 향후 고도화 과제입니다.
         certificate_number: 인증서 번호 (선택).
         issuing_agency: 발급기관 (선택).
         certification_id: 내부 고유 ID (Primary Key). 저장 전에는 ``None`` 입니다.
@@ -54,9 +65,32 @@ class Certification:
     policy_id: int
     valid_from: date
     valid_to: date | None
+    cancelled_on: date | None = None
     policy_company_source_id: int | None = None
     certificate_number: str | None = None
     issuing_agency: str | None = None
     certification_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @property
+    def is_cancelled(self) -> bool:
+        """취소된 인증인가.
+
+        🟢 2026-09-06 PM 확정(STEP 129 §1)
+
+        ==================  ==========================
+        ``cancelled_on``    판정
+        ==================  ==========================
+        ``None``            취소되지 않음 — 유효
+        날짜가 있음          취소됨
+        ==================  ==========================
+
+        파일에서 읽을 때 빈 셀 · 빈 문자열 · 공백은 모두 ``None`` 이 되므로,
+        여기서는 값이 있는지만 봅니다.
+
+        ⛔ 취소 **사유**를 구분하지 않습니다.
+        ⛔ 취소일을 거래일자와 견주지 않습니다 — 과거 실적의 소급 인정 여부는
+           향후 고도화 과제입니다(STEP 129 §13).
+        """
+        return self.cancelled_on is not None

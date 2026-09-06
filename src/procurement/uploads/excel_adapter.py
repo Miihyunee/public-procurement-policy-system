@@ -25,6 +25,7 @@ procurement.uploads.excel_adapter
 from __future__ import annotations
 
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -34,6 +35,7 @@ from typing import Final
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
+from procurement.uploads.company_header_aliases import canonical_headers
 from procurement.uploads.format import REQUIRED_HEADERS
 
 #: 허용하는 확장자. 사용자가 ``.xls`` 나 ``.csv`` 를 올리면 읽기 전에 거부한다.
@@ -77,7 +79,11 @@ class WorkbookRead:
         return len(self.rows)
 
 
-def read_standard_workbook(source: str | Path) -> WorkbookRead:
+def read_standard_workbook(
+    source: str | Path,
+    *,
+    header_aliases: Mapping[str, str] | None = None,
+) -> WorkbookRead:
     """표준 양식 ``.xlsx`` 파일을 읽습니다.
 
     머리글은 **검증하지 않고 그대로 반환**합니다. 필수 항목 누락 판정은
@@ -88,6 +94,12 @@ def read_standard_workbook(source: str | Path) -> WorkbookRead:
 
     Args:
         source: 읽을 파일 경로.
+        header_aliases: 고객 원본 머리글 → 표준 항목명 대응표. 주면 머리글을
+            **읽자마자** 옮깁니다.
+
+            ⭐ 표준 양식인지 판정하기 **전에** 옮겨야 합니다. 그러지 않으면
+            고객 원본이 「표준 양식이 아니다」로 여기서 막혀, 뒤에 있는 대응이
+            아예 쓰이지 못합니다(STEP 129).
 
     Returns:
         :class:`WorkbookRead`.
@@ -123,6 +135,8 @@ def read_standard_workbook(source: str | Path) -> WorkbookRead:
             ) from exc
 
         headers = _clean_headers(raw_header)
+        if header_aliases:
+            headers = canonical_headers(headers, dict(header_aliases))
         if not headers:
             raise ExcelReadError(
                 "첫 행에 머리글이 없습니다. 표준 양식을 내려받아 사용하세요."
