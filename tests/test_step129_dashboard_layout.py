@@ -195,12 +195,21 @@ class TestTheScreenDoesNotDecideAnything:
 
         서버가 주는 것은 비율뿐이다. 전체 구매액 × 부족률 같은 식으로 화면이
         금액을 지어내면, 담당자가 그 숫자를 보고서에 옮겨 적게 된다.
+
+        .. note::
+            STEP 128-2 에서 첫 화면은 부족 **비율마저** 적지 않게 됐다. 같은
+            정책의 숫자를 표와 아래 영역에서 두 번 읽게 하지 않으려는 것이다.
+            그래도 이 시험이 지키는 것은 그대로다 — **금액을 만들지 않는다.**
         """
         first_screen = page[page.index("STEP 128 — 첫 화면(실적)") : page.index("function draw(")]
 
         assert "shortage_amount" not in page
-        assert "shortage_rate" in first_screen
-        for forbidden in ("total_purchase_amount *", "* shortage", "shortage_rate *"):
+        for forbidden in (
+            "total_purchase_amount *",
+            "* shortage",
+            "shortage_rate *",
+            "parseFloat(item.shortage_rate) *",
+        ):
             assert forbidden not in first_screen, forbidden
 
     def test_15_the_state_wording_is_the_servers(self, page: str) -> None:
@@ -233,3 +242,71 @@ class TestTheBusinessLogicIsUntouched:
         """기존 화면 코드를 지우지 않았다 — 점검 탭에서 그대로 쓰인다."""
         for renderer in ("renderPolicies(", "renderAchievement(", "renderStatusTable("):
             assert renderer in page, renderer
+
+
+# ======================================================================
+# STEP 128-2 — 같은 정책을 두 번 적지 않는가
+# ======================================================================
+class TestTheSamePolicyIsNotListedTwice:
+    def test_20_the_lower_block_is_about_what_to_do(self, page: str) -> None:
+        """⭐ 아래 영역은 정책을 다시 나열하는 곳이 아니라 **할 일**을 적는 곳이다.
+
+        예전에는 표에 있는 「부족」 정책 세 종을 바로 아래에서 그대로 다시
+        보여 줬다. 같은 것을 두 번 읽게 만든다(STEP 128-2 §1).
+        """
+        assert "TODO_GROUPS" in page
+        assert 'class="todo"' in page
+
+    def test_21_it_does_not_repeat_the_numbers(self, page: str) -> None:
+        """⛔ 목표·달성률 숫자를 아래에서 되풀이하지 않는다 — 위 표에 있다."""
+        block = page[
+            page.index("function renderAttention(") : page.index(
+                "// -------", page.index("function renderAttention(")
+            )
+        ]
+
+        for repeated in ("target_rate", "achievement_rate", "shortage_rate"):
+            assert repeated not in block, repeated
+
+    def test_22_three_kinds_are_told_apart(self, page: str) -> None:
+        """⭐ 「부족」·「기업정보 미등록」·「계산 보류」는 같은 뜻이 아니다(§3).
+
+        각각 해야 할 일이 다르다 — 실적을 채우는 일, 자료를 등록하는 일,
+        계산 조건을 확인하는 일.
+        """
+        assert '"SHORTAGE", "WARNING"' in page
+        assert '"COMPANY_DATA_NOT_REGISTERED"' in page
+        assert '"CALCULATION_ON_HOLD", "TARGET_RATE_NOT_SET"' in page
+
+    def test_23_each_kind_leads_somewhere_that_exists(self, page: str, markup: str) -> None:
+        """⛔ 새 화면을 만들지 않는다 — 기존 자리로 데려다 준다."""
+        for anchor in re.findall(r'focus: "([\w-]+)"', page):
+            assert f'id="{anchor}"' in markup, anchor
+
+        for tab in re.findall(r'tab: "(\w+)"', page):
+            assert f'id="panel-{tab}"' in markup, tab
+
+    def test_24_the_status_never_relies_on_colour_alone(self, page: str) -> None:
+        """⛔ 색만으로 뜻을 전하지 않는다 — 알약 안에 글자가 함께 있다(§4)."""
+        assert 'make("span", "state st-" + status, label)' in page
+
+
+# ======================================================================
+# STEP 128-2 — 무엇을 앞세웠는가
+# ======================================================================
+class TestTheImportantThingsLookImportant:
+    def test_25_the_rate_is_heavier_than_the_supporting_numbers(self, page: str) -> None:
+        """달성률은 굵게, 목표·실적은 한 단계 내린다(§5)."""
+        assert "td.ach-rate { font-weight: 700" in page
+        assert "td.ach-support { color: var(--muted)" in page
+        assert '"n ach-support"' in page
+        assert '"n ach-rate"' in page
+
+    def test_26_the_shortcuts_are_a_side_area(self, page: str, markup: str) -> None:
+        """⛔ 바로가기가 실적보다 눈에 띄면 안 된다(§6)."""
+        assert '<p class="jump-label">관련 업무</p>' in markup
+        assert "font-size: 11.5px" in page[page.index("  .jump button {") :][:400]
+
+    def test_27_nothing_was_removed_from_the_shortcuts(self, markup: str) -> None:
+        """⛔ 기능은 그대로 여섯 개다 — 작아졌을 뿐이다."""
+        assert len(re.findall(r'data-focus="[\w-]+"', markup)) == 6

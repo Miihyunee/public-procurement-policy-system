@@ -458,6 +458,7 @@
   .legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
   .empty { color: var(--muted); font-size: 12.5px; padding: 26px 0; text-align: center; }
   .foot-note { font-size: 11.5px; color: var(--muted); margin: 12px 0 0; }
+  #ach-note { margin-top: 7px; }
   footer { margin-top: 22px; font-size: 11.5px; color: var(--muted); text-align: center; }
 
   /* ==================================================================
@@ -469,88 +470,108 @@
      ================================================================== */
 
   /* ---- 탭 ---- */
-  .tabs { display: flex; gap: 2px; margin: 16px 0 0; border-bottom: 2px solid var(--line); }
+  .tabs { display: flex; gap: 2px; margin: 12px 0 0; border-bottom: 2px solid var(--line); }
   .tab {
     appearance: none; background: none; border: 0; cursor: pointer;
-    padding: 10px 18px; font: inherit; font-size: 13.5px; font-weight: 600;
+    padding: 8px 18px; font: inherit; font-size: 13.5px; font-weight: 600;
     color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
   }
   .tab:hover { color: var(--fg); }
   .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .panel { margin-top: 16px; }
+  .panel { margin-top: 12px; }
 
   /* ---- 전체 실적 (첫 화면 머리) ---- */
   .headline {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 36px;
-    padding: 20px 22px; border: 1px solid var(--line); border-radius: 10px;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 36px;
+    padding: 13px 20px; border: 1px solid var(--line); border-radius: 10px;
     background: var(--card);
   }
-  .headline-main { display: flex; flex-direction: column; gap: 2px; }
-  .headline-label { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .headline-main { display: flex; flex-direction: column; gap: 1px; }
+  .headline-label { font-size: 11.5px; color: var(--muted); font-weight: 600; }
   .headline-value {
-    font-size: 34px; font-weight: 800; letter-spacing: -0.02em;
+    font-size: 32px; font-weight: 800; letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums; line-height: 1.15;
   }
-  .headline-side { display: flex; gap: 28px; margin-left: auto; }
-  .headline-side .headline-value { font-size: 19px; font-weight: 700; }
+  .headline-side { display: flex; gap: 26px; margin-left: auto; }
+  .headline-side .headline-value { font-size: 17px; font-weight: 700; }
   @media (max-width: 900px) { .headline-side { margin-left: 0; } }
 
   /* ---- 정책별 달성 표 ---- */
-  .ach-head { display: flex; align-items: baseline; gap: 12px; margin: 22px 0 8px; }
+  .ach-head { display: flex; align-items: baseline; gap: 10px; margin: 13px 0 5px; }
   .ach-head h2 { font-size: 15px; font-weight: 700; margin: 0; }
   .ach-head .card-sub { margin: 0; }
   .ach-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
   table.ach { border-collapse: collapse; width: 100%; font-size: 13px; }
-  table.ach th, table.ach td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+  table.ach th, table.ach td { padding: 6px 12px; border-bottom: 1px solid var(--line); text-align: left; }
   table.ach thead th {
-    font-size: 11px; font-weight: 700; color: var(--muted);
-    letter-spacing: .04em; white-space: nowrap;
+    font-size: 10.5px; font-weight: 700; color: var(--muted);
+    letter-spacing: .04em; white-space: nowrap; padding-top: 8px; padding-bottom: 8px;
   }
   table.ach tbody tr:last-child td { border-bottom: 0; }
   table.ach td.n, table.ach th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .ach-name { font-weight: 600; }
-  .ach-scope td:first-child { padding-left: 30px; color: var(--muted); font-weight: 400; }
+
+  /* ⭐ 시각적 우선순위 — 정책명 · 달성률 · 상태를 앞세우고
+        목표 · 실적은 한 단계 내린다(STEP 128-2 §5). */
+  .ach-name { font-weight: 700; font-size: 13.5px; }
+  td.ach-support { color: var(--muted); font-size: 12px; }
+  td.ach-rate { font-weight: 700; font-size: 14px; }
+  .ach-scope td:first-child { padding-left: 30px; color: var(--muted); font-weight: 400; font-size: 12.5px; }
   .ach-scope td { border-bottom-style: dotted; }
+  .ach-scope .ach-rate { font-weight: 600; font-size: 13px; }
 
   /* 인라인 막대 — 폭은 달성률, 색은 서버 판정 상태 */
-  .bar { position: relative; width: 100px; height: 8px; border-radius: 4px; background: var(--line); }
+  .bar { position: relative; width: 92px; height: 7px; border-radius: 4px; background: var(--line); }
   .bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; display: block; }
   .bar-NORMAL > i { background: var(--normal); }
   .bar-WARNING > i { background: var(--warning); }
   .bar-SHORTAGE > i { background: var(--shortage); }
 
+  /* ⛔ 색만으로 뜻을 전하지 않는다 — 알약 안에 글자가 함께 있다(§4). */
   .state {
     display: inline-block; padding: 1px 9px; border-radius: 10px;
     font-size: 11.5px; font-weight: 700; white-space: nowrap;
     border: 1px solid currentColor;
   }
 
-  /* ---- 확인이 필요한 정책 ---- */
-  .attention { margin-top: 22px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  .attention-head {
-    display: flex; align-items: center; gap: 8px; padding: 11px 16px;
-    background: var(--card); border-bottom: 1px solid var(--line);
-    font-size: 13.5px; font-weight: 700;
+  /* ---- 다음 할 일 ----
+     ⛔ 위 표에 있는 정책을 그대로 다시 나열하지 않는다(§1).
+        몇 종인지 · 어느 것인지 · 무엇을 하면 되는지만 적는다. */
+  .todo { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .todo-item {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+    padding: 9px 14px; border-radius: 10px;
+    border: 1px solid var(--line); border-left-width: 3px; background: var(--card);
   }
-  .attention-row {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px;
-    padding: 11px 16px; background: var(--card); border-bottom: 1px solid var(--line);
+  .todo-shortage { border-left-color: var(--shortage); }
+  .todo-data { border-left-color: var(--warning); }
+  .todo-hold { border-left-color: var(--unset); }
+  .todo-what { font-weight: 700; font-size: 13px; }
+  .todo-who { color: var(--muted); font-size: 12.5px; flex: 1 1 240px; }
+  .todo-go {
+    appearance: none; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+    padding: 5px 12px; border-radius: 7px; margin-left: auto;
+    border: 1px solid var(--line); background: transparent; color: var(--accent);
   }
-  .attention-row:last-child { border-bottom: 0; }
-  .attention-row .ach-name { flex: 0 0 auto; }
-  .attention-row .gap { margin-left: auto; font-variant-numeric: tabular-nums; }
-  .attention-clear {
-    padding: 13px 16px; background: var(--card);
-    font-size: 13px; color: var(--normal); font-weight: 600;
+  .todo-go:hover { border-color: var(--accent); }
+  .todo-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .todo-clear {
+    padding: 11px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); font-size: 13px; color: var(--normal); font-weight: 600;
   }
 
-  /* ---- 바로가기 ---- */
-  .jump { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+  /* ---- 관련 업무 (보조) ----
+     ⛔ 핵심 실적보다 눈에 띄지 않게 둔다(§6). */
+  .jump { margin-top: 18px; }
+  .jump-label {
+    font-size: 11px; font-weight: 700; color: var(--muted);
+    letter-spacing: .06em; margin: 0 0 6px;
+  }
+  .jump-row { display: flex; flex-wrap: wrap; gap: 6px; }
   .jump button {
-    appearance: none; cursor: pointer; font: inherit; font-size: 12.5px;
-    padding: 8px 14px; border-radius: 8px;
-    border: 1px solid var(--line); background: var(--card); color: var(--fg);
+    appearance: none; cursor: pointer; font: inherit; font-size: 11.5px;
+    padding: 5px 11px; border-radius: 7px;
+    border: 1px solid var(--line); background: transparent; color: var(--muted);
   }
   .jump button:hover { border-color: var(--accent); color: var(--accent); }
   .jump button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -636,17 +657,27 @@
     </div>
     <p class="foot-note" id="ach-note"></p>
 
-    <!-- 3. 확인이 필요한 정책 -->
-    <div class="attention" id="attention"></div>
+    <!--
+      3. 다음 할 일
 
-    <!-- 4. 바로가기 — ⛔ 실적 영역보다 크지 않게 둔다 -->
+      ⛔ 위 표에 있는 정책을 그대로 다시 나열하지 않는다(STEP 128-2 §1).
+         「몇 종인가 · 어느 것인가 · 무엇을 하면 되는가」만 적고, 그 일을
+         하는 기존 화면으로 데려다 준다.
+      ⛔ 상태를 새로 판정하지 않는다. 서버가 준 status 를 성격별로 묶을 뿐이다.
+    -->
+    <div class="todo" id="attention"></div>
+
+    <!-- 4. 관련 업무 — ⛔ 실적 영역보다 눈에 띄지 않게 둔다 -->
     <div class="jump">
-      <button type="button" data-go="data" data-focus="upload-card">구매실적 올리기</button>
-      <button type="button" data-go="data" data-focus="company-card">기업정보 등록</button>
-      <button type="button" data-go="data" data-focus="review-card">구매유형 검토</button>
-      <button type="button" data-go="data" data-focus="target-card">목표비율 관리</button>
-      <button type="button" data-go="check" data-focus="unmatched-card">미매칭 기업</button>
-      <button type="button" data-go="check" data-focus="status-card">적재 현황</button>
+      <p class="jump-label">관련 업무</p>
+      <div class="jump-row">
+        <button type="button" data-go="data" data-focus="upload-card">구매실적 올리기</button>
+        <button type="button" data-go="data" data-focus="company-card">기업정보 등록</button>
+        <button type="button" data-go="data" data-focus="review-card">구매유형 검토</button>
+        <button type="button" data-go="data" data-focus="target-card">목표비율 관리</button>
+        <button type="button" data-go="check" data-focus="unmatched-card">미매칭 기업</button>
+        <button type="button" data-go="check" data-focus="status-card">적재 현황</button>
+      </div>
     </div>
   </div>
 
@@ -724,7 +755,7 @@
     </section>
 
     <section class="card">
-      <h2 class="card-title">정책별 현황</h2>
+      <h2 class="card-title" id="policy-detail-card">정책별 현황</h2>
       <p class="card-sub">개발 상태는 docs/DECISIONS.md 의 결정을 그대로 표시합니다</p>
       <div id="policy-cards" class="policy-grid" style="margin-top:14px"></div>
     </section>
@@ -2062,12 +2093,13 @@
     var tr = document.createElement("tr");
 
     tr.appendChild(make("td", "ach-name", item.policy_name));
-    tr.appendChild(make("td", "n", item.target_rate === null ? "—" : item.target_rate + "%"));
-    tr.appendChild(make("td", "n",
+    tr.appendChild(make("td", "n ach-support",
+      item.target_rate === null ? "—" : item.target_rate + "%"));
+    tr.appendChild(make("td", "n ach-support",
       item.purchase_amount === null ? "—" : numberFormat(item.purchase_amount) + " 원"));
 
     var calculable = !onHold && item.achievement_rate !== null;
-    tr.appendChild(make("td", "n", calculable ? item.achievement_rate + "%" : "—"));
+    tr.appendChild(make("td", "n ach-rate", calculable ? item.achievement_rate + "%" : "—"));
 
     var barCell = make("td", null);
     if (calculable) { barCell.appendChild(achievementBar(item.achievement_rate, item.status)); }
@@ -2083,11 +2115,11 @@
     (item.scoped_achievements || []).forEach(function (scoped) {
       var sub = make("tr", "ach-scope");
       sub.appendChild(make("td", null, scoped.scope_label));
-      sub.appendChild(make("td", "n", scoped.target_rate + "%"));
-      sub.appendChild(make("td", "n", numberFormat(scoped.purchase_amount) + " 원"));
+      sub.appendChild(make("td", "n ach-support", scoped.target_rate + "%"));
+      sub.appendChild(make("td", "n ach-support", numberFormat(scoped.purchase_amount) + " 원"));
 
       var has = scoped.achievement_rate !== null;
-      sub.appendChild(make("td", "n", has ? scoped.achievement_rate + "%" : "—"));
+      sub.appendChild(make("td", "n ach-rate", has ? scoped.achievement_rate + "%" : "—"));
 
       var sBar = make("td", null);
       if (has) { sBar.appendChild(achievementBar(scoped.achievement_rate, scoped.status)); }
@@ -2149,36 +2181,90 @@
     text(el("hl-basis"), dateFieldLabel(status.period_date_field));
   }
 
-  /** 확인이 필요한 정책만 모아 올린다. 없으면 한 줄로 접는다. */
+  /**
+   * 다음 할 일.
+   *
+   * ⛔ 위 표에 있는 정책을 그대로 다시 나열하지 않는다(STEP 128-2 §1).
+   *    성격이 다른 세 가지를 **갈라서**, 각각 무엇을 하면 되는지 적는다.
+   *
+   * ⭐ 세 가지는 같은 뜻이 아니다(§3).
+   *
+   *      부족            계산은 됐고 목표에 못 미친다 → 실적을 채워야 한다
+   *      기업정보 미등록  계산에 필요한 명단이 없다     → 자료를 등록해야 한다
+   *      계산 보류        지금은 확정할 수 없다        → 조건을 확인해야 한다
+   *
+   * ⛔ 상태를 새로 판정하지 않는다. 서버가 준 status 를 묶을 뿐이다.
+   */
+  var TODO_GROUPS = [
+    {
+      key: "shortage",
+      statuses: ["SHORTAGE", "WARNING"],
+      what: "목표에 미치지 못했습니다",
+      how: "정책별 현황에서 원인을 확인해 주세요.",
+      go: "정책별 현황",
+      tab: "check",
+      focus: "policy-detail-card"
+    },
+    {
+      key: "data",
+      statuses: ["COMPANY_DATA_NOT_REGISTERED"],
+      what: "기업정보가 없어 계산하지 못했습니다",
+      how: "해당 정책의 기업 명단을 등록해 주세요.",
+      go: "기업정보 등록",
+      tab: "data",
+      focus: "company-card"
+    },
+    {
+      key: "hold",
+      statuses: ["CALCULATION_ON_HOLD", "TARGET_RATE_NOT_SET"],
+      what: "계산 조건이 갖춰지지 않았습니다",
+      how: "목표비율과 계산 조건을 확인해 주세요.",
+      go: "목표비율 관리",
+      tab: "data",
+      focus: "target-card"
+    }
+  ];
+
   function renderAttention(summary, displayMap) {
     var box = el("attention");
     clear(box);
 
-    var hits = (summary.policies || []).filter(function (item) {
-      var display = displayMap[item.policy_code];
-      if (display && display.development_status === "ON_HOLD") { return false; }
-      return needsAttention(item.status);
-    });
+    var policies = summary.policies || [];
+    var placed = 0;
 
-    if (!hits.length) {
-      box.appendChild(make("div", "attention-clear",
-        "확인이 필요한 정책이 없습니다 — 계산된 정책이 모두 목표를 채웠습니다."));
-      return;
-    }
+    TODO_GROUPS.forEach(function (group) {
+      var hits = policies.filter(function (item) {
+        var display = displayMap[item.policy_code];
+        var onHold = !!display && display.development_status === "ON_HOLD";
+        // 계산 보류는 개발 상태에서도 오고 서버 status 에서도 온다.
+        if (onHold) { return group.key === "hold"; }
+        return group.statuses.indexOf(item.status) !== -1;
+      });
+      if (!hits.length) { return; }
+      placed += hits.length;
 
-    box.appendChild(make("div", "attention-head", "확인이 필요한 정책 " + hits.length + "종"));
-    hits.forEach(function (item) {
-      var row = make("div", "attention-row");
-      row.appendChild(make("span", "ach-name", item.policy_name));
-      row.appendChild(make("span", "card-sub",
-        "목표 " + item.target_rate + "% · 달성 " + item.achievement_rate + "%"));
-      // ⛔ 부족 «비율» 만 적는다. 금액으로 바꾸지 않는다.
-      if (item.shortage_rate !== null) {
-        row.appendChild(make("span", "gap card-sub", "부족 " + item.shortage_rate + "%p"));
-      }
-      row.appendChild(stateChip(item.status, item.status_label));
+      var row = make("div", "todo-item todo-" + group.key);
+      row.appendChild(make("span", "todo-what", hits.length + "종 · " + group.what));
+      // 어느 정책인지 이름만 적는다 — 숫자는 위 표에 이미 있다.
+      row.appendChild(make("span", "todo-who",
+        hits.map(function (item) { return item.policy_name; }).join(" · ")
+        + " — " + group.how));
+
+      var button = make("button", "todo-go", group.go + " 열기");
+      button.type = "button";
+      button.addEventListener("click", function () {
+        showTab(group.tab);
+        var target = el(group.focus);
+        if (target) { target.scrollIntoView({ block: "start" }); }
+      });
+      row.appendChild(button);
       box.appendChild(row);
     });
+
+    if (!placed) {
+      box.appendChild(make("div", "todo-clear",
+        "지금 확인할 것이 없습니다 — 계산된 정책이 모두 목표를 채웠습니다."));
+    }
   }
 
   // ------------------------------------------------------------ 탭 전환
