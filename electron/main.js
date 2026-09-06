@@ -177,6 +177,12 @@ app.on("before-quit", async (event) => {
   event.preventDefault();
   const handle = backend;
   backend = null;
-  await handle.stop();
-  app.quit();
+  try {
+    await handle.stop();
+  } finally {
+    // ⛔ 정리에 실패하더라도 **반드시** 앱을 닫는다. 예전에는 `stop()` 이
+    //    실패하면 `app.quit()` 에 닿지 못해, 창이 닫히지 않은 채 백엔드만
+    //    남을 수 있었다(STEP 126-3).
+    app.quit();
+  }
 });

@@ -38,6 +38,9 @@ const POLL_INTERVAL_MS = 200;
 /** 종료 요청 후 강제 종료까지 기다리는 시간(ms). */
 const SHUTDOWN_GRACE_MS = 3000;
 
+/** 강제 종료 뒤 «정말 끝났는지» 더 기다리는 시간(ms). */
+const FORCE_EXIT_GRACE_MS = 2000;
+
 /**
  * 비어 있는 TCP 포트를 하나 얻는다.
  *
@@ -314,15 +317,34 @@ function stopProcess(child) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      resolve();
-    }, SHUTDOWN_GRACE_MS);
+    let settled = false;
 
-    child.once("exit", () => {
-      clearTimeout(timer);
+    // ⛔ **끝난 것을 보고** 반환한다.
+    //
+    //    예전에는 강제 종료 신호를 보낸 **직후에 바로 반환**했다. 그러면
+    //    프로세스가 아직 살아 있는데도 Electron 이 «정리됐다»고 믿고
+    //    창을 닫아, 백엔드만 남는다. 앱을 여러 번 켜면 그만큼 쌓인다
+    //    (STEP 126-3).
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(graceTimer);
+      clearTimeout(lastResortTimer);
       resolve();
-    });
+    };
+
+    child.once("exit", finish);
+
+    // 정상 종료를 기다렸다가, 안 끝나면 강제 종료한다.
+    const graceTimer = setTimeout(() => child.kill("SIGKILL"), SHUTDOWN_GRACE_MS);
+
+    // ⚠️ 강제 종료마저 듣지 않는 경우(디스크 대기 등)에도 앱이 영영 닫히지
+    //    않으면 안 된다. 여기까지 오면 포기하고 반환한다 — 드물지만,
+    //    사용자가 창을 못 닫는 것보다는 낫다.
+    const lastResortTimer = setTimeout(finish, SHUTDOWN_GRACE_MS + FORCE_EXIT_GRACE_MS);
+
     child.kill("SIGTERM");
   });
 }

@@ -8,6 +8,7 @@
     "start": "electron .",
     "verify:backend": "node scripts/verify-backend.js",
     "verify:restart": "node scripts/verify-restart.js",
+    "verify:shutdown": "node scripts/verify-shutdown.js",
     "build:backend": "pyinstaller packaging/procurement-backend.spec",
     "build:desktop": "electron-builder --win"
   },
