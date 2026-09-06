@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from procurement.database.bootstrap import bootstrap, verify_bootstrap
@@ -181,6 +182,38 @@ def _run_server(host: str, port: int, db_path: Path | None = None) -> int:
     return 0
 
 
+def _use_utf8_output() -> None:
+    """표준 출력·오류를 UTF-8 로 고정합니다.
+
+    .. warning::
+        ⛔ **한글 Windows 에서 프로그램이 시작조차 못 하던 원인입니다.**
+
+        한글 Windows 의 기본 출력 인코딩은 ``cp949`` 인데, 안내문에 쓰는
+        줄표(``—`` U+2014)를 이 인코딩으로 쓸 수 없습니다. 그래서 초기화
+        보고문을 찍는 순간 :class:`UnicodeEncodeError` 로 죽었습니다
+        (STEP 126-2 · 실제 EXE 에서 발견).
+
+    글자를 하나씩 골라내는 것은 답이 아닙니다 — 안내문 전체가 한글이고
+    기호도 여럿 섞여 있어, 언제든 같은 일이 다시 납니다. **출력 인코딩
+    자체를 고정**합니다.
+
+    ``errors="replace"`` 를 함께 둡니다. 어떤 글자도 프로그램을 멈추게
+    하지 않는 것이, 안내문이 완벽한 것보다 중요합니다.
+
+    .. note::
+        배포본에서 이 출력을 받는 쪽은 Electron 이며(파이프), UTF-8 이
+        맞습니다. 재설정을 지원하지 않는 환경에서는 조용히 넘어갑니다.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):  # pragma: no cover - 환경에 따라 불가
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI 진입점.
 
@@ -190,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         프로세스 종료 코드. 정상은 ``0``, 점검 실패는 ``1``.
     """
+    _use_utf8_output()
+
     parser = _build_parser()
     args = parser.parse_args(argv)
 
