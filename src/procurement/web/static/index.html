@@ -74,8 +74,19 @@
     font-size: 13px; font-family: inherit; outline: none; cursor: pointer;
   }
   .control select option { background: var(--card); color: var(--text); }
-  button.control { cursor: pointer; font-family: inherit; }
-  button.control:hover { border-color: var(--accent); color: var(--accent); }
+  /*
+    ⛔ 단추 글자는 **줄을 바꾸지 않는다.** 자리가 모자라면 「새로 / 고침」처럼
+       한 단추가 두 줄이 되어 옆 단추와 높이가 어긋나 보인다. 줄바꿈은 단추
+       **사이**에서 일어나야 한다(`.upload-actions` 의 `flex-wrap`).
+  */
+  button.control { cursor: pointer; font-family: inherit; white-space: nowrap; }
+  /*
+    단추처럼 생긴 링크(내려받기)도 단추와 **같이** 보이게 한다. 기본 밑줄이
+    남아 있으면 나란히 선 단추 중 하나만 밑줄이 그어져 눌러야 할 것과 읽을
+    것이 섞여 보인다.
+  */
+  a.control { cursor: pointer; text-decoration: none; white-space: nowrap; }
+  button.control:hover, a.control:hover { border-color: var(--accent); color: var(--accent); }
   /* ⛔ 「검색」이 「검 / 색」으로 쪼개지지 않게 한다. */
   .control-label { color: var(--muted); white-space: nowrap; }
   .control-input {
@@ -91,6 +102,29 @@
   .control-grow input.control-input { min-width: 22ch; }
   /* 선택상자는 가장 긴 항목이 아니라 정해진 폭을 쓴다. */
   .control select.control-input { max-width: 15ch; }
+  /*
+    ⛔ 위의 `ch` 값들은 **보장이 아니다.** 담당자 화면에서 실제로 글자가
+       잘렸다 — 「이름 (비우면 이력에 안 ᅡ」·「여성기업 (WOMA」·
+       「쉼표 또는 줄바꿈으로 구」. `ch` 는 숫자 `0` 한 글자 폭이라
+       한글(1글자 ≒ 2ch)이 들어가면 어긋나고, 창 폭·글꼴이 달라지면 또
+       어긋난다. 값을 키워 맞추는 일은 끝이 없다.
+
+    그래서 지원되는 환경에서는 칸이 **자기 내용 폭**을 갖게 한다.
+      · 입력칸   — 안내 글자(placeholder)가 전부 보이는 폭
+      · 선택상자 — **지금 골라진 항목**의 폭 (가장 긴 항목이 아니다 —
+                   원래 `max-width` 로 막으려던 것이 이것이다)
+    `min-width: min-content` 로 flex 가 그 아래로 줄이지 못하게 막는다.
+    칸이 줄 안에 못 들어가면 **줄이 바뀔 뿐** 글자는 잘리지 않는다.
+
+    ⛔ 말줄임표(…)로 자르지 않는다 — 안내 글자는 전부 보여야 한다.
+    ⚠️ 위의 `ch` 규칙은 `field-sizing` 을 모르는 환경의 대비책으로 남긴다.
+  */
+  @supports (field-sizing: content) {
+    .control input, .control select { field-sizing: content; }
+    .control input.control-input,
+    .control-grow input.control-input { min-width: min-content; }
+    .control select.control-input { max-width: 100%; }
+  }
   .control-input option { background: var(--card); color: var(--text); }
 
   /* -------------------------------------------------------- 구매유형 검토 */
@@ -237,6 +271,13 @@
   .rv-fold > summary::before { content: "▶"; font-size: 9px; color: var(--muted); }
   .rv-fold[open] > summary::before { content: "▼"; }
   .rv-fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /*
+    진행률 줄 — 제목 **아래** 가로로 편다.
+    `.card-sub` 의 `margin` 을 이겨야 하므로 클래스 두 개로 적는다.
+  */
+  .card-sub.rv-progress {
+    display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 10px 0 0;
+  }
   /* 상태 줄 — 지금 어떤 상태이고 무엇이 골라져 있는지 카드 맨 위에서 보인다. */
   .rv-state { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; margin-top: 8px; }
   .rv-state div { display: flex; gap: 6px; }
@@ -590,6 +631,17 @@
       <span class="control-label">연도</span>
       <select id="year-select" aria-label="대상 연도 선택"></select>
     </span>
+    <!--
+      사용자 매뉴얼 — 지금 쓰는 프로그램에 담긴 PDF 를 그대로 받는다.
+
+      ⛔ 화면이 매뉴얼을 만들지 않는다. 백엔드가 담고 있는 파일을 보낼 뿐이다.
+      ⚠️ 기본은 **숨김**이다. 매뉴얼이 담겨 있는지 확인한 뒤에만 보여 준다
+         (`setupManualLink`). 없는데 눌러서 오류가 나면 안 된다.
+      미적재 CSV 와 같은 방식(`<a download>`)이라 새 통로를 만들지 않는다.
+    -->
+    <a id="manual-link" class="control" href="/docs/manual"
+       download="공공구매정책관리시스템_사용자매뉴얼.pdf"
+       aria-label="사용자 매뉴얼 PDF 내려받기" hidden>사용자 매뉴얼</a>
     <button id="theme-toggle" class="control" type="button" aria-label="테마 전환">
       <span id="theme-icon">☀</span><span id="theme-label">라이트</span>
     </button>
@@ -1127,9 +1179,20 @@
             원본을 보고 담당자가 직접 확정합니다. 원본 데이터는 수정되지 않습니다
           </p>
         </div>
-        <!-- 확정·Undo 로 숫자가 바뀌면 스크린리더가 읽을 수 있게 한다. -->
-        <div id="review-progress" class="card-sub" role="status" aria-live="polite"></div>
       </div>
+
+      <!--
+        진행률·현재 조건·미적재 요약.
+
+        ⛔ 예전에는 이 블록이 `card-head` **안**에 있었다. 그래서 제목 오른쪽
+           끝에 회색 글자 세 줄이 세로로 붙어(「전체 확정 0 / 0 · 확인 권장 0」
+           / 「현재 조건 = 전체」 / 「미적재 없음」) 카드 모서리에 낀 각주처럼
+           보였다. 제목 옆이 아니라 **제목 아래 한 줄**로 편다.
+        ⛔ 내용을 줄이지 않았다. 자리와 방향만 바꿨다.
+        확정·Undo 로 숫자가 바뀌면 스크린리더가 읽을 수 있게 둔다.
+      -->
+      <div id="review-progress" class="card-sub rv-progress" role="status"
+           aria-live="polite"></div>
 
       <!--
         원본 → 검토 대상 대조. ⛔ "제외되었습니다" 라고 쓰지 않는다.
@@ -1402,6 +1465,23 @@
       try { window.localStorage.setItem(THEME_KEY, next); } catch (e) { /* 저장 실패 무시 */ }
       redraw();
     });
+  }
+
+  // --------------------------------------------------------- 사용자 매뉴얼
+  /**
+   * 매뉴얼이 이 프로그램에 담겨 있을 때만 내려받기 링크를 보여 준다.
+   *
+   * ``HEAD`` 로 있는지만 물어본다 — 2 MB 를 미리 받아 오지 않는다.
+   *
+   * ⛔ 없을 때 링크를 남겨 두지 않는다. 눌러서 오류를 보는 것보다 처음부터
+   *    보이지 않는 것이 낫다(매뉴얼이 빠진 것은 빌드 문제이지 담당자가
+   *    할 수 있는 일이 아니다).
+   * ⛔ 실패를 화면 오류로 띄우지 않는다. 매뉴얼은 업무 화면이 아니다.
+   */
+  function setupManualLink() {
+    window.fetch("/docs/manual", { method: "HEAD" }).then(function (res) {
+      el("manual-link").hidden = !res.ok;
+    }).catch(function () { /* 링크는 계속 숨김 */ });
   }
 
   // ------------------------------------------------------------- 연도 선택
@@ -4422,6 +4502,22 @@
     var whole = payload.progress;
     var condition = payload.condition;
 
+    /*
+      아직 아무것도 올리지 않은 상태.
+
+      ⛔ 예전에는 이때도 「전체 확정 0 / 0 · 확인 권장 0」 · 「현재 조건 = 전체」
+         를 그대로 적었다. 처음 켠 담당자에게는 0 세 개가 무슨 뜻인지 알 수 없는
+         숫자였다. 무엇을 하면 되는지 한 줄로 적는다.
+      ⚠️ 아래 보조 안내는 **그대로 부른다.** 올린 행이 전부 검토 대상 밖일 수도
+         있고, 그것은 「자료가 없다」와 다른 사실이다.
+    */
+    if (!whole.total) {
+      node.appendChild(make("div", "rv-key",
+        "검토할 구매실적이 아직 없습니다 — 구매실적을 올리면 진행률이 여기에 나옵니다"));
+      appendPeriodNote(node);
+      return;
+    }
+
     var wholeText = "전체 확정 " + numberFormat(whole.confirmed)
       + " / " + numberFormat(whole.total)
       + " · 확인 권장 " + numberFormat(whole.ambiguous);
@@ -4468,10 +4564,23 @@
    *
    * ⚠️ 이미 받아 둔 ``/imports/trace`` 결과를 다시 쓴다 — 같은 숫자를 위해
    *    API 를 또 부르지 않는다.
+   *
+   * ⛔ 사유 목록을 여기서 **되풀이하지 않는다.** 바로 아래 원본 대조 안내
+   *    (``#review-trace``)가 같은 목록을 더 자세히 적고 있어서, 두 줄 아래
+   *    같은 문장이 다시 나오면 서로 다른 것을 보고 있다고 읽힌다.
+   *    건수는 남긴다 — 이 줄은 확정·Undo 로 숫자가 바뀔 때 스크린리더가
+   *    읽는 자리다.
+   * ⚠️ 기간을 고른 경우는 사정이 다르다. 그때 아래 안내는 전체 기준이므로
+   *    :func:`appendPeriodNote` 는 사유 목록을 그대로 편다.
    */
   function appendWholeRejectionNote(node) {
     if (!lastTrace) { return; }
-    appendReasonNote(node, lastTrace.rejected, lastTrace.reasons);
+    if (!lastTrace.rejected) {
+      node.appendChild(make("div", "rv-key", "미적재 없음"));
+      return;
+    }
+    node.appendChild(make("div", "rv-key",
+      "미적재 " + numberFormat(lastTrace.rejected) + "건 (검토 대상 밖 · 아래 참고)"));
   }
 
   /**
@@ -5398,6 +5507,7 @@
   }
 
   initTheme();
+  setupManualLink();
   buildYearOptions();
   initMissingResolutionFold();
   initPolicyTargets();

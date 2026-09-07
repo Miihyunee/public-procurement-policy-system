@@ -194,12 +194,17 @@ from procurement.uploads.upload_service import (
 )
 from procurement.uploads.validation import ValidationReport
 from procurement.web import (
+    MANUAL_FILE_NAME,
+    PDF_MEDIA_TYPE,
     AchievementLevelsResponseModel,
     PolicyDisplayResponseModel,
     build_achievement_levels_response,
     build_policy_display_response,
+    manual_exists,
+    manual_size,
     parse_thresholds,
     read_index_html,
+    read_manual_pdf,
 )
 
 
@@ -1248,6 +1253,73 @@ def create_app(
             media_type=XLSX_MEDIA_TYPE,
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
         )
+
+    def _manual_headers() -> dict[str, str]:
+        """매뉴얼 응답 헤더. 없으면 404 를 올립니다.
+
+        Returns:
+            ``Content-Disposition`` 한 줄. 고객이 받을 한글 파일명이 담깁니다.
+
+        Raises:
+            HTTPException: 매뉴얼이 프로그램에 담겨 있지 않으면 **404**.
+        """
+        if not manual_exists():
+            raise HTTPException(
+                status_code=404,
+                detail="사용자 매뉴얼이 이 프로그램에 담겨 있지 않습니다.",
+            )
+        quoted = quote(MANUAL_FILE_NAME)
+        return {"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"}
+
+    @app.get(
+        "/docs/manual",
+        summary="사용자 매뉴얼(.pdf) 내려받기",
+        tags=["docs"],
+        response_class=Response,
+    )
+    def download_user_manual() -> Response:
+        """프로그램에 담긴 사용자 매뉴얼 PDF 를 반환합니다.
+
+        설치파일과 매뉴얼을 따로 보관하면 어느 매뉴얼이 지금 쓰는 프로그램의
+        것인지 알기 어렵습니다. 매뉴얼을 프로그램에 함께 담고 화면에서 바로
+        받게 하면, 받는 매뉴얼이 **지금 그 프로그램의** 매뉴얼입니다.
+
+        Returns:
+            PDF 파일 응답. 파일명은 ``Content-Disposition`` 으로 알려 줍니다.
+
+        Raises:
+            HTTPException: 매뉴얼이 프로그램에 담겨 있지 않으면 **404**.
+        """
+        return Response(
+            content=read_manual_pdf(),
+            media_type=PDF_MEDIA_TYPE,
+            headers=_manual_headers(),
+        )
+
+    @app.head(
+        "/docs/manual",
+        # ⚠️ 위 GET 과 **따로** 등록한다. 한 라우트에 GET·HEAD 를 같이 얹으면
+        #    FastAPI 가 같은 operation id 를 두 번 만들어 OpenAPI 문서가 어긋난다.
+        # 문서에는 GET 하나만 남긴다 — HEAD 는 같은 자원의 머리말일 뿐이다.
+        include_in_schema=False,
+        response_class=Response,
+    )
+    def head_user_manual() -> Response:
+        """매뉴얼이 담겨 있는지만 알려 줍니다(본문 없음).
+
+        화면은 이 상태 코드만 보고 내려받기 단추를 보여 줄지 정합니다.
+        ⛔ 없는데 있는 것처럼 단추를 두지 않습니다. 있는지 묻는 질문에
+        파일 전체를 읽지 않습니다.
+
+        Returns:
+            본문 없는 200 응답. 크기는 ``Content-Length`` 로 알려 줍니다.
+
+        Raises:
+            HTTPException: 매뉴얼이 프로그램에 담겨 있지 않으면 **404**.
+        """
+        headers = _manual_headers()
+        headers["Content-Length"] = str(manual_size())
+        return Response(status_code=200, media_type=PDF_MEDIA_TYPE, headers=headers)
 
     @app.get(
         "/companies/sources",

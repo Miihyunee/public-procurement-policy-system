@@ -21,6 +21,14 @@ from procurement.web.achievement_display import (
     parse_thresholds,
     resolve_level,
 )
+from procurement.web.manual import (
+    MANUAL_FILE_NAME,
+    MANUAL_PDF_PATH,
+    PDF_MEDIA_TYPE,
+    manual_exists,
+    manual_size,
+    read_manual_pdf,
+)
 from procurement.web.page import INDEX_HTML_PATH, read_index_html
 from procurement.web.policy_display import (
     DEFAULT_DISPLAY,
@@ -43,7 +51,10 @@ __all__ = [
     "DEFAULT_DISPLAY",
     "DEFAULT_THRESHOLDS",
     "INDEX_HTML_PATH",
+    "MANUAL_FILE_NAME",
+    "MANUAL_PDF_PATH",
     "ON_HOLD",
+    "PDF_MEDIA_TYPE",
     "POLICY_DISPLAY",
     "READY",
     "UNKNOWN",
@@ -56,7 +67,10 @@ __all__ = [
     "build_achievement_levels_response",
     "build_policy_display_response",
     "get_display_info",
+    "manual_exists",
+    "manual_size",
     "parse_thresholds",
     "resolve_level",
     "read_index_html",
+    "read_manual_pdf",
 ]

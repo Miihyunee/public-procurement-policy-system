@@ -41,6 +41,13 @@ ENTRY = ROOT / "src" / "procurement" / "__main__.py"
 #: 패키지 안의 **같은 자리**에 넣어야 한다.
 STATIC = ROOT / "src" / "procurement" / "web" / "static" / "index.html"
 
+#: 사용자 매뉴얼 PDF. 화면의 「사용자 매뉴얼」 단추가 이 파일을 받아 간다
+#: (`procurement/web/manual.py`). 화면 파일과 **같은 이유**로 패키지 안 제자리에
+#: 넣어야 한다 — `__file__` 기준으로 읽기 때문이다.
+#: ⛔ 빠지면 프로그램은 정상 동작하고 단추만 사라진다(404). 조용히 없어지므로
+#:    빌드 뒤 `dist/procurement/_internal/procurement/web/manual/` 를 확인한다.
+MANUAL = ROOT / "src" / "procurement" / "web" / "manual" / "user_manual.pdf"
+
 # ----------------------------------------------------------------------
 # 숨은 import
 #
@@ -72,8 +79,11 @@ a = Analysis(
     [str(ENTRY)],
     pathex=[str(ROOT / "src")],
     binaries=[],
-    # 화면 파일을 패키지 안 제자리에 넣는다.
-    datas=[(str(STATIC), "procurement/web/static")],
+    # 화면 파일과 매뉴얼을 패키지 안 제자리에 넣는다.
+    datas=[
+        (str(STATIC), "procurement/web/static"),
+        (str(MANUAL), "procurement/web/manual"),
+    ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

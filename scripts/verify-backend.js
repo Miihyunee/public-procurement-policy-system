@@ -112,6 +112,22 @@ async function main() {
   const policies = await fetch(`${base}/policies`);
   results.push(report(policies.ok, "정책 API 응답", `HTTP ${policies.status}`));
 
+  // --- 사용자 매뉴얼 -------------------------------------------------
+  //
+  // 매뉴얼 PDF 는 PyInstaller 사양(`packaging/procurement-backend.spec`)이
+  // 번들에 넣어 준다. 빠지면 프로그램은 정상 동작하고 **단추만 조용히
+  // 사라진다.** 그래서 빌드마다 여기서 확인한다.
+  const manual = await fetch(`${base}/docs/manual`);
+  const manualBytes = Buffer.from(await manual.arrayBuffer());
+  const manualName = fileNameFromDisposition(manual.headers.get("content-disposition"));
+  results.push(
+    report(
+      manual.ok && manualBytes.subarray(0, 5).toString() === "%PDF-",
+      "사용자 매뉴얼 다운로드",
+      `${manualName} · ${manualBytes.length.toLocaleString()} bytes`,
+    ),
+  );
+
   // --- 업로드 경로 ---------------------------------------------------
   //
   // Electron 이 실제로 하는 일(양식 내려받아 저장 → 그 파일 경로를 백엔드에

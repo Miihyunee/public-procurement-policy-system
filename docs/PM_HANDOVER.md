@@ -29,7 +29,7 @@
 | **남은 것** | Windows 검증 · 운영 데이터 · 고객 확인 사항 · push 승인 |
 
 **품질 게이트는 전부 통과 상태입니다** — pytest 1548 · ruff · mypy strict ·
-Electron 백엔드 검증 14/14 · Electron 실기동 smoke 6/6.
+Electron 백엔드 검증 15/15 · Electron 실기동 smoke 6/6.
 
 ---
 
@@ -105,7 +105,7 @@ Electron 백엔드 검증 14/14 · Electron 실기동 smoke 6/6.
 .venv/bin/pytest -q          # 1083 passed
 .venv/bin/ruff check .       # All checks passed
 .venv/bin/mypy -p procurement && .venv/bin/mypy tests   # strict, 통과
-node scripts/verify-backend.js                          # 14/14 통과
+node scripts/verify-backend.js                          # 15/15 통과
 ```
 
 **Electron 실기동 확인** (GUI 없는 환경에서는 Xvfb 사용):
