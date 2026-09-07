@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "공공기관 우선구매 정책 달성률 관리 데스크톱 앱 (Electron + Python backend)",
+  "author": "AㅏAI 좋아",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
