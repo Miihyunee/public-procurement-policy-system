@@ -756,7 +756,8 @@
 
     <section class="card">
       <h2 class="card-title" id="policy-detail-card">정책별 현황</h2>
-      <p class="card-sub">개발 상태는 docs/DECISIONS.md 의 결정을 그대로 표시합니다</p>
+      <!-- ⛔ 개발 문서 경로를 고객 화면에 적지 않는다. -->
+      <p class="card-sub">정책마다 목표 · 실적 · 달성률과 현재 상태를 보여 줍니다</p>
       <div id="policy-cards" class="policy-grid" style="margin-top:14px"></div>
     </section>
   </div>
@@ -2361,8 +2362,9 @@
       el("chart-achievement").appendChild(
         make("div", "empty", "달성률을 계산할 수 없습니다. 위 사유를 확인하세요."));
     }
-    text(el("footer-note"),
-      "정책별 개발 상태는 docs/DECISIONS.md 의 결정을 그대로 표시합니다.");
+    // 화면 맨 아래 저작권 표기. ⛔ 예전에는 개발 문서 경로
+    //    (docs/DECISIONS.md)를 적어 두었다 — 고객 화면에 나올 글자가 아니다.
+    text(el("footer-note"), "Copyright AㅏAI 좋아 All rights reserved");
   }
 
   /** 테마를 바꾸면 SVG 색상 변수를 다시 읽어야 하므로 마지막 데이터로 다시 그린다. */
