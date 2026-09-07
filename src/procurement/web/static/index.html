@@ -76,11 +76,21 @@
   .control select option { background: var(--card); color: var(--text); }
   button.control { cursor: pointer; font-family: inherit; }
   button.control:hover { border-color: var(--accent); color: var(--accent); }
-  .control-label { color: var(--muted); }
+  /* ⛔ 「검색」이 「검 / 색」으로 쪼개지지 않게 한다. */
+  .control-label { color: var(--muted); white-space: nowrap; }
   .control-input {
     background: transparent; border: 0; color: var(--text);
     font-size: 13px; font-family: inherit; outline: none;
+    /* ⛔ 입력칸 기본 폭(브라우저 기본 20글자)에 맡기면 안내 글자가
+       잘린다. 담을 만큼 늘어나되, 선택상자가 가장 긴 항목을 따라
+       한없이 넓어지지는 않게 한다. */
+    min-width: 0; max-width: 100%;
   }
+  /* 안내 글자가 긴 입력칸 — 잘리지 않을 만큼 최소 폭을 준다. */
+  .control input.control-input { flex: 1 1 auto; min-width: 12ch; }
+  .control-grow input.control-input { min-width: 22ch; }
+  /* 선택상자는 가장 긴 항목이 아니라 정해진 폭을 쓴다. */
+  .control select.control-input { max-width: 15ch; }
   .control-input option { background: var(--card); color: var(--text); }
 
   /* -------------------------------------------------------- 구매유형 검토 */
@@ -415,7 +425,6 @@
   }
   .policy-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
   .policy-name { font-weight: 700; font-size: 14px; }
-  .policy-code { font-size: 11px; color: var(--muted); }
   .chip {
     font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
     background: var(--chip-bg); border: 1px solid var(--line); color: var(--muted);
@@ -1147,7 +1156,7 @@
         <span class="control control-grow">
           <span class="control-label">검색</span>
           <input id="review-search" class="control-input" type="search"
-                 placeholder="적요 · 거래처명 · 사업자등록번호 (띄어쓰기 무시)"
+                 placeholder="적요 · 거래처명 · 사업자번호"
                  aria-label="적요 · 거래처명 · 사업자등록번호로 검색" />
         </span>
         <!--
@@ -1237,7 +1246,7 @@
           <span class="control-label">확정자</span>
           <!-- 비워 두면 이력에 담당자가 남지 않는다. ⛔ 가짜 이름을 채우지 않는다. -->
           <input id="review-actor" class="control-input" type="text"
-                 placeholder="이름 (비우면 이력에 남지 않음)"
+                 placeholder="이름 (비우면 이력에 안 남음)"
                  aria-label="확정자 이름 — 비워 두면 변경 이력에 담당자가 기록되지 않습니다" />
         </span>
         <button id="review-reload" class="control" type="button">새로고침</button>
@@ -1269,13 +1278,19 @@
         <button id="review-next" class="control" type="button" aria-label="다음 쪽">다음 쪽 →</button>
       </div>
 
+      <!--
+        키보드 안내.
+
+        ⛔ 예전에는 뒤에 예외를 두 문장 더 붙여 두 줄로 늘어졌다
+           (「입력창에 있을 때는 안 된다」 · 「↑↓ 는 목록에 포커스가 있을
+           때만」 · 「확정 단축키는 없다」). 읽히지 않아 지웠다.
+        ⛔ 키 목록은 줄이지 않았다. ``N``/``P`` 는 화면 어디서나 되고
+           ``↑``/``↓`` 는 목록 안에서만 되므로, 둘 중 하나만 적으면
+           안 되는 자리에서 눌러 보게 된다.
+      -->
       <p class="card-sub rv-keys">
-        키보드: <kbd>↓</kbd><kbd>↑</kbd> 또는 <kbd>N</kbd><kbd>P</kbd> 대상 이동 ·
-        <kbd>Enter</kbd> 카드 안으로 · <kbd>Tab</kbd> 확정 컨트롤 이동 ·
-        <kbd>Esc</kbd> 창 닫기
-        <span class="rv-key">— 입력창·선택상자에 있을 때는 동작하지 않습니다.
-        ↑↓ 는 목록에 포커스가 있을 때만 움직입니다. 확정 단축키는 없습니다 —
-        확정은 담당자가 버튼으로 직접 합니다.</span>
+        키보드 <kbd>↑</kbd><kbd>↓</kbd> 또는 <kbd>N</kbd><kbd>P</kbd> 대상 이동 ·
+        <kbd>Enter</kbd> 카드 열기 · <kbd>Esc</kbd> 창 닫기
       </p>
 
       <!-- 변경 이력 — 현재 값과 과거 기록을 분리해서 보여준다 -->
@@ -1624,7 +1639,9 @@
 
     var head = make("div", "policy-head");
     head.appendChild(make("span", "policy-name", item.policy_name));
-    head.appendChild(make("span", "policy-code", item.policy_code));
+    // ⛔ 정책 코드(SMALL_BUSINESS 등)를 화면에 적지 않는다. 담당자에게
+    //    뜻이 없는 글자이고, 코드 길이가 정책마다 달라 카드 머리가
+    //    저마다 다른 줄 수로 접혀 나란히 놓인 카드의 높이가 어긋났다.
     var onHold = !!display && display.development_status === "ON_HOLD";
     if (display) {
       head.appendChild(make("span", onHold ? "chip" : "chip chip-ready", display.development_label));

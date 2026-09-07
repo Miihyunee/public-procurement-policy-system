@@ -629,10 +629,20 @@ class TestUndoAccessibility:
             assert banned not in handler, banned
 
     def test_shortcut_hint_is_shown(self, page: str) -> None:
-        """작업 L — 단축키를 화면에 적어 둔다."""
-        assert "확정 단축키는 없습니다" in page
-        assert "<kbd>N</kbd>" in page
-        assert "<kbd>Esc</kbd>" in page
+        """작업 L — 단축키를 화면에 적어 둔다.
+
+        🟢 2026-09-07 — 안내가 두 줄로 늘어져 읽히지 않아 뒤에 붙어 있던
+        예외 세 문장을 지웠다(「입력창에서는 안 된다」 · 「↑↓ 는 목록에
+        포커스가 있을 때만」 · 「확정 단축키는 없다」).
+
+        ⛔ **키 목록은 줄이지 않았다.** ``N``/``P`` 는 화면 어디서나 되고
+           ``↑``/``↓`` 는 목록 안에서만 되므로, 하나만 적으면 담당자가
+           안 되는 자리에서 눌러 보게 된다.
+        """
+        for key in ("↑", "↓", "N", "P", "Enter", "Esc"):
+            assert f"<kbd>{key}</kbd>" in page, key
+        # ⛔ 확정 단축키를 만들지 않았다 — 확정은 버튼으로만 한다.
+        assert "확정" not in page.split("rv-keys")[1].split("</p>")[0]
 
 
 # ----------------------------------------------------------------------

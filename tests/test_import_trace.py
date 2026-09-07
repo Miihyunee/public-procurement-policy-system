@@ -584,7 +584,14 @@ class TestActorNameDisplay:
         assert entries[-1].changed_by is None
 
     def test_input_hint_explains_the_consequence(self, page: str) -> None:
-        assert "비우면 이력에 남지 않음" in page
+        """비워 두면 어떻게 되는지를 **화면에서** 알려 준다.
+
+        🟢 2026-09-07 — 안내 글자가 입력칸을 넘어 잘려 있었다. 뜻은 그대로
+        두고 길이만 줄였다(「남지 않음」 → 「안 남음」).
+        ⛔ aria-label 로만 옮기지 않는다 — 그러면 눈으로 보는 담당자가
+           비워 두었을 때 무슨 일이 생기는지 알 수 없다.
+        """
+        assert "비우면 이력에 안 남음" in page
 
 
 def _function_body(page: str, name: str) -> str:
