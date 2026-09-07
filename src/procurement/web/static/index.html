@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko" data-theme="dark">
+<html lang="ko" data-theme="light">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -64,12 +64,6 @@
   .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .title { font-size: 19px; font-weight: 700; letter-spacing: -.01em; margin: 0; }
   .spacer { flex: 1 1 auto; }
-  .badge {
-    padding: 4px 11px; border-radius: 999px; font-size: 11px; font-weight: 700;
-    letter-spacing: .06em; border: 1px solid transparent;
-  }
-  .badge-demo { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
-  .badge-op { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
   .control {
     display: inline-flex; align-items: center; gap: 6px;
     background: var(--card); border: 1px solid var(--line); border-radius: 10px;
@@ -582,14 +576,13 @@
 
   <div class="topbar">
     <h1 class="title">우선구매 정책 달성률 대시보드</h1>
-    <span id="data-mode-badge" class="badge badge-demo">DATA MODE</span>
     <span class="spacer"></span>
     <span class="control">
       <span class="control-label">연도</span>
       <select id="year-select" aria-label="대상 연도 선택"></select>
     </span>
     <button id="theme-toggle" class="control" type="button" aria-label="테마 전환">
-      <span id="theme-icon">☾</span><span id="theme-label">다크</span>
+      <span id="theme-icon">☀</span><span id="theme-label">라이트</span>
     </button>
   </div>
 
@@ -1382,8 +1375,10 @@
   function initTheme() {
     var stored = null;
     try { stored = window.localStorage.getItem(THEME_KEY); } catch (e) { stored = null; }
-    // 저장된 선택이 없으면 다크를 기본으로 한다(화면 기본 스타일).
-    applyTheme(stored === "light" ? "light" : "dark");
+    // 저장된 선택이 없으면 **라이트**를 기본으로 한다.
+    //  ⛔ 담당자가 고른 값이 있으면 그것이 이긴다 — 기본값은 첫 실행에만
+    //     쓰인다.
+    applyTheme(stored === "dark" ? "dark" : "light");
 
     el("theme-toggle").addEventListener("click", function () {
       var next = document.documentElement.getAttribute("data-theme") === "dark"
@@ -1510,11 +1505,6 @@
 
   // ------------------------------------------------------------ 적재 현황 표
   function renderStatusTable(status) {
-    var badge = el("data-mode-badge");
-    var operational = status.data_mode === "operational";
-    badge.className = operational ? "badge badge-op" : "badge badge-demo";
-    text(badge, operational ? "OPERATIONAL DATA" : "DEMO / SAMPLE DATA");
-
     text(el("period-notice"), status.period_notice);
 
     var range = function (from, to) { return (from && to) ? (from + " ~ " + to) : "-"; };
