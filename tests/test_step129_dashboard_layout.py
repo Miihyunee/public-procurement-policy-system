@@ -269,14 +269,20 @@ class TestTheSamePolicyIsNotListedTwice:
             assert repeated not in block, repeated
 
     def test_22_three_kinds_are_told_apart(self, page: str) -> None:
-        """⭐ 「부족」·「기업정보 미등록」·「계산 보류」는 같은 뜻이 아니다(§3).
+        """⭐ 성격이 다른 상태는 같은 뜻이 아니다(§3).
 
         각각 해야 할 일이 다르다 — 실적을 채우는 일, 자료를 등록하는 일,
-        계산 조건을 확인하는 일.
+        구매유형을 확정하는 일, 목표를 넣는 일, 기준이 정해지기를 기다리는 일.
+
+        ② 요구사항 변경(STEP 151). 예전에는 「계산 보류」와 「목표율 미설정」을
+        한 묶음으로 두고 둘 다 목표비율 관리로 보냈다. 여성기업은 목표비율이
+        이미 들어 있어서 그 화면에 **할 일이 없었다**(STEP 150 발견). 이제
+        멈춘 이유를 :data:`holdCause` 가 셋으로 갈라 각각 다른 곳으로 보낸다.
         """
         assert '"SHORTAGE", "WARNING"' in page
         assert '"COMPANY_DATA_NOT_REGISTERED"' in page
-        assert '"CALCULATION_ON_HOLD", "TARGET_RATE_NOT_SET"' in page
+        for cause in ("HOLD_REVIEW", "HOLD_TARGET", "HOLD_BASIS"):
+            assert "cause: " + cause in page, cause
 
     def test_23_each_kind_leads_somewhere_that_exists(self, page: str, markup: str) -> None:
         """⛔ 새 화면을 만들지 않는다 — 기존 자리로 데려다 준다."""

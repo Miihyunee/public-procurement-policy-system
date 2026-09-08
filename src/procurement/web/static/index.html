@@ -589,7 +589,7 @@
   }
   .todo-shortage { border-left-color: var(--shortage); }
   .todo-data { border-left-color: var(--warning); }
-  .todo-hold { border-left-color: var(--unset); }
+  .todo-review, .todo-target, .todo-basis { border-left-color: var(--unset); }
   .todo-what { font-weight: 700; font-size: 13px; }
   .todo-who { color: var(--muted); font-size: 12.5px; flex: 1 1 240px; }
   .todo-go {
@@ -1659,7 +1659,7 @@
    * 분모를 구하지 못한 유형(담당자가 그 유형으로 확정한 구매가 아직 없는
    * 경우)은 달성률 자리에 "계산 보류" 라고 적는다. 0% 가 아니다.
    */
-  function scopedTable(items) {
+  function scopedTable(items, hold) {
     var wrap = make("div", "scoped");
     wrap.appendChild(make("div", "scoped-title", "구매유형별 달성률"));
 
@@ -1678,9 +1678,11 @@
       tr.appendChild(make("td", null, numberFormat(scoped.purchase_amount) + " 원"));
       tr.appendChild(make("td", null, numberFormat(scoped.total_purchase_amount) + " 원"));
 
+      // 유형 줄도 정책 줄과 **같은 말**을 쓴다. 위는 「구매유형 확인 중」인데
+      // 아래만 「계산 보류」면 담당자는 다른 사정이 또 있는 줄로 읽는다.
       var rate = make("td", null,
         scoped.achievement_rate === null
-          ? scoped.status_label
+          ? (hold && scoped.status === "CALCULATION_ON_HOLD" ? hold.label : scoped.status_label)
           : scoped.achievement_rate + "%");
       if (scoped.achievement_rate !== null) {
         rate.style.color = levelColor(levelOf(scoped.achievement_rate));
@@ -1705,12 +1707,79 @@
     var box = make("div", "note");
     box.appendChild(make("div", null,
       "구매유형 확인이 끝나지 않아 달성률을 계산할 수 없습니다."));
+    // 남은 건수를 함께 적는다 (STEP 151 §작업 3). 담당자가 「얼마나 더 하면
+    // 되는가」를 화면에서 바로 읽을 수 있어야 한다.
+    // ⛔ 숫자를 지어내지 않는다 — 서버가 준 두 값의 차이일 뿐이다.
+    box.appendChild(make("div", null,
+      "아직 " + numberFormat(coverage.total_count - coverage.confirmed_count) +
+      "건의 구매유형 확인이 남아 있습니다."));
     box.appendChild(make("div", null,
       "확인 완료 " + numberFormat(coverage.confirmed_count) +
       " / " + numberFormat(coverage.total_count) + "건" +
       "  ·  " + numberFormat(coverage.confirmed_amount) +
       " / " + numberFormat(coverage.total_amount) + " 원"));
     return box;
+  }
+
+  /*
+    계산이 멈춘 **이유** (STEP 151).
+
+    ⭐ 「계산 보류」라는 한 마디로는 담당자가 다음에 무엇을 해야 할지 알 수 없다.
+       멈춘 이유가 셋인데 해야 할 일이 서로 다르기 때문이다.
+
+         구매유형 확인 중   확인을 끝내면 계산된다        → 구매실적 검토
+         목표비율 미설정    목표를 넣으면 계산된다        → 목표비율 관리
+         산출 기준 미정     지금 자료로는 산출할 수 없다  → 갈 곳이 없다
+
+    ⛔ 상태를 새로 판정하지 않는다. 서버가 준 status 와 구매유형 확인 진행률을
+       읽어 **문구와 다음 행동**으로 옮길 뿐이다.
+    ⛔ 화면에 내부 상태값(CALCULATION_ON_HOLD 등)을 그대로 쓰지 않는다.
+    ⛔ 「몇 % 확정되면 계산」 같은 임계값을 만들지 않는다 — 고객 결정사항이다.
+  */
+  var HOLD_REVIEW = {
+    key: "review",
+    label: "구매유형 확인 중",
+    what: "구매유형 확인이 남아 있습니다",
+    how: "구매실적 검토에서 각 건의 구매유형을 확정해 주세요.",
+    go: "구매실적 검토",
+    tab: "data",
+    focus: "review-card"
+  };
+  var HOLD_TARGET = {
+    key: "target",
+    label: "목표비율 미설정",
+    what: "목표비율을 아직 정하지 않았습니다",
+    how: "목표비율 관리에서 목표를 입력해 주세요.",
+    go: "목표비율 관리",
+    tab: "data",
+    focus: "target-card"
+  };
+  var HOLD_BASIS = {
+    key: "basis",
+    label: "산출 기준 미정",
+    what: "현재 자료로는 실적 산출 기준을 확정할 수 없습니다",
+    how: "지금 화면에서 할 수 있는 일은 없습니다 — 기준이 정해지면 계산됩니다.",
+    go: null,
+    tab: null,
+    focus: null
+  };
+
+  /** 구매유형 확인이 몇 건 남았는가. 확인이 끝났으면 0. */
+  function pendingTypeCount(item) {
+    var cov = item.purchase_type_coverage;
+    if (!cov || cov.complete) { return 0; }
+    return Math.max(0, cov.total_count - cov.confirmed_count);
+  }
+
+  /** 이 정책의 계산이 멈춘 이유. 멈추지 않았으면 null. */
+  function holdCause(item, display) {
+    if (pendingTypeCount(item) > 0) { return HOLD_REVIEW; }
+    if (item.status === "CALCULATION_ON_HOLD") { return HOLD_BASIS; }
+    // 개발 상태가 보류인데 유형별 결과도 없으면, 기준 자체가 아직 없다는 뜻이다.
+    if (display && display.development_status === "ON_HOLD"
+      && !(item.scoped_achievements || []).length) { return HOLD_BASIS; }
+    if (item.status === "TARGET_RATE_NOT_SET") { return HOLD_TARGET; }
+    return null;
   }
 
   // ------------------------------------------------------------ 정책 카드
@@ -1723,6 +1792,7 @@
     //    뜻이 없는 글자이고, 코드 길이가 정책마다 달라 카드 머리가
     //    저마다 다른 줄 수로 접혀 나란히 놓인 카드의 높이가 어긋났다.
     var onHold = !!display && display.development_status === "ON_HOLD";
+    var hold = holdCause(item, display);
     if (display) {
       head.appendChild(make("span", onHold ? "chip" : "chip chip-ready", display.development_label));
     }
@@ -1730,11 +1800,12 @@
 
     var value = make("div", "policy-value");
     var state = make("div", "policy-state");
-    if (onHold) {
+    if (hold) {
+      // ⭐ 왜 멈췄는지까지 적는다 — 「계산 보류」만으로는 다음 할 일을 모른다.
       value.className += " st-HOLD";
       text(value, "—");
       state.className += " st-HOLD";
-      text(state, "계산 보류");
+      text(state, hold.label);
     } else if (item.achievement_rate === null) {
       value.className += " st-TARGET_RATE_NOT_SET";
       text(value, "—");
@@ -1772,16 +1843,19 @@
     // 위의 한 줄로 표현할 수 없다. 유형마다 목표·실적·달성률을 따로 적는다.
     // ⛔ 이걸 그리지 않으면 서버가 낸 세 결과가 화면에서 사라진다.
     if (item.scoped_achievements && item.scoped_achievements.length > 0) {
-      card.appendChild(scopedTable(item.scoped_achievements));
+      card.appendChild(scopedTable(item.scoped_achievements, hold));
       var note = coverageNote(item.purchase_type_coverage);
       if (note) { card.appendChild(note); }
     }
 
+    // 이유 한 줄. ⛔ 카드 안에서 같은 말을 두 번 하지 않는다 — 구매유형 확인은
+    //    바로 위 진행률 안내(coverageNote)가 이미 설명한다.
     var reason = "";
-    if (onHold) { reason = display.note; }
-    else if (item.target_rate === null) {
+    if (hold === HOLD_BASIS) {
+      reason = "현재 제공된 자료만으로는 실적 산출 기준을 확정할 수 없습니다.";
+    } else if (hold === HOLD_TARGET || (!hold && item.target_rate === null)) {
       reason = "목표율이 등록되지 않아 달성률을 계산하지 않았습니다(0% 아님).";
-    } else if (display && display.note) { reason = display.note; }
+    } else if (!hold && display && display.note) { reason = display.note; }
     if (reason) { card.appendChild(make("p", "note", reason)); }
 
     return card;
@@ -2199,7 +2273,7 @@
    *    상태 문구만 적는다. 0% 가 아니다.
    */
   function achievementRows(item, display, tbody) {
-    var onHold = !!display && display.development_status === "ON_HOLD";
+    var hold = holdCause(item, display);
     var tr = document.createElement("tr");
 
     tr.appendChild(make("td", "ach-name", item.policy_name));
@@ -2208,7 +2282,7 @@
     tr.appendChild(make("td", "n ach-support",
       item.purchase_amount === null ? "—" : numberFormat(item.purchase_amount) + " 원"));
 
-    var calculable = !onHold && item.achievement_rate !== null;
+    var calculable = !hold && item.achievement_rate !== null;
     tr.appendChild(make("td", "n ach-rate", calculable ? item.achievement_rate + "%" : "—"));
 
     var barCell = make("td", null);
@@ -2216,8 +2290,8 @@
     tr.appendChild(barCell);
 
     var stateCell = make("td", null);
-    stateCell.appendChild(onHold
-      ? stateChip("HOLD", "계산 보류")
+    stateCell.appendChild(hold
+      ? stateChip("HOLD", hold.label)
       : stateChip(item.status, item.status_label));
     tr.appendChild(stateCell);
     tbody.appendChild(tr);
@@ -2236,7 +2310,9 @@
       sub.appendChild(sBar);
 
       var sState = make("td", null);
-      sState.appendChild(stateChip(scoped.status, scoped.status_label));
+      sState.appendChild(hold && scoped.status === "CALCULATION_ON_HOLD"
+        ? stateChip("HOLD", hold.label)
+        : stateChip(scoped.status, scoped.status_label));
       sub.appendChild(sState);
       tbody.appendChild(sub);
     });
@@ -2248,6 +2324,8 @@
       var noteRow = make("tr", "ach-scope");
       var cell = make("td", "ach-support",
         "구매유형 확인이 끝나지 않아 달성률을 계산할 수 없습니다. " +
+        "아직 " + numberFormat(cov.total_count - cov.confirmed_count) +
+        "건 남았습니다 · " +
         "확인 완료 " + numberFormat(cov.confirmed_count) +
         " / " + numberFormat(cov.total_count) + "건 · " +
         numberFormat(cov.confirmed_amount) + " / " +
@@ -2313,12 +2391,17 @@
    * ⛔ 위 표에 있는 정책을 그대로 다시 나열하지 않는다(STEP 128-2 §1).
    *    성격이 다른 세 가지를 **갈라서**, 각각 무엇을 하면 되는지 적는다.
    *
-   * ⭐ 세 가지는 같은 뜻이 아니다(§3).
+   * ⭐ 다섯 가지는 같은 뜻이 아니다(§3 · STEP 151 §작업 5).
    *
    *      부족            계산은 됐고 목표에 못 미친다 → 실적을 채워야 한다
    *      기업정보 미등록  계산에 필요한 명단이 없다     → 자료를 등록해야 한다
-   *      계산 보류        지금은 확정할 수 없다        → 조건을 확인해야 한다
+   *      구매유형 확인 중 확인이 끝나면 계산된다        → 구매실적 검토로 간다
+   *      목표비율 미설정  목표를 넣으면 계산된다        → 목표비율 관리로 간다
+   *      산출 기준 미정   지금 자료로는 산출할 수 없다  → 보낼 곳이 없다
    *
+   * ⛔ 뒤의 셋을 포괄 문구 하나로 다시 묶지 않는다. 묶어 두었을 때 여성기업이
+   *    목표비율 관리로 안내되었는데, 목표비율은 이미 들어 있어서 그 화면에서는
+   *    **할 일이 없었다**(STEP 150 실사용 검증에서 발견).
    * ⛔ 상태를 새로 판정하지 않는다. 서버가 준 status 를 묶을 뿐이다.
    */
   var TODO_GROUPS = [
@@ -2340,15 +2423,9 @@
       tab: "data",
       focus: "company-card"
     },
-    {
-      key: "hold",
-      statuses: ["CALCULATION_ON_HOLD", "TARGET_RATE_NOT_SET"],
-      what: "계산 조건이 갖춰지지 않았습니다",
-      how: "목표비율과 계산 조건을 확인해 주세요.",
-      go: "목표비율 관리",
-      tab: "data",
-      focus: "target-card"
-    }
+    { key: HOLD_REVIEW.key, cause: HOLD_REVIEW },
+    { key: HOLD_TARGET.key, cause: HOLD_TARGET },
+    { key: HOLD_BASIS.key, cause: HOLD_BASIS }
   ];
 
   function renderAttention(summary, displayMap) {
@@ -2359,31 +2436,49 @@
     var placed = 0;
 
     TODO_GROUPS.forEach(function (group) {
+      var cause = group.cause || null;
       var hits = policies.filter(function (item) {
-        var display = displayMap[item.policy_code];
-        var onHold = !!display && display.development_status === "ON_HOLD";
-        // 계산 보류는 개발 상태에서도 오고 서버 status 에서도 온다.
-        if (onHold) { return group.key === "hold"; }
-        return group.statuses.indexOf(item.status) !== -1;
+        var stopped = holdCause(item, displayMap[item.policy_code]);
+        if (cause) { return stopped === cause; }
+        // 멈춘 정책은 아래 세 줄이 맡는다 — 여기서 다시 세지 않는다.
+        return !stopped && group.statuses.indexOf(item.status) !== -1;
       });
       if (!hits.length) { return; }
       placed += hits.length;
 
       var row = make("div", "todo-item todo-" + group.key);
-      row.appendChild(make("span", "todo-what", hits.length + "종 · " + group.what));
+      row.appendChild(make("span", "todo-what",
+        hits.length + "종 · " + (cause ? cause.what : group.what)));
+
+      // 남은 건수는 하드코딩하지 않는다 — 서버가 준 진행률에서 끌어낸다.
+      var how = cause ? cause.how : group.how;
+      if (cause === HOLD_REVIEW) {
+        var pending = hits.reduce(function (acc, item) {
+          return Math.max(acc, pendingTypeCount(item));
+        }, 0);
+        if (pending) {
+          how = "아직 " + numberFormat(pending) + "건의 구매유형 확인이 남아 있습니다.";
+        }
+      }
+
       // 어느 정책인지 이름만 적는다 — 숫자는 위 표에 이미 있다.
       row.appendChild(make("span", "todo-who",
         hits.map(function (item) { return item.policy_name; }).join(" · ")
-        + " — " + group.how));
+        + " — " + how));
 
-      var button = make("button", "todo-go", group.go + " 열기");
-      button.type = "button";
-      button.addEventListener("click", function () {
-        showTab(group.tab);
-        var target = el(group.focus);
-        if (target) { target.scrollIntoView({ block: "start" }); }
-      });
-      row.appendChild(button);
+      // ⛔ 갈 곳이 없는 이유(산출 기준 미정)에는 단추를 만들지 않는다.
+      //    엉뚱한 화면으로 데려가면 담당자가 거기서 할 일을 찾게 된다.
+      var destination = cause || group;
+      if (destination.go) {
+        var button = make("button", "todo-go", destination.go + " 열기");
+        button.type = "button";
+        button.addEventListener("click", function () {
+          showTab(destination.tab);
+          var target = el(destination.focus);
+          if (target) { target.scrollIntoView({ block: "start" }); }
+        });
+        row.appendChild(button);
+      }
       box.appendChild(row);
     });
 
@@ -3530,7 +3625,7 @@
       line.appendChild(document.createTextNode(" %"));
       if (!scoped.calculable) {
         // 저장은 되지만 분모를 구할 방법이 없어 달성률은 나오지 않는다.
-        line.appendChild(make("span", "hint", " (저장됨 · 달성률은 계산 보류)"));
+        line.appendChild(make("span", "hint", " (저장됨 · 산출 기준 미정)"));
       }
       td.appendChild(line);
     });

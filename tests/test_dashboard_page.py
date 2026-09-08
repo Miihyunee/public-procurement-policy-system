@@ -212,10 +212,19 @@ class TestPolicyDisplayEndpoint:
         items = _display_map(client)
         assert items["GREEN"]["development_status"] == ON_HOLD
 
-    def test_woman_is_on_hold(self, client: TestClient) -> None:
-        """D-1 — 여성기업은 개발 중단(D-2 선행)."""
+    def test_woman_is_ready(self, client: TestClient) -> None:
+        """STEP 151 — 여성기업은 더 이상 «개발 보류» 가 아니다.
+
+        ② 요구사항 변경. D-1(개발 중단) 은 STEP 103 에서 이미 풀렸다 —
+        구매유형별 계산 경로가 생겼고 ``ON_HOLD_REASONS`` 에서도 그때 빠졌다.
+        표시 정보만 옛 문구로 남아 화면 배지가 「개발 보류」로, 달성률 칸이
+        언제나 «계산 보류» 로 굳어 있었다. 구매유형 확인을 다 끝내도 그랬다.
+
+        ⛔ 계산은 바뀌지 않았다. 확인이 덜 끝난 동안의 보류는 그대로이며,
+           화면에서 「구매유형 확인 중」이라고 따로 말할 뿐이다.
+        """
         items = _display_map(client)
-        assert items["WOMAN"]["development_status"] == ON_HOLD
+        assert items["WOMAN"]["development_status"] == READY
 
     def test_on_hold_policies_have_a_reason(self, client: TestClient) -> None:
         for item in client.get("/dashboard/policy-display").json()["items"]:
