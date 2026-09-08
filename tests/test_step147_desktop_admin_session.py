@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -200,14 +201,18 @@ class TestTokenArrivesThroughTheEnvironment:
 
     @node
     def test_a_real_backend_accepts_only_the_session_token(self, tmp_path: Path) -> None:
+        # ⚠️ Python 경로를 문자열로 짜 넣지 않는다. `.venv/bin/python` 은 POSIX
+        #    자리라 Windows(`.venv\\Scripts\\python.exe`)에서 백엔드가 뜨지 않는다.
+        #    지금 이 테스트를 돌리고 있는 해석기를 그대로 쓰면 어느 OS 에서든 맞다.
         script = f"""
         const {{ startBackend }} = require("./electron/backend");
+        const path = require("node:path");
         (async () => {{
           const handle = await startBackend({{
-            pythonPath: process.cwd() + "/.venv/bin/python",
+            pythonPath: {json.dumps(sys.executable)},
             cwd: process.cwd(),
             userDataDir: {json.dumps(str(tmp_path / "userdata"))},
-            env: {{ ...process.env, PYTHONPATH: process.cwd() + "/src" }},
+            env: {{ ...process.env, PYTHONPATH: path.join(process.cwd(), "src") }},
           }});
           const base = "http://127.0.0.1:" + handle.port;
           const url = base + "/policy-targets/2026/{SMALL_BUSINESS}";
