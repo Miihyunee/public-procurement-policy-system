@@ -30,7 +30,7 @@ procurement.importers.company_importer
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
@@ -171,6 +171,14 @@ SOURCE_API = "API"
 #: 사용할 수 있는 출처.
 COMPANY_SOURCES: tuple[str, ...] = (SOURCE_FILE, SOURCE_API)
 
+#: 진행률을 몇 건마다 알릴 것인가 (STEP 156).
+#:
+#: ⛔ 행마다 알리면 98,832행에 UPDATE 가 98,832번 붙어 이미 느린 적재가 더
+#: 느려집니다. 반대로 너무 크게 잡으면 화면이 수천 건 동안 같은 숫자로 멈춰
+#: 있어 「멈췄나?」 싶어집니다. 실측(행당 약 6ms)으로 200건이면 화면이 1~2초
+#: 마다 움직이고, 98,832행에서 UPDATE 는 약 495번입니다.
+PROGRESS_EVERY: int = 200
+
 
 class CompanyImporter:
     """기업정보(그리고 함께 온 인증)를 저장합니다."""
@@ -198,6 +206,7 @@ class CompanyImporter:
         *,
         source: str,
         policy_company_source_id: int | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> CompanyImportReport:
         """기업정보를 저장합니다.
 
@@ -211,6 +220,14 @@ class CompanyImporter:
                 이 값을 달아, 나중에 «어느 파일에서 온 인증인가» 를 알 수 있게
                 합니다(🟢 2026-09-05 고객 확정). 주지 않으면 어느 버전에도
                 매이지 않아 항상 계산에 듭니다.
+            on_progress: ``(처리한 행 수, 전체 행 수)`` 를 받는 함수(STEP 156).
+                담당자가 「아직 도는 중인지 멈췄는지」를 알 수 있게 하려는
+                것입니다.
+
+                ⛔ **행마다 부르지 않습니다.** :data:`PROGRESS_EVERY` 건마다,
+                그리고 마지막에 한 번 부릅니다. 행마다 부르면 이미 느린 적재가
+                더 느려집니다.
+                ⛔ 짐작한 값을 넘기지 않습니다 — 실제로 처리한 수만 셉니다.
 
         Returns:
             행별 결과와 집계를 담은 :class:`CompanyImportReport`.
@@ -220,10 +237,21 @@ class CompanyImporter:
         """
         if source not in COMPANY_SOURCES:
             raise ValueError(f"알 수 없는 기업정보 출처입니다: {source!r}")
-        return CompanyImportReport(
-            source=source,
-            rows=[self._import_one(record, policy_company_source_id) for record in records],
-        )
+        # 전체 행 수를 먼저 알아야 진행률을 낼 수 있다. ⛔ 추정하지 않는다.
+        pending = list(records)
+        total = len(pending)
+        if on_progress is not None:
+            on_progress(0, total)
+
+        rows: list[CompanyRowResult] = []
+        for record in pending:
+            rows.append(self._import_one(record, policy_company_source_id))
+            if on_progress is not None and len(rows) % PROGRESS_EVERY == 0:
+                on_progress(len(rows), total)
+        if on_progress is not None:
+            # 마지막은 반드시 정확한 값으로 맞춘다.
+            on_progress(len(rows), total)
+        return CompanyImportReport(source=source, rows=rows)
 
     # ------------------------------------------------------------------
     # 내부 헬퍼

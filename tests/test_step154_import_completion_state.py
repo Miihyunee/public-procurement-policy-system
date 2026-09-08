@@ -35,7 +35,7 @@ STEP 154 — 적재가 끝나지 않았는데 「등록완료」라고 말하지
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -151,6 +151,7 @@ def _break_import_halfway(monkeypatch: pytest.MonkeyPatch) -> None:
         *,
         source: str,
         policy_company_source_id: int | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> CompanyImportReport:
         rows = list(records)
         original(
@@ -158,6 +159,7 @@ def _break_import_halfway(monkeypatch: pytest.MonkeyPatch) -> None:
             rows[: len(rows) // 2],
             source=source,
             policy_company_source_id=policy_company_source_id,
+            on_progress=on_progress,
         )
         raise RuntimeError("적재 도중 끊겼다")
 
@@ -466,5 +468,7 @@ class TestThePageSaysWhatToDo:
     def test_the_page_does_not_print_a_count_for_an_unfinished_import(self) -> None:
         page = Path("src/procurement/web/static/index.html").read_text(encoding="utf-8")
         assert 'item.status === "IN_PROGRESS"' in page
-        assert "등록이 끝나지 않았습니다" in page
+        # ② 요구사항 변경(STEP 156) — 「등록이 끝나지 않았습니다」 대신
+        #    진행률과 함께 「끝날 때까지 기다려 주세요」로 바뀌었다.
+        assert "등록이 끝날 때까지 기다려 주세요" in page
         assert "아직 계산에 쓰이지 않습니다" in page

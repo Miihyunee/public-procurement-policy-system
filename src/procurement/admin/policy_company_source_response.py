@@ -42,6 +42,12 @@ class PolicyCompanySourceItemModel(BaseModel):
         source_label: 사용자가 알아볼 출처 표시(파일명 등). 없으면 ``None``.
         company_count: 확인한 기업 수. 미등록이면 ``None``.
         certification_count: 저장한 인증 수. 미등록이면 ``None``.
+        processed_count: 지금까지 **실제로 처리한** 행 수(STEP 156).
+            미등록이면 ``None``. ⛔ 짐작한 값이 아닙니다.
+        total_count: 이번 등록의 전체 행 수. 미등록이면 ``None``.
+        progress_percent: 진행률(%). 소수 첫째 자리까지.
+            완료된 등록은 언제나 ``100.0`` 이며, 전체 행 수를 모르면
+            ``0.0`` 입니다 — ⛔ 0 으로 나누지 않습니다.
         updated_at: 최종 등록 시각. 미등록이면 ``None``.
         available_methods: 이 정책에서 **고를 수 있는** 확보 방법.
             ⛔ 실제 조회가 구현되지 않은 정책에는 ``API`` 를 넣지 않습니다
@@ -60,8 +66,28 @@ class PolicyCompanySourceItemModel(BaseModel):
     source_label: str | None = None
     company_count: int | None = None
     certification_count: int | None = None
+    processed_count: int | None = None
+    total_count: int | None = None
+    progress_percent: float | None = None
     updated_at: datetime | None = None
     available_methods: list[str] = []
+
+
+def progress_percent_of(processed_count: int, total_count: int) -> float:
+    """실제 처리 건수로 진행률을 냅니다 (STEP 156).
+
+    ⛔ 시간으로 어림하지 않습니다. ⛔ 0 으로 나누지 않습니다.
+
+    Args:
+        processed_count: 지금까지 처리한 행 수.
+        total_count: 전체 행 수.
+
+    Returns:
+        0.0 ~ 100.0. 전체 행 수를 모르면 ``0.0``.
+    """
+    if total_count <= 0:
+        return 0.0
+    return round(min(processed_count, total_count) / total_count * 100, 1)
 
 
 class PolicyCompanySourceListModel(BaseModel):

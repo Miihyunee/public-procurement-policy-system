@@ -114,9 +114,7 @@ class CompanySourceService:
         try:
             # ⭐ 고객 원본 머리글을 표준 이름으로 옮긴 뒤 검증합니다.
             #    담당자가 원본을 고치지 않아도 되게 하려는 것입니다(STEP 129 §8).
-            workbook = read_standard_workbook(
-                file_path, header_aliases=COMPANY_HEADER_ALIASES
-            )
+            workbook = read_standard_workbook(file_path, header_aliases=COMPANY_HEADER_ALIASES)
         except ExcelReadError as error:
             return ValidationReport(file_errors=[str(error)])
 
@@ -138,6 +136,7 @@ class CompanySourceService:
         *,
         policy_code: str | None = None,
         begin_version: Callable[[str], int | None] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[ValidationReport, CompanyImportReport | None]:
         """기업정보 파일을 검증하고, **오류가 하나도 없을 때만** 저장합니다.
 
@@ -155,6 +154,10 @@ class CompanySourceService:
 
                 ⭐ **검증을 통과한 다음에만** 부릅니다. 오류가 있는 파일로
                 버전이 늘어나면, 올린 적 없는 자료가 최신으로 바뀝니다.
+            on_progress: ``(처리한 행 수, 전체 행 수)`` 를 받는 함수. 적재가
+                오래 걸릴 때 담당자에게 진행 상황을 보여 주기 위한 것입니다
+                (STEP 156). ⛔ 여기서 세지 않고 적재 루프가 센 값을 그대로
+                넘깁니다.
 
         Returns:
             ``(검증 결과, 적재 결과)``. 저장하지 않았으면 적재 결과는 ``None``.
@@ -184,7 +187,10 @@ class CompanySourceService:
             for row in report.rows
         ]
         return report, self._importer.import_records(
-            records, source=SOURCE_FILE, policy_company_source_id=source_id
+            records,
+            source=SOURCE_FILE,
+            policy_company_source_id=source_id,
+            on_progress=on_progress,
         )
 
     # ------------------------------------------------------------------

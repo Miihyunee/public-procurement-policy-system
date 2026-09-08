@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS policy_company_source (
     is_active INTEGER NOT NULL DEFAULT 1,
     import_status TEXT NOT NULL DEFAULT 'COMPLETED',
     completed_at DATETIME,
+    processed_count INTEGER NOT NULL DEFAULT 0,
+    total_count INTEGER NOT NULL DEFAULT 0,
     registered_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     UNIQUE (policy_id, version),
@@ -112,6 +114,14 @@ class PolicyCompanySourceRepository(BaseRepository):
             )
         if "completed_at" not in columns:
             conn.execute("ALTER TABLE policy_company_source ADD COLUMN completed_at DATETIME")
+        # 진행률 칸 (STEP 156). 예전 행은 0 이며, 끝난 등록의 진행률은 응답
+        # 계층이 100% 로 읽습니다 — ⛔ 옛 행을 되짚어 채우지 않습니다.
+        for column in ("processed_count", "total_count"):
+            if column not in columns:
+                conn.execute(
+                    "ALTER TABLE policy_company_source "
+                    f"ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+                )
 
     @staticmethod
     def _migrate_to_versioned(conn: sqlite3.Connection) -> None:
@@ -318,7 +328,8 @@ class PolicyCompanySourceRepository(BaseRepository):
         ):
             # 같은 자료를 다시 올렸다 — ⛔ 버전을 늘리지 않는다(멱등).
             # ⛔ 상태도 되돌리지 않는다. 이번 재적재가 끊기더라도 이미 끝나 있던
-            #    이 버전이 그대로 살아 있어야 한다.
+            #    이 버전이 그대로 살아 있어야 한다. 진행률도 그대로 둔다 —
+            #    끝난 등록을 다시 「43%」로 되돌려 보이면 안 된다(STEP 156).
             return current
 
         rows = self.execute(
@@ -331,8 +342,9 @@ class PolicyCompanySourceRepository(BaseRepository):
         self.execute_write(
             "INSERT INTO policy_company_source "
             "(policy_id, source, company_count, certification_count, source_label, "
-            "version, file_checksum, is_active, import_status, registered_at, updated_at) "
-            "VALUES (?, ?, 0, 0, ?, ?, ?, 0, ?, ?, ?)",
+            "version, file_checksum, is_active, import_status, processed_count, "
+            "total_count, registered_at, updated_at) "
+            "VALUES (?, ?, 0, 0, ?, ?, ?, 0, ?, 0, 0, ?, ?)",
             (
                 policy_id,
                 source,
@@ -348,8 +360,33 @@ class PolicyCompanySourceRepository(BaseRepository):
         assert started is not None  # 방금 만들었다
         return started
 
+    def update_progress(
+        self, policy_company_source_id: int, *, processed_count: int, total_count: int
+    ) -> None:
+        """지금까지 **실제로 처리한** 행 수를 기록합니다 (STEP 156).
+
+        ⛔ 짐작하지 않습니다. 적재 루프가 센 값만 적습니다.
+        ⛔ 행마다 부르지 않습니다 — 부르는 쪽이 간격을 둡니다. 98,832행에
+           행마다 UPDATE 를 걸면 이미 느린 적재가 더 느려집니다.
+
+        Args:
+            policy_company_source_id: :meth:`begin` 이 돌려준 버전 ID.
+            processed_count: 지금까지 처리한 행 수.
+            total_count: 이번 등록의 전체 행 수.
+        """
+        self.execute_write(
+            "UPDATE policy_company_source SET processed_count = ?, total_count = ?, "
+            "updated_at = ? WHERE policy_company_source_id = ?",
+            (processed_count, total_count, _to_db(datetime.now()), policy_company_source_id),
+        )
+
     def complete(
-        self, policy_company_source_id: int, *, company_count: int, certification_count: int
+        self,
+        policy_company_source_id: int,
+        *,
+        company_count: int,
+        certification_count: int,
+        total_count: int | None = None,
     ) -> None:
         """적재가 **끝났음**을 기록하고 그 버전을 활성으로 올립니다(STEP 154).
 
@@ -362,6 +399,10 @@ class PolicyCompanySourceRepository(BaseRepository):
             policy_company_source_id: :meth:`begin` 이 돌려준 버전 ID.
             company_count: 그 버전에 매인 기업 수.
             certification_count: 그 버전에 매인 인증 수.
+            total_count: 이번 등록의 전체 행 수. 주면 진행률을 그 값으로
+                마무리합니다. ⛔ 주지 않으면 기존 ``total_count`` 를 그대로
+                두고 ``processed_count`` 만 거기에 맞춥니다 — 끝난 등록의
+                진행률이 100% 보다 작게 남으면 안 됩니다.
         """
         now = datetime.now()
         rows = self.execute(
@@ -378,9 +419,16 @@ class PolicyCompanySourceRepository(BaseRepository):
                 "WHERE policy_id = ? AND is_active = 1 AND policy_company_source_id != ?",
                 (_to_db(now), policy_id, policy_company_source_id),
             )
+            if total_count is not None:
+                conn.execute(
+                    "UPDATE policy_company_source SET total_count = ? "
+                    "WHERE policy_company_source_id = ?",
+                    (total_count, policy_company_source_id),
+                )
             conn.execute(
                 "UPDATE policy_company_source SET company_count = ?, certification_count = ?, "
-                "is_active = 1, import_status = ?, completed_at = ?, updated_at = ? "
+                "is_active = 1, import_status = ?, completed_at = ?, updated_at = ?, "
+                "processed_count = total_count "
                 "WHERE policy_company_source_id = ?",
                 (
                     company_count,
@@ -444,6 +492,8 @@ class PolicyCompanySourceRepository(BaseRepository):
             completed_at=(
                 _from_db(row["completed_at"]) if row["completed_at"] is not None else None
             ),
+            processed_count=int(row["processed_count"]),
+            total_count=int(row["total_count"]),
             registered_at=_from_db(row["registered_at"]),
             updated_at=_from_db(row["updated_at"]),
         )

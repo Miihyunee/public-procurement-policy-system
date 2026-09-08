@@ -55,6 +55,7 @@ from procurement.admin import (
     PolicyTargetUpdateRequest,
     TargetRateUpdateRequest,
     build_admin_token_guard,
+    progress_percent_of,
 )
 from procurement.api import (
     DashboardApiService,
@@ -1416,6 +1417,17 @@ def create_app(
                     certification_count=(
                         record.certification_count if record is not None else None
                     ),
+                    # 진행률 (STEP 156). ⛔ 끝난 등록은 언제나 100% 다 —
+                    #    옛 DB 에는 전체 행 수가 없어 계산으로는 0% 가 된다.
+                    processed_count=shown.processed_count if shown is not None else None,
+                    total_count=shown.total_count if shown is not None else None,
+                    progress_percent=(
+                        None
+                        if shown is None
+                        else 100.0
+                        if record is not None
+                        else progress_percent_of(shown.processed_count, shown.total_count)
+                    ),
                     updated_at=shown.updated_at if shown is not None else None,
                     available_methods=methods,
                 )
@@ -1486,10 +1498,25 @@ def create_app(
             )
             return recorded.policy_company_source_id
 
+        def on_progress(processed: int, total: int) -> None:
+            """적재 루프가 센 값을 그대로 기록합니다 (STEP 156).
+
+            ⛔ 여기서 짐작하지 않습니다. ⛔ 행마다 불리지 않습니다 —
+            부르는 쪽(importer)이 간격을 둡니다.
+            """
+            if recorded is None or recorded.policy_company_source_id is None:
+                return
+            company_source_registry.update_progress(
+                recorded.policy_company_source_id,
+                processed_count=processed,
+                total_count=total,
+            )
+
         validation, report = company_source_service.import_file(
             payload.file_path,
             policy_code=payload.policy_code,
             begin_version=begin_version,
+            on_progress=on_progress,
         )
         # 건수는 적재가 끝나야 알 수 있어 여기서 채운다.
         #
@@ -1512,6 +1539,7 @@ def create_app(
                 recorded.policy_company_source_id,
                 company_count=companies,
                 certification_count=certifications,
+                total_count=report.total_count,
             )
         return _company_import_response("FILE", report, validation)
 

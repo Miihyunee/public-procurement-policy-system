@@ -65,6 +65,9 @@ class PolicyCompanySource:
             :data:`IMPORT_COMPLETED`. ⛔ 끝나지 않은 버전은 활성이 되지 않고
             화면에도 「등록완료」로 적지 않습니다(STEP 154).
         completed_at: 적재가 끝난 시각. 끝나지 않았으면 ``None``.
+        processed_count: 지금까지 **실제로 처리한** 행 수(STEP 156).
+            ⛔ 짐작한 값이 아니라 적재 루프가 센 값입니다.
+        total_count: 이번 등록의 전체 행 수. 아직 모르면 ``0``.
         policy_company_source_id: 내부 고유 ID. 저장 전에는 ``None``.
         registered_at: 등록 시각.
         updated_at: 최종 갱신 시각.
@@ -80,6 +83,8 @@ class PolicyCompanySource:
     is_active: bool = True
     import_status: str = IMPORT_COMPLETED
     completed_at: datetime | None = None
+    processed_count: int = 0
+    total_count: int = 0
     policy_company_source_id: int | None = None
     registered_at: datetime | None = None
     updated_at: datetime | None = None
