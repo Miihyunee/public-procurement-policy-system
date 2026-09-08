@@ -26,6 +26,7 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
+const crypto = require("node:crypto");
 const net = require("node:net");
 const path = require("node:path");
 
@@ -37,6 +38,29 @@ const POLL_INTERVAL_MS = 200;
 
 /** 종료 요청 후 강제 종료까지 기다리는 시간(ms). */
 const SHUTDOWN_GRACE_MS = 3000;
+
+/** 세션 토큰 바이트 수. 32바이트(256비트)면 추측이 불가능하다. */
+const SESSION_TOKEN_BYTES = 32;
+
+/**
+ * **이번 실행에서만** 쓰는 관리자 세션 토큰을 만든다.
+ *
+ * 목표비율 저장 API 는 관리자 토큰 뒤에 있다(`admin/auth.py`). 데스크톱 앱은
+ * 고객이 명령줄을 쓰지 않으므로 토큰을 설정할 방법이 없었고, 그래서 화면에서
+ * 목표비율을 저장할 수 없었다(STEP 146 에서 실기기 확인). 앱이 자기 백엔드를
+ * 띄우면서 토큰을 **직접 만들어** 넘기면, 가드를 그대로 둔 채 화면이 동작한다.
+ *
+ * .. warning::
+ *     ⛔ ``Math.random()`` 을 쓰지 않는다 — 예측 가능하다.
+ *     ⛔ 고정값을 두지 않는다. 소스·`package.json`·`.env`·빌드 산출물 어디에도
+ *        토큰이 들어가지 않는다. 프로세스가 살아 있는 동안 메모리에만 있다.
+ *     ⛔ 로그로 출력하지 않는다.
+ *
+ * @returns {string} URL 에 안전한 무작위 문자열.
+ */
+function createSessionToken() {
+  return crypto.randomBytes(SESSION_TOKEN_BYTES).toString("base64url");
+}
 
 /** 강제 종료 뒤 «정말 끝났는지» 더 기다리는 시간(ms). */
 const FORCE_EXIT_GRACE_MS = 2000;
@@ -134,13 +158,23 @@ function buildCommand(config) {
  * 환경변수를 읽으므로 Python 코드를 고칠 필요가 없다. 설치 디렉터리가 아니라
  * 사용자 데이터 디렉터리를 쓰기 위한 것이다.
  *
- * @param {{userDataDir?: string, env?: NodeJS.ProcessEnv}} config
+ * 관리자 세션 토큰도 **환경변수로만** 넘긴다.
+ *
+ * ⛔ 명령줄 인자로 넘기지 않는다 — 작업 관리자·``ps`` 에 그대로 보인다.
+ * ⚠️ 이 값은 데스크톱 앱이 자기 백엔드에 넘기는 **일회용** 토큰이다. 서버로
+ *    띄우는 경우(``procurement run`` 직접 실행)는 이 파일을 거치지 않으므로,
+ *    기존 ``ADMIN_API_TOKEN`` 설정 방식이 그대로 동작한다.
+ *
+ * @param {{userDataDir?: string, env?: NodeJS.ProcessEnv, adminToken?: string}} config
  * @returns {NodeJS.ProcessEnv}
  */
 function buildEnv(config) {
   const env = { ...(config.env ?? process.env) };
   if (config.userDataDir) {
     env.DATABASE_PATH = path.join(config.userDataDir, "database");
+  }
+  if (config.adminToken) {
+    env.ADMIN_API_TOKEN = config.adminToken;
   }
   // 표준 출력이 버퍼링되면 기동 로그가 늦게 보인다.
   env.PYTHONUNBUFFERED = "1";
@@ -219,20 +253,28 @@ function ensureDatabase(config = {}) {
  * @param {string} [config.userDataDir] 사용자 데이터 디렉터리(DB 저장 위치).
  * @param {number} [config.port] 사용할 포트. 생략하면 빈 포트를 자동 선택.
  * @param {number} [config.timeoutMs] 기동 대기 시간.
+ * @param {string} [config.adminToken] 쓸 관리자 토큰. 생략하면 **이번 실행용으로
+ *   새로 만든다.** 앱을 다시 켜면 다른 토큰이 된다.
  * @param {(line: string) => void} [config.onLog] 백엔드 로그 콜백.
- * @returns {Promise<{port: number, process: import("node:child_process").ChildProcess, stop: () => Promise<void>}>}
+ * @returns {Promise<{port: number, adminToken: string, process: import("node:child_process").ChildProcess, stop: () => Promise<void>}>}
+ *   ``adminToken`` 은 화면이 목표비율을 저장할 때 쓸 값이다.
  * @throws {BackendStartError} DB 초기화 또는 기동에 실패한 경우.
  */
 async function startBackend(config = {}) {
+  // 이번 실행에서만 쓰는 토큰. `ensureDatabase` 와 서버가 **같은 값**을 봐야
+  // 하므로 여기서 한 번만 만들어 두 곳에 함께 넘긴다.
+  const adminToken = config.adminToken ?? createSessionToken();
+  const runConfig = { ...config, adminToken };
+
   // 서버를 띄우기 전에 DB 를 사용할 수 있는 상태로 만든다(최초 실행·업그레이드).
-  await ensureDatabase(config);
+  await ensureDatabase(runConfig);
 
   const port = config.port ?? (await findFreePort());
-  const { command, args } = buildCommand({ ...config, port });
+  const { command, args } = buildCommand({ ...runConfig, port });
 
   const child = spawn(command, args, {
     cwd: config.cwd,
-    env: buildEnv(config),
+    env: buildEnv(runConfig),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -279,6 +321,8 @@ async function startBackend(config = {}) {
 
   return {
     port,
+    // ⛔ 로그로 내보내지 않는다. 호출한 쪽(`main.js`)이 화면에 넘길 때만 쓴다.
+    adminToken,
     process: child,
     stop: () => stopProcess(child),
   };
@@ -354,6 +398,7 @@ module.exports = {
   DEFAULT_STARTUP_TIMEOUT_MS,
   buildCommand,
   buildEnv,
+  createSessionToken,
   ensureDatabase,
   findFreePort,
   startBackend,

@@ -89,10 +89,24 @@ class TestPreloadSurfaceIsMinimal:
     """preload 가 여는 문은 최소한이다."""
 
     def test_exposes_only_expected_keys(self) -> None:
+        """열어 준 문을 **하나하나 적어 둔다.**
+
+        ⚠️ STEP 147 에서 ``adminSessionToken`` 이 하나 늘었다. 목표비율 저장이
+           관리자 토큰을 요구하는데 데스크톱 고객은 토큰을 설정할 방법이 없어
+           저장 자체가 불가능했다(STEP 146 실기기 확인). 앱이 실행마다 만드는
+           일회용 토큰을 화면에 건네는 통로다 — 함수 하나이며, Node·파일
+           시스템·임의 IPC 채널을 열지 않는다.
+        """
         source = _read(ELECTRON_DIR / "preload.js")
         keys = set(re.findall(r"^\s{2}(\w+):", source, flags=re.MULTILINE))
 
-        assert keys == {"isDesktop", "saveTemplate", "selectUploadFile", "versions"}
+        assert keys == {
+            "isDesktop",
+            "saveTemplate",
+            "selectUploadFile",
+            "adminSessionToken",
+            "versions",
+        }
 
     def test_does_not_expose_ipc_renderer_itself(self) -> None:
         """⛔ ``ipcRenderer`` 를 통째로 노출하지 않는다(임의 채널 호출 방지)."""

@@ -163,6 +163,23 @@ function registerUploadHandlers(port) {
   ipcMain.handle("uploads:selectFile", () => selectExcelFile({ dialog, window: mainWindow }));
 }
 
+/**
+ * 이번 실행의 관리자 세션 토큰을 화면이 물어볼 수 있게 한다.
+ *
+ * 목표비율 저장은 관리자 토큰이 필요한데(`admin/auth.py`), 고객은 토큰을
+ * 설정할 방법이 없다. 앱이 백엔드를 띄우며 만든 일회용 토큰을 화면에 넘겨
+ * `Authorization: Bearer` 로 보내게 한다.
+ *
+ * ⛔ 토큰을 명령줄 인자(`additionalArguments`)로 넘기지 않는다 — 렌더러
+ *    프로세스의 명령줄은 작업 관리자에서 보인다. IPC 로만 건넨다.
+ * ⛔ 토큰을 로그·오류 메시지에 넣지 않는다.
+ *
+ * @param {string} adminToken `startBackend` 가 만든 이번 실행용 토큰.
+ */
+function registerAdminSessionHandler(adminToken) {
+  ipcMain.handle("admin:sessionToken", () => adminToken);
+}
+
 app.whenReady().then(async () => {
   try {
     backend = await startBackend(backendConfig());
@@ -173,6 +190,7 @@ app.whenReady().then(async () => {
   }
 
   registerUploadHandlers(backend.port);
+  registerAdminSessionHandler(backend.adminToken);
   createWindow(backend.port);
 
   app.on("activate", () => {

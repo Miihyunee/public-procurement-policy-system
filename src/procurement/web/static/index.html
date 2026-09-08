@@ -2551,6 +2551,37 @@
     return (typeof window.procurementApp === "object") && window.procurementApp !== null;
   }
 
+  // -------------------------------------------- 설정 변경 권한 (데스크톱 전용)
+  //
+  // 목표비율 저장은 **관리자 토큰**이 필요하다(admin/auth.py). 데스크톱 앱은
+  // 켜질 때마다 일회용 토큰을 만들어 자기 백엔드에 넘기므로, 화면은 그 값을
+  // 물어봐 `Authorization` 에 실어 보낸다.
+  //
+  // ⛔ 브라우저로 열었을 때는 헤더를 붙이지 않는다 — 서버 배포에서는 기존
+  //    관리자 토큰 정책이 그대로여야 한다. 그때는 예전처럼 503/401 이 나고
+  //    `ptFailureMessage` 가 그 사유를 안내한다.
+  // ⛔ 토큰을 localStorage·URL·화면 어디에도 남기지 않는다. 메모리에만 둔다.
+  // ⛔ 실패해도 오류를 띄우지 않는다 — 헤더 없이 보내고 서버 응답으로 안내한다.
+
+  /** 토큰 조회는 한 번만 한다. 결과(또는 없음)를 그대로 재사용한다. */
+  var adminTokenPromise = null;
+
+  /**
+   * 설정 변경 요청에 붙일 헤더. 데스크톱이 아니면 빈 객체다.
+   *
+   * @returns {Promise<object>}
+   */
+  function adminAuthHeader() {
+    if (adminTokenPromise === null) {
+      adminTokenPromise = (desktop() && window.procurementApp.adminSessionToken)
+        ? window.procurementApp.adminSessionToken().catch(function () { return null; })
+        : Promise.resolve(null);
+    }
+    return adminTokenPromise.then(function (token) {
+      return token ? { "Authorization": "Bearer " + token } : {};
+    });
+  }
+
   function uploadNotice(message) {
     var box = el("upload-notice");
     box.hidden = !message;
@@ -3593,23 +3624,30 @@
     button.disabled = true;
     ptNotice("저장 중입니다...");
 
-    var requests = changed.map(function (change) {
-      // 분모 기준이 있는 변경은 기준까지 담은 경로로 보낸다. 없는 변경은
-      // 기존 경로 그대로 — 서버가 기관 전체 구매금액 기준으로 받는다.
-      var url = "/policy-targets/" + encodeURIComponent(year) + "/"
-                + encodeURIComponent(change.code);
-      if (change.scope) { url += "/" + encodeURIComponent(change.scope); }
-      return fetch(url, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: JSON.stringify({ target_rate: change.value })
-      }).then(function (res) {
-        if (!res.ok) { throw httpError(res); }
-        return res.json();
+    // 설정 변경 권한 헤더를 먼저 얻고 보낸다. 데스크톱이 아니면 빈 객체이므로
+    // 예전과 똑같은 요청이 나간다.
+    var sending = adminAuthHeader().then(function (auth) {
+      var requests = changed.map(function (change) {
+        // 분모 기준이 있는 변경은 기준까지 담은 경로로 보낸다. 없는 변경은
+        // 기존 경로 그대로 — 서버가 기관 전체 구매금액 기준으로 받는다.
+        var url = "/policy-targets/" + encodeURIComponent(year) + "/"
+                  + encodeURIComponent(change.code);
+        if (change.scope) { url += "/" + encodeURIComponent(change.scope); }
+        var headers = { "Content-Type": "application/json", "Accept": "application/json" };
+        if (auth.Authorization) { headers.Authorization = auth.Authorization; }
+        return fetch(url, {
+          method: "PUT",
+          headers: headers,
+          body: JSON.stringify({ target_rate: change.value })
+        }).then(function (res) {
+          if (!res.ok) { throw httpError(res); }
+          return res.json();
+        });
       });
+      return Promise.all(requests);
     });
 
-    Promise.all(requests)
+    sending
       .then(function () {
         ptNotice(year + "년 목표비율을 저장했습니다.");
         // 저장 결과를 서버에서 다시 읽고, 달성률도 다시 그린다.

@@ -36,6 +36,16 @@ contextBridge.exposeInMainWorld("procurementApp", {
    * @returns {Promise<{selected: boolean, path?: string, name?: string}>}
    */
   selectUploadFile: () => ipcRenderer.invoke("uploads:selectFile"),
+  /**
+   * 이번 실행의 관리자 세션 토큰. 목표비율 저장에만 쓴다.
+   *
+   * 앱이 켜질 때마다 새로 만들어지며, 소스·설정파일·설치파일 어디에도
+   * 저장되지 않는다. ⛔ 화면이 이 값을 다른 곳으로 보내거나 저장하지
+   * 않는다 — 같은 앱이 띄운 localhost 백엔드로만 간다.
+   *
+   * @returns {Promise<string>}
+   */
+  adminSessionToken: () => ipcRenderer.invoke("admin:sessionToken"),
   /** Electron 버전(진단용). */
   versions: {
     electron: process.versions.electron,
