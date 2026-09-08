@@ -43,6 +43,7 @@ from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models.policy import Policy
 from procurement.models.purchase import Purchase
+from procurement.policy import scopes_for
 
 #: 부족률 표기 자리수 (소수점 둘째 자리)
 _RATE_EXPONENT = Decimal("0.01")
@@ -191,13 +192,19 @@ class DashboardDataService:
         registered = self._registered_policy_ids()
         on_hold = self._on_hold_policy_ids(period)
         scoped_targets = self._scoped_target_rates(period)
+        # 화면의 「목표」 칸에 쓸 값 — 계산 가능 여부와 무관하게 저장된 그대로.
+        configured = self._configured_target_rates(policies, period)
 
         summaries: list[PolicySummary] = []
         for policy in policies:
             assert policy.policy_id is not None  # 위에서 필터링됨
             if registered is not None and policy.policy_id not in registered:
                 # ⛔ 기업정보를 받은 적이 없다 → **조회불가**. 미해당도 0원도 아니다.
-                summaries.append(self._to_not_registered_summary(policy, total_amount))
+                summaries.append(
+                    self._to_not_registered_summary(
+                        policy, total_amount, configured.get(policy.policy_id)
+                    )
+                )
                 continue
             scoped = scoped_targets.get(policy.policy_id)
             if scoped:
@@ -215,7 +222,9 @@ class DashboardDataService:
                     else DashboardStatus.TARGET_RATE_NOT_SET
                 )
                 summaries.append(
-                    self._to_uncalculated_summary(policy, total_amount, period, status)
+                    self._to_uncalculated_summary(
+                        policy, total_amount, period, status, configured.get(policy.policy_id)
+                    )
                 )
             else:
                 summaries.append(self._to_policy_summary(result, target_rates[policy.policy_id]))
@@ -270,6 +279,39 @@ class DashboardDataService:
         # 비활성 정책의 목표비율이 남아 있어도 계산 대상에 넣지 않는다.
         return {
             policy_id: rate for policy_id, rate in registered.items() if policy_id in active_ids
+        }
+
+    def _configured_target_rates(
+        self, policies: list[Policy], period: PeriodFilter | None
+    ) -> dict[int, Decimal]:
+        """**저장된** 목표비율 ``{policy_id: 비율}`` — 계산 가능 여부와 무관.
+
+        :meth:`_resolve_target_rates` 는 계산기에 넘길 값이라 분모를 구할 수 있는
+        것만 담습니다. 화면의 「목표」 칸은 그것과 다릅니다 — 담당자가 넣은 값을
+        그대로 보여 줘야 합니다(🟢 STEP 149).
+
+        ⛔ 목표가 **여럿**인 정책(여성기업: 공사·용역·물품)은 담지 않습니다.
+           셋 중 하나를 대표로 고르면 나머지 둘이 사라집니다. 그런 정책은
+           :meth:`_to_scoped_summary` 가 기준마다 따로 보여 줍니다.
+
+        Args:
+            policies: 활성 정책 목록.
+            period: 적용할 기간 조건. 연도는 ``period.start.year`` 로 읽습니다.
+
+        Returns:
+            분모 기준이 하나뿐인 정책의 저장된 목표비율.
+        """
+        if self._policy_target_repository is None or period is None:
+            return {}
+        single_scope = {
+            policy.policy_id: scopes_for(policy.policy_code)[0]
+            for policy in policies
+            if policy.policy_id is not None and len(scopes_for(policy.policy_code)) == 1
+        }
+        return {
+            target.policy_id: target.target_rate
+            for target in self._policy_target_repository.list_by_year(period.start.year)
+            if single_scope.get(target.policy_id) == target.scope
         }
 
     def _missing_resolution_date(self, period: PeriodFilter | None) -> MissingResolutionDate:
@@ -366,13 +408,24 @@ class DashboardDataService:
         return registered
 
     @staticmethod
-    def _to_not_registered_summary(policy: Policy, total_amount: Decimal) -> PolicySummary:
+    def _to_not_registered_summary(
+        policy: Policy, total_amount: Decimal, target_rate: Decimal | None = None
+    ) -> PolicySummary:
         """기업정보를 받은 적이 없는 정책의 요약을 만듭니다 — **조회불가**.
 
         .. warning::
             ⛔ **미해당이 아닙니다.** 어떤 사업자가 이 정책의 기업인지 모르므로
             실적을 셀 수 없습니다. 금액·비율·달성률을 모두 ``None`` 으로 두어
             **0 과 구분**합니다(STEP 96 §8 · §22-7·8).
+
+        ⭐ **목표비율은 계산 결과가 아니라 담당자가 넣은 설정값입니다**
+        (🟢 STEP 149). 계산을 못 한다고 목표까지 지우면, 방금 저장한 50% 가
+        화면에서 «—» 로 보여 담당자는 **저장이 안 된 줄로 읽습니다.** 실제로
+        그렇게 읽혔습니다. 달성률·실적금액은 지금처럼 ``None`` 으로 두어 0 과
+        구분하고, 목표만 그대로 싣습니다.
+
+        ⛔ 목표가 저장돼 있지 않으면 ``None`` 그대로입니다 — 0% 로 채우지
+           않습니다.
 
         ⛔ 계산기를 호출하지 않습니다 — 인증이 0건이라 0 이 나오는데, 그 0 을
         보여주면 "해당 기업이 없다" 로 읽히기 때문입니다.
@@ -384,7 +437,7 @@ class DashboardDataService:
             policy_name=policy.policy_name,
             purchase_amount=None,
             total_purchase_amount=total_amount,
-            target_rate=None,
+            target_rate=target_rate,
             achievement_rate=None,
             shortage_rate=None,
             status=DashboardStatus.COMPANY_DATA_NOT_REGISTERED,
@@ -514,6 +567,7 @@ class DashboardDataService:
         total_amount: Decimal,
         period: PeriodFilter | None,
         status: DashboardStatus,
+        target_rate: Decimal | None = None,
     ) -> PolicySummary:
         """달성률을 내지 못한 정책의 요약을 만듭니다.
 
@@ -532,6 +586,15 @@ class DashboardDataService:
         입니다. 그래서 상태를 호출부에서 받아 그대로 씁니다.
 
         ⛔ 달성률·부족률은 ``None`` 으로 두어 ``0`` 과 구분합니다.
+
+        ⭐ **목표비율은 계산 결과가 아니라 담당자가 넣은 설정값입니다**
+        (🟢 STEP 149). 계산을 못 한다고 목표까지 지우면, 방금 저장한 50% 가
+        화면에서 «—» 로 보여 담당자는 **저장이 안 된 줄로 읽습니다.** 실제로
+        그렇게 읽혔습니다. 달성률·실적금액은 지금처럼 ``None`` 으로 두어 0 과
+        구분하고, 목표만 그대로 싣습니다.
+
+        ⛔ 목표가 저장돼 있지 않으면 ``None`` 그대로입니다 — 0% 로 채우지
+           않습니다.
         """
         assert policy.policy_id is not None  # 호출부에서 보장
         return PolicySummary(
@@ -541,7 +604,7 @@ class DashboardDataService:
             # ⭐ 목표가 없어도 실적은 센다(§13). 계산기는 목표 없이도 금액을 낸다.
             purchase_amount=self._calculator.calculate_policy_purchase(policy.policy_id, period),
             total_purchase_amount=total_amount,
-            target_rate=None,
+            target_rate=target_rate,
             achievement_rate=None,
             shortage_rate=None,
             status=status,

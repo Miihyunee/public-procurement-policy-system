@@ -225,11 +225,22 @@ class TestTradingIsNotBuyingTheItem:
         """목표 7% 는 그대로 저장돼 있다 — 못 내는 것은 달성률뿐이다.
 
         .. note::
-            대시보드 요약 줄의 ``target_rate`` 는 「계산 보류」일 때 ``None``
-            이다 — 달성률을 낼 수 없는 자리에 목표만 띄우면 「7% 중 얼마」로
-            읽히기 때문이다. 목표 자체는 목표 화면(``/policy-targets``)에 있다.
+            ⚠️ **예전에는 반대였습니다.** 대시보드 요약 줄의 ``target_rate`` 를
+            「계산 보류」일 때 ``None`` 으로 두었습니다. 달성률을 낼 수 없는
+            자리에 목표만 띄우면 「7% 중 얼마」로 읽힐까 봐서였습니다.
+
+            🟢 STEP 149 에서 뒤집었습니다. 실제 담당자 화면에서 그렇게 읽히지
+            않았습니다 — 목표를 방금 저장했는데 실적 탭에 «—» 로 나오자
+            **「저장이 안 됐다」로 읽혔습니다.** 목표비율은 계산 결과가 아니라
+            담당자가 넣은 설정값이므로, 계산 여부와 무관하게 그대로 보여
+            줍니다. 「7% 중 얼마」로 읽힐 위험은 달성률·실적금액을 여전히
+            ``None`` 으로 두어 막습니다(아래에서 함께 확인합니다).
         """
-        assert _policy_row(registered)["target_rate"] is None
+        row = _policy_row(registered)
+        assert row["target_rate"] == "7"
+        # ⛔ 목표를 보여 준다고 달성률까지 만들어 내지 않는다.
+        assert row["achievement_rate"] is None
+        assert row["shortage_rate"] is None
 
         targets = PolicyTargetRepository(db).list_by_year(2026)
         village = next(row for row in targets if row.policy_id == _policy_id(db, _CODE))

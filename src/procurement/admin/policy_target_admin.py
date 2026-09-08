@@ -37,6 +37,38 @@ from procurement.database.policy_target_repository import (
     validate_year,
 )
 from procurement.models.policy_target import PolicyTarget
+from procurement.policy import scopes_for
+
+
+def _scoped_models(policy_code: str, saved: list[PolicyTarget]) -> tuple[ScopedTargetModel, ...]:
+    """그 정책이 목표를 두는 **분모 기준 전부**를 만듭니다.
+
+    정본은 :func:`procurement.policy.scopes_for` 입니다 — ⛔ 「저장된 값이
+    있는가」로 판단하지 않습니다. 아직 넣지 않은 기준은 ``target_rate`` 가
+    ``None`` 인 채로 담기며, 그래야 화면이 빈 입력칸을 그릴 수 있습니다.
+
+    저장돼 있는데 정본에 없는 기준(예전 규칙으로 들어간 값)은 **뒤에 덧붙입니다**
+    — ⛔ 화면에서 지워 버리면 담당자가 그 값을 고칠 방법이 없어집니다.
+
+    Args:
+        policy_code: 정책 코드.
+        saved: 그 정책에 저장돼 있는 목표들.
+
+    Returns:
+        정본 순서대로 놓인 분모 기준 모델들.
+    """
+    rates = {target.scope: target.target_rate for target in saved}
+    canonical = scopes_for(policy_code)
+    extra = tuple(scope for scope in rates if scope not in canonical)
+    return tuple(
+        ScopedTargetModel(
+            scope=scope,
+            scope_label=scope_label(scope),
+            target_rate=rates.get(scope),
+            calculable=is_calculable(scope),
+        )
+        for scope in (*canonical, *extra)
+    )
 
 
 class PolicyTargetAdminService:
@@ -103,15 +135,7 @@ class PolicyTargetAdminService:
                     target_rate=rate,
                     target_rate_status=target_rate_status(rate),
                     updated_at=total_target.updated_at if total_target is not None else None,
-                    scoped_targets=tuple(
-                        ScopedTargetModel(
-                            scope=target.scope,
-                            scope_label=scope_label(target.scope),
-                            target_rate=target.target_rate,
-                            calculable=is_calculable(target.scope),
-                        )
-                        for target in saved
-                    ),
+                    scoped_targets=_scoped_models(policy.policy_code, saved),
                 )
             )
         return PolicyTargetListResponseModel(year=year, items=items)
@@ -161,6 +185,19 @@ class PolicyTargetAdminService:
             raise PolicyValidationError(
                 f"비활성 정책의 목표비율은 설정할 수 없습니다: {policy_code}"
             )
+        # ⭐ 그 정책이 쓰지 않는 분모 기준으로는 저장하지 않는다(🟢 STEP 149).
+        #
+        #    여성기업 목표는 구매유형별(공사·용역·물품)인데, 화면의 한 칸에서
+        #    기준 없이 보내면 ``TOTAL``(기관 전체 구매금액) 로 저장됐다.
+        #    「여성기업 3%」 와 「중소기업 3%」 가 같은 뜻이 되어 버리는, 값이
+        #    아니라 **의미가 틀린** 저장이다. 화면도 함께 고쳤지만, 화면만 믿지
+        #    않는다 — 여기서 막아야 어느 경로로 와도 막힌다.
+        allowed = scopes_for(policy_code)
+        if scope not in allowed:
+            raise PolicyValidationError(
+                f"{policy_code} 의 목표비율은 {', '.join(allowed)} 기준으로만 "
+                f"설정할 수 있습니다. 받은 기준: {scope}"
+            )
 
         parsed = self._parse_target_rate(target_rate)
         if parsed is None:
@@ -195,15 +232,7 @@ class PolicyTargetAdminService:
             # 이 호출이 건드린 것은 분모 기준 **하나**지만, 응답에는 그 정책에
             # 저장된 목표를 **모두** 담습니다 — 분모가 다른 목표를 이 API 로
             # 지웠다고 오해하지 않도록.
-            scoped_targets=tuple(
-                ScopedTargetModel(
-                    scope=target.scope,
-                    scope_label=scope_label(target.scope),
-                    target_rate=target.target_rate,
-                    calculable=is_calculable(target.scope),
-                )
-                for target in remaining
-            ),
+            scoped_targets=_scoped_models(policy.policy_code, remaining),
         )
 
     @staticmethod

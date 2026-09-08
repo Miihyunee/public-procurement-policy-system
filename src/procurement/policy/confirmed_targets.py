@@ -148,6 +148,52 @@ STORABLE_TARGET_RATES: Final[dict[str, Decimal]] = {
     target.policy_code: target.target_rate for target in CALCULABLE_TARGETS
 }
 
+def _scopes_by_policy() -> dict[str, tuple[str, ...]]:
+    """확정 목록에서 «정책 → 분모 기준» 을 끌어냅니다(선언 순서 유지).
+
+    Returns:
+        ``{정책 코드: (분모 기준, ...)}``.
+    """
+    scopes: dict[str, tuple[str, ...]] = {}
+    for target in CONFIRMED_TARGETS:
+        current = scopes.get(target.policy_code, ())
+        if target.scope not in current:
+            scopes[target.policy_code] = (*current, target.scope)
+    return scopes
+
+
+#: 정책이 목표비율을 **어떤 분모 기준으로** 두는가 — 이 저장소의 정본.
+#:
+#: ⭐ **저장된 값이 있는지로 판단하지 않습니다**(🟢 STEP 149). 예전에는 화면이
+#: ``GET /policy-targets`` 가 돌려준 «이미 저장된» 목표만 보고 입력칸을 그렸습니다.
+#: 그래서 여성기업의 공사·용역·물품 세 칸은 **그 값이 이미 있을 때만** 나타났고,
+#: 첫 값을 넣을 자리가 화면에 없었습니다 — 닭과 달걀이었습니다. 매뉴얼 9장은
+#: 「입력칸이 세 개 나옵니다」 라고 안내하는데 실제로는 한 칸이었고, 그 한 칸에
+#: 넣으면 기관 전체 구매금액 기준으로 저장되어 **틀린 분모**의 값이 되었습니다.
+#:
+#: 위 :data:`CONFIRMED_TARGETS` 에서 그대로 끌어냅니다. ⛔ 같은 사실을 적은
+#: 목록을 두 벌 만들지 않습니다 — 두면 반드시 갈라집니다.
+#:
+#: ⚠️ 여기 없는 정책은 :data:`DEFAULT_SCOPES`(기관 전체 구매금액)입니다.
+SCOPES_BY_POLICY: Final[dict[str, tuple[str, ...]]] = _scopes_by_policy()
+
+#: 확정 목록에 없는 정책이 쓰는 분모 기준.
+DEFAULT_SCOPES: Final[tuple[str, ...]] = (TOTAL,)
+
+
+def scopes_for(policy_code: str) -> tuple[str, ...]:
+    """그 정책이 목표비율을 두는 분모 기준을 순서대로 반환합니다.
+
+    Args:
+        policy_code: 정책 코드.
+
+    Returns:
+        분모 기준 튜플. 여성기업은 ``(CONSTRUCTION, SERVICE, GOODS)`` 이고,
+        확정 목록에 없는 정책은 :data:`DEFAULT_SCOPES` 입니다.
+    """
+    return SCOPES_BY_POLICY.get(policy_code, DEFAULT_SCOPES)
+
+
 #: 달성률을 낼 수 없는 정책 ``{정책 코드: 이유}``.
 #:
 #: ⚠️ **2026-09-03 · STEP 103 으로 여성기업이 빠졌습니다.** 담당자가 확정한

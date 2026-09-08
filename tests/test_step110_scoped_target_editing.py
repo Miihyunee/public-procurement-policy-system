@@ -86,9 +86,22 @@ def _put(
 
 
 def _scoped(client: TestClient, year: int, code: str) -> dict[str, str | None]:
+    """**저장된** 목표만 ``{분모 기준: 비율}`` 로 모읍니다.
+
+    ⚠️ 🟢 STEP 149 부터 ``scoped_targets`` 에는 그 정책이 목표를 둘 수 있는
+       기준이 **전부** 담깁니다. 아직 넣지 않은 기준은 ``target_rate`` 가
+       ``None`` 입니다 — 그래야 화면이 빈 입력칸을 그릴 수 있습니다(여성기업의
+       공사·용역·물품 세 칸이 나타나지 않던 결함).
+
+       이 파일이 확인하는 것은 「어떤 기준을 **저장했는가**」이므로, 값이 없는
+       기준은 걸러 냅니다. ⛔ 검사를 느슨하게 만든 것이 아니라, 응답에 새로
+       생긴 「아직 안 넣은 칸」을 세지 않을 뿐입니다.
+    """
     items = client.get("/policy-targets", params={"year": year}).json()["items"]
     row = next(item for item in items if item["policy_code"] == code)
-    return {s["scope"]: s["target_rate"] for s in row["scoped_targets"]}
+    return {
+        s["scope"]: s["target_rate"] for s in row["scoped_targets"] if s["target_rate"] is not None
+    }
 
 
 def _total(client: TestClient, year: int, code: str) -> str | None:
@@ -212,14 +225,24 @@ class TestBadInputIsRefused:
     def test_an_empty_scope_segment_is_the_short_path(
         self, client: TestClient, auth: dict[str, str]
     ) -> None:
-        """빈 기준(``.../WOMAN/``)은 **기준 없는 경로**와 같다.
+        """빈 기준(``.../STARTUP/``)은 **기준 없는 경로**와 같다.
 
         끝의 ``/`` 만 남은 주소는 FastAPI 가 기준 없는 경로로 넘깁니다. 즉
         기관 전체 구매금액 기준으로 저장됩니다 — 알 수 없는 기준으로 오해해
         거절하는 것보다, 원래 있던 경로와 같게 동작하는 편이 안전합니다.
+
+        ⚠️ 예전에는 여성기업으로 확인했습니다. 🟢 STEP 149 부터 여성기업은
+           기관 전체 구매금액 기준으로 **저장되지 않으므로**(목표가 구매유형별
+           이다), 두 경로가 같다는 사실은 총액 기준 정책으로 확인합니다.
+           여성기업에서도 두 경로가 **같이 거절되는지** 이어서 봅니다.
         """
-        assert _put(client, auth, 2026, "WOMAN", "3", "").status_code == 200
-        assert _total(client, 2026, "WOMAN") == "3"
+        assert _put(client, auth, 2026, "STARTUP", "3", "").status_code == 200
+        assert _total(client, 2026, "STARTUP") == "3"
+
+        # 여성기업은 두 경로 모두 같은 이유로 거절된다.
+        assert _put(client, auth, 2026, "WOMAN", "3", "").status_code == 422
+        assert _put(client, auth, 2026, "WOMAN", "3").status_code == 422
+        assert _total(client, 2026, "WOMAN") is None
 
     @pytest.mark.parametrize("rate", ["0", "-1", "101", "abc"])
     def test_a_rate_outside_the_range_is_refused(

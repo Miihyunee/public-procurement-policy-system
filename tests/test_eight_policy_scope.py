@@ -32,6 +32,7 @@ from procurement.database.policy_repository import PolicyRepository
 from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models.purchase import Purchase
+from procurement.policy import scopes_for
 from procurement.uploads.company_format import policy_scoped_header_row
 
 ADMIN_TOKEN = "step97-token-not-a-real-secret"
@@ -389,19 +390,38 @@ class TestPolicyOverlap:
 # ======================================================================
 # §12 · §13  정책별 목표비율
 # ======================================================================
+def _target_item(client: TestClient, code: str, year: int = 2026) -> dict:
+    """``/policy-targets`` 응답에서 정책 한 줄을 꺼냅니다."""
+    body = client.get(f"/policy-targets?year={year}").json()
+    return next(item for item in body["items"] if item["policy_code"] == code)
+
+
 class TestPerPolicyTargets:
     """8종 각각에 연도별 목표비율을 둘 수 있다."""
 
     @pytest.mark.parametrize("code", FINAL_POLICY_CODES)
     def test_every_policy_accepts_a_target(self, client: TestClient, code: str) -> None:
-        response = client.put(
-            f"/policy-targets/2026/{code}",
-            json={"target_rate": "37.5"},
-            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-        )
+        """8종 모두 목표비율을 받는다 — 각자의 **분모 기준**으로.
 
-        assert response.status_code == 200
-        assert response.json()["target_rate"] == "37.5"
+        ⚠️ 🟢 STEP 149 부터 기준을 정책에 맞게 보냅니다. 여성기업은
+           구매유형별(공사·용역·물품), 자활용사촌은 생산가능품목 기준이며,
+           기관 전체 구매금액 기준으로는 저장되지 않습니다 — 「여성기업 3%」와
+           「중소기업 3%」가 같은 뜻이 되어 버리기 때문입니다.
+        """
+        for scope in scopes_for(code):
+            response = client.put(
+                f"/policy-targets/2026/{code}/{scope}",
+                json={"target_rate": "37.5"},
+                headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+            )
+
+            assert response.status_code == 200, (code, scope, response.text)
+
+        stored = {
+            entry["scope"]: entry["target_rate"]
+            for entry in _target_item(client, code)["scoped_targets"]
+        }
+        assert stored == dict.fromkeys(scopes_for(code), "37.5")
 
     def test_targets_do_not_leak_between_policies(self, client: TestClient, db_path: Path) -> None:
         """⭐ 정책 A 의 목표비율이 정책 B 에 영향을 주지 않는다."""

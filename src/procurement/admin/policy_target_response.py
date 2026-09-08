@@ -55,7 +55,9 @@ class ScopedTargetModel(BaseModel):
     Attributes:
         scope: 분모 기준 코드(:mod:`procurement.core.target_scope`).
         scope_label: 분모 기준의 한글 이름(예: ``"공사"``).
-        target_rate: 목표 구매비율(%)(직렬화 시 문자열).
+        target_rate: 목표 구매비율(%)(직렬화 시 문자열). **아직 넣지 않았으면
+            ``null``** 입니다 — 그 기준으로 목표를 둘 수 있다는 사실과, 그 값을
+            이미 넣었다는 사실은 다릅니다(🟢 STEP 149).
         calculable: 이 목표로 **달성률까지 낼 수 있는가**. ``False`` 면 화면은
             «계산 보류» 로 표시합니다 — 목표는 있으나 분모를 못 구한다는 뜻이며,
             ⛔ "목표 미설정" 과 다릅니다.
@@ -65,12 +67,12 @@ class ScopedTargetModel(BaseModel):
 
     scope: str
     scope_label: str
-    target_rate: Decimal
+    target_rate: Decimal | None
     calculable: bool
 
     @field_serializer("target_rate", when_used="always")
-    def _serialize_rate(self, value: Decimal) -> str:
-        return str(value)
+    def _serialize_rate(self, value: Decimal | None) -> str | None:
+        return None if value is None else str(value)
 
 
 class PolicyTargetItemModel(BaseModel):
@@ -86,9 +88,14 @@ class PolicyTargetItemModel(BaseModel):
         target_rate_status: ``SET`` / ``NOT_SET``. ``null`` 을 0 으로 오해하지
             않도록 상태를 함께 제공합니다.
         updated_at: 목표비율 최종 수정일시. 미설정이면 ``null``.
-        scoped_targets: 이 정책에 저장된 목표비율 **전부**(분모 기준별).
-            일반 정책은 ``TOTAL`` 하나뿐이라 ``target_rate`` 와 같은 값이
-            한 건 들어 있고, 여성기업은 공사·용역·물품 세 건이 들어 있습니다.
+        scoped_targets: 이 정책이 목표를 두는 **분모 기준 전부**. 일반 정책은
+            ``TOTAL`` 하나, 여성기업은 공사·용역·물품 셋입니다.
+
+            ⭐ **아직 값을 넣지 않았어도 기준은 담깁니다**(🟢 STEP 149).
+            예전에는 저장된 것만 담아, 화면이 여성기업의 세 칸을 그릴 방법이
+            없었습니다 — 값을 넣어야 칸이 생기고 칸이 있어야 값을 넣는
+            닭과 달걀이었습니다. 기준 목록의 정본은
+            :func:`procurement.policy.scopes_for` 입니다.
     """
 
     model_config = ConfigDict(frozen=True)

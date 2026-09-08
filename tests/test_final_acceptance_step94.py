@@ -353,12 +353,18 @@ class TestUnsetIsNotZero:
 # §4  입력값 — 저장 후 되읽기까지
 # ======================================================================
 class TestInputValuesRoundTrip:
-    """⛔ 20/40/60/80/100 으로 제한하지 않는다. 넣은 값이 그대로 돌아온다."""
+    """⛔ 20/40/60/80/100 으로 제한하지 않는다. 넣은 값이 그대로 돌아온다.
+
+    ⚠️ 표본을 여성기업에서 창업기업으로 바꿨습니다. 확인하려는 것은 **값의
+       정밀도**이지 정책이 아닌데, 🟢 STEP 149 부터 여성기업 목표는 구매유형별
+       이라 기준 없는 경로로는 저장되지 않습니다(422). 총 구매금액 기준 정책
+       으로 같은 것을 확인합니다.
+    """
 
     @pytest.mark.parametrize("rate", ["0.01", "37", "37.5", "42.5", "100"])
     def test_allowed_values_survive_a_round_trip(self, client: TestClient, rate: str) -> None:
         client.put(
-            "/policy-targets/2026/WOMAN",
+            "/policy-targets/2026/STARTUP",
             json={"target_rate": rate},
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
         )
@@ -366,12 +372,12 @@ class TestInputValuesRoundTrip:
         body = client.get("/policy-targets?year=2026").json()
         stored = {item["policy_code"]: item["target_rate"] for item in body["items"]}
 
-        assert stored["WOMAN"] == rate  # ⭐ 정밀도가 깎이지 않는다
+        assert stored["STARTUP"] == rate  # ⭐ 정밀도가 깎이지 않는다
 
     @pytest.mark.parametrize("rate", ["0", "-1", "100.01"])
     def test_rejected_values(self, client: TestClient, rate: str) -> None:
         response = client.put(
-            "/policy-targets/2026/WOMAN",
+            "/policy-targets/2026/STARTUP",
             json={"target_rate": rate},
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
         )
@@ -379,21 +385,21 @@ class TestInputValuesRoundTrip:
 
     def test_null_releases_the_target(self, client: TestClient, db_path: Path) -> None:
         headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
-        client.put("/policy-targets/2026/WOMAN", json={"target_rate": "60"}, headers=headers)
+        client.put("/policy-targets/2026/STARTUP", json={"target_rate": "60"}, headers=headers)
 
-        client.put("/policy-targets/2026/WOMAN", json={"target_rate": None}, headers=headers)
+        client.put("/policy-targets/2026/STARTUP", json={"target_rate": None}, headers=headers)
 
-        assert PolicyTargetRepository(db_path).get(2026, _policy_id(db_path, "WOMAN")) is None
+        assert PolicyTargetRepository(db_path).get(2026, _policy_id(db_path, "STARTUP")) is None
 
     def test_a_missing_key_changes_nothing(self, client: TestClient, db_path: Path) -> None:
         """키가 아예 없으면 422 로 거부하고 **기존 값을 바꾸지 않는다.**"""
         headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
-        client.put("/policy-targets/2026/WOMAN", json={"target_rate": "60"}, headers=headers)
+        client.put("/policy-targets/2026/STARTUP", json={"target_rate": "60"}, headers=headers)
 
-        response = client.put("/policy-targets/2026/WOMAN", json={}, headers=headers)
+        response = client.put("/policy-targets/2026/STARTUP", json={}, headers=headers)
 
         assert response.status_code == 422
-        saved = PolicyTargetRepository(db_path).get(2026, _policy_id(db_path, "WOMAN"))
+        saved = PolicyTargetRepository(db_path).get(2026, _policy_id(db_path, "STARTUP"))
         assert saved is not None
         assert saved.target_rate == Decimal("60")  # ⭐ 그대로다
 

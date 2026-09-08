@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 from procurement.admin.policy_admin import PolicyNotFoundError
 from procurement.calculators import ProcurementAchievementCalculator
 from procurement.core.period import RESOLUTION_DATE, PeriodFilter
+from procurement.core.purchase_type import CONSTRUCTION, GOODS, SERVICE
 from procurement.dashboard.data_service import DashboardDataService
 from procurement.dashboard.models import DashboardStatus
 from procurement.database.bootstrap import MVP_POLICY_SEEDS, bootstrap
@@ -293,26 +294,30 @@ class TestApi:
     def test_year_is_required(self, client: TestClient) -> None:
         assert client.get(LIST_URL).status_code == 422
 
+    # ⚠️ 아래 검사들은 **기준 없는 저장 경로 자체**를 확인한다. 예전에는 표본으로
+    #    여성기업을 썼는데, 🟢 STEP 149 부터 여성기업 목표는 구매유형별이라 그
+    #    경로로 저장되지 않는다(422). 검사 대상이 정책이 아니라 경로이므로, 총
+    #    구매금액 기준 정책인 창업기업으로 바꿔 같은 것을 확인한다.
     def test_put_creates(self, client: TestClient) -> None:
-        body = _put(client, 2026, "WOMAN", "60")
+        body = _put(client, 2026, "STARTUP", "60")
 
         assert body["target_rate"] == "60"
         assert body["target_rate_status"] == "SET"
         assert body["year"] == 2026
 
     def test_put_updates_and_is_idempotent(self, client: TestClient, db_path: Path) -> None:
-        _put(client, 2026, "WOMAN", "60")
-        _put(client, 2026, "WOMAN", "60")
-        body = _put(client, 2026, "WOMAN", "70")
+        _put(client, 2026, "STARTUP", "60")
+        _put(client, 2026, "STARTUP", "60")
+        body = _put(client, 2026, "STARTUP", "70")
 
         assert body["target_rate"] == "70"
         assert PolicyTargetRepository(db_path).count() == 1
 
     def test_put_null_clears(self, client: TestClient, db_path: Path) -> None:
         """``null`` 은 해제다. ⛔ 0 으로 저장하지 않는다."""
-        _put(client, 2026, "WOMAN", "60")
+        _put(client, 2026, "STARTUP", "60")
 
-        body = _put(client, 2026, "WOMAN", None)
+        body = _put(client, 2026, "STARTUP", None)
 
         assert body["target_rate"] is None
         assert body["target_rate_status"] == "NOT_SET"
@@ -320,24 +325,24 @@ class TestApi:
 
     def test_missing_key_is_rejected(self, client: TestClient) -> None:
         """ "바꾸지 않음" 과 "해제" 를 구분한다."""
-        response = client.put("/policy-targets/2026/WOMAN", json={}, headers=_auth())
+        response = client.put("/policy-targets/2026/STARTUP", json={}, headers=_auth())
         assert response.status_code == 422
 
     def test_json_number_is_rejected(self, client: TestClient) -> None:
         """⛔ float 를 거치면 37.5 의 정밀도가 깨진다."""
         response = client.put(
-            "/policy-targets/2026/WOMAN", json={"target_rate": 60}, headers=_auth()
+            "/policy-targets/2026/STARTUP", json={"target_rate": 60}, headers=_auth()
         )
         assert response.status_code == 422
 
     def test_years_are_independent_over_the_api(self, client: TestClient) -> None:
         """⭐ 2026년을 입력해도 2025년 값이 바뀌지 않는다(§11-3)."""
-        _put(client, 2025, "WOMAN", "40")
-        _put(client, 2026, "WOMAN", "50")
+        _put(client, 2025, "STARTUP", "40")
+        _put(client, 2026, "STARTUP", "50")
 
         body_2025 = client.get(f"{LIST_URL}?year=2025").json()
         rates = {item["policy_code"]: item["target_rate"] for item in body_2025["items"]}
-        assert rates["WOMAN"] == "40"
+        assert rates["STARTUP"] == "40"
 
     def test_unknown_policy_is_404(self, client: TestClient) -> None:
         response = client.put(
@@ -485,8 +490,18 @@ class TestTheConfirmedExample:
         """⭐ **API 로 목표비율을 넣고 대시보드가 그 값으로 계산한다.**
 
         저장 → 조회 → 계산이 한 줄로 이어지는지 보는 시험이다.
+
+        ⚠️ 여성기업은 🟢 STEP 149 부터 **구매유형별**로만 저장된다. 기준마다
+           따로 넣고, 달성률은 확정된 유형이 없으므로 «계산 보류» 로 남는다 —
+           ⛔ 0% 나 100% 를 만들지 않는다.
         """
-        _put(client, 2026, "WOMAN", "60")
+        for scope in (CONSTRUCTION, SERVICE, GOODS):
+            response = client.put(
+                f"/policy-targets/2026/WOMAN/{scope}",
+                json={"target_rate": "60"},
+                headers=_auth(),
+            )
+            assert response.status_code == 200, response.text
         _put(client, 2026, "STARTUP", "10")
         _put(client, 2026, "SMALL_BUSINESS", "50")
 
@@ -495,7 +510,12 @@ class TestTheConfirmedExample:
         assert body["total_purchase_amount"] == "1200000"
         by_code = {item["policy_code"]: item for item in body["policies"]}
         assert by_code["WOMAN"]["purchase_amount"] == "1000000"
-        assert by_code["WOMAN"]["achievement_rate"] == "138.89"
+        assert by_code["WOMAN"]["achievement_rate"] is None
+        assert by_code["WOMAN"]["status"] == "SCOPED_BY_PURCHASE_TYPE"
+        assert {
+            entry["scope"]: entry["target_rate"]
+            for entry in by_code["WOMAN"]["scoped_achievements"]
+        } == dict.fromkeys((CONSTRUCTION, SERVICE, GOODS), "60")
         assert by_code["STARTUP"]["purchase_amount"] == "800000"
         assert by_code["STARTUP"]["achievement_rate"] == "666.67"
         assert by_code["SMALL_BUSINESS"]["purchase_amount"] == "1200000"
