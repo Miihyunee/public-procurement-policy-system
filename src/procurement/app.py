@@ -40,6 +40,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, ConfigDict, Field
 
 from procurement.admin import (
+    IN_PROGRESS,
     NOT_REGISTERED,
     REGISTERED,
     PolicyAdminService,
@@ -1384,21 +1385,38 @@ def create_app(
             methods = ["FILE"]
             if policy.policy_code in api_capable:
                 methods.append("API")
+            # 끝까지 가지 못한 등록은 «등록완료» 가 아니다(STEP 154).
+            # ⛔ 인증 건수가 0 이라는 이유로 미완료라고 하지 않는다 — 목록을
+            #    받았는데 우리 거래처가 하나도 없는 경우가 실제로 있다.
+            #    끝났는가만 본다.
+            pending = (
+                company_source_registry.find_in_progress(policy.policy_id)
+                if record is None
+                else None
+            )
+            shown = record if record is not None else pending
+            if record is not None:
+                status, label = REGISTERED, "등록완료"
+            elif pending is not None:
+                status, label = IN_PROGRESS, "등록 진행 중"
+            else:
+                status, label = NOT_REGISTERED, "미등록"
             items.append(
                 PolicyCompanySourceItemModel(
                     policy_id=policy.policy_id,
                     policy_code=policy.policy_code,
                     policy_name=policy.policy_name,
+                    # ⛔ 진행 중은 «받았다» 가 아니다 — 아직 조회불가다.
                     registered=record is not None,
-                    status=REGISTERED if record is not None else NOT_REGISTERED,
-                    status_label="등록완료" if record is not None else "미등록",
-                    source=record.source if record is not None else None,
-                    source_label=record.source_label if record is not None else None,
+                    status=status,
+                    status_label=label,
+                    source=shown.source if shown is not None else None,
+                    source_label=shown.source_label if shown is not None else None,
                     company_count=record.company_count if record is not None else None,
                     certification_count=(
                         record.certification_count if record is not None else None
                     ),
-                    updated_at=record.updated_at if record is not None else None,
+                    updated_at=shown.updated_at if shown is not None else None,
                     available_methods=methods,
                 )
             )
@@ -1458,11 +1476,11 @@ def create_app(
             policy = company_policy_repository.find_by_policy_code(payload.policy_code)
             if policy is None or policy.policy_id is None:
                 return None
-            recorded = company_source_registry.record(
+            # ⛔ 여기서 활성으로 만들지 않는다(STEP 154). 적재가 끊기면 비어
+            #    있는 버전이 활성이 되고 멀쩡하던 이전 버전이 계산에서 빠진다.
+            recorded = company_source_registry.begin(
                 policy.policy_id,
                 source="FILE",
-                company_count=0,
-                certification_count=0,
                 source_label=Path(payload.file_path).name,
                 file_checksum=checksum,
             )
@@ -1481,12 +1499,16 @@ def create_app(
         #    등록이 사라진 것처럼 보인다(STEP 131 에서 발견 · STEP 132).
         #
         # ⭐ **그 버전에 실제로 매여 있는 레코드**를 센다.
+        #
+        # ⭐ 그리고 **여기서만** 그 버전을 활성으로 올린다(STEP 154). 위 적재가
+        #    예외로 끊기면 이 줄에 닿지 못하므로, 그 버전은 「진행 중」인 채로
+        #    남고 이전 활성 버전이 그대로 계산에 쓰인다.
         if report is not None and recorded is not None:
             assert recorded.policy_company_source_id is not None
             certifications, companies = company_certification_repository.count_by_source(
                 recorded.policy_company_source_id
             )
-            company_source_registry.update_counts(
+            company_source_registry.complete(
                 recorded.policy_company_source_id,
                 company_count=companies,
                 certification_count=certifications,

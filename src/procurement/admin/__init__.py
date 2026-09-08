@@ -19,6 +19,7 @@ procurement.admin
 from procurement.admin.auth import build_admin_token_guard
 from procurement.admin.policy_admin import PolicyAdminService, PolicyNotFoundError
 from procurement.admin.policy_company_source_response import (
+    IN_PROGRESS,
     NOT_REGISTERED,
     REGISTERED,
     PolicyCompanySourceItemModel,
@@ -38,6 +39,7 @@ from procurement.admin.response import (
 
 __all__ = [
     "PolicyAdminService",
+    "IN_PROGRESS",
     "NOT_REGISTERED",
     "REGISTERED",
     "PolicyCompanySourceItemModel",

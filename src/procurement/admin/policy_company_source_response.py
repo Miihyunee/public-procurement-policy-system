@@ -20,6 +20,12 @@ REGISTERED = "REGISTERED"
 #: 기업정보를 받은 적이 없다 → **조회불가**.
 NOT_REGISTERED = "NOT_REGISTERED"
 
+#: 등록을 시작했으나 **끝나지 않았다** → 아직 조회불가 (STEP 154).
+#:
+#: ⛔ 「등록완료」와 섞지 않습니다. 적재가 끊긴 자료로 계산하면 실적이 실제보다
+#: 적게 나오고, 담당자는 화면만 보고 그 사실을 알 수 없습니다.
+IN_PROGRESS = "IN_PROGRESS"
+
 
 class PolicyCompanySourceItemModel(BaseModel):
     """정책 하나의 기업정보 등록 현황.
@@ -28,9 +34,10 @@ class PolicyCompanySourceItemModel(BaseModel):
         policy_id: 정책 ID.
         policy_code: 정책 코드.
         policy_name: 정책명. ⛔ 화면이 정책명을 들고 있지 않도록 서버가 줍니다.
-        registered: 기업정보를 받은 적이 있는가.
-        status: ``REGISTERED`` / ``NOT_REGISTERED``.
-        status_label: 화면 표시용 — "등록완료" / "미등록".
+        registered: 기업정보를 **끝까지** 받은 적이 있는가. 진행 중이면
+            ``False`` 입니다 — 아직 조회불가이기 때문입니다.
+        status: ``REGISTERED`` / ``IN_PROGRESS`` / ``NOT_REGISTERED``.
+        status_label: 화면 표시용 — "등록완료" / "등록 진행 중" / "미등록".
         source: 어디서 받았는지(``FILE`` / ``API``). 미등록이면 ``None``.
         source_label: 사용자가 알아볼 출처 표시(파일명 등). 없으면 ``None``.
         company_count: 확인한 기업 수. 미등록이면 ``None``.

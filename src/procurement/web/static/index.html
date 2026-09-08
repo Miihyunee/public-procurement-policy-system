@@ -3821,6 +3821,15 @@
       td.appendChild(document.createTextNode(
         " 인증 " + numberFormat(item.certification_count) + "건"
         + (item.source_label ? " · " + item.source_label : "")));
+    } else if (item.status === "IN_PROGRESS") {
+      // ⛔ 끝나지 않은 등록에 건수를 적지 않는다(STEP 154). 적다 만 숫자를
+      //    적으면 담당자가 그것을 결과로 읽는다.
+      if (item.source_label) {
+        td.appendChild(document.createTextNode(" · " + item.source_label));
+      }
+      td.appendChild(make("div", "hint",
+        "등록이 끝나지 않았습니다 — 이 자료는 아직 계산에 쓰이지 않습니다. "
+        + "다시 등록해 주시고, 파일이 크면 끝날 때까지 기다려 주세요."));
     }
 
     var actions = make("div", "upload-actions");

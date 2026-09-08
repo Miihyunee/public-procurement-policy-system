@@ -20,12 +20,27 @@ procurement.models.policy_company_source
     ``Certification`` 이 0건이어도 이 기록이 있으면 **등록완료**입니다. 목록을
     받았는데 그 안에 우리 거래처가 하나도 없을 수 있고, 그것은 "판단할 수 없다"
     가 아니라 "전부 미해당" 이기 때문입니다.
+
+.. warning::
+    ⛔ **«활성» 과 «완료» 는 다릅니다** (STEP 154).
+
+    ``is_active`` 는 *지금 계산에 쓰는 버전인가*, :attr:`import_status` 는
+    *그 등록이 끝까지 갔는가* 입니다. 예전에는 버전 행이 만들어지는 순간
+    바로 활성이 되어, 적재가 끝나지 않아도 화면이 「등록완료」라고 말했습니다.
+    실제로 98,832행 중 일부만 들어간 채 그렇게 표시된 적이 있습니다.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Final
+
+#: 등록을 시작했고 **아직 끝나지 않았다.** ⛔ 활성이 될 수 없습니다.
+IMPORT_IN_PROGRESS: Final = "IN_PROGRESS"
+
+#: 적재가 **끝까지 갔다.** 이때만 활성이 될 수 있습니다.
+IMPORT_COMPLETED: Final = "COMPLETED"
 
 
 @dataclass(kw_only=True)
@@ -46,6 +61,10 @@ class PolicyCompanySource:
         is_active: 지금 **계산에 쓰는** 버전인가. 정책마다 하나만 ``True``.
             🟢 2026-09-05 고객 확정: *"기존 인증기업 데이터는 이력으로 보관하고,
             새 파일이 올라오면 그 파일을 최신으로 선택한다."*
+        import_status: 적재가 끝났는가 — :data:`IMPORT_IN_PROGRESS` 또는
+            :data:`IMPORT_COMPLETED`. ⛔ 끝나지 않은 버전은 활성이 되지 않고
+            화면에도 「등록완료」로 적지 않습니다(STEP 154).
+        completed_at: 적재가 끝난 시각. 끝나지 않았으면 ``None``.
         policy_company_source_id: 내부 고유 ID. 저장 전에는 ``None``.
         registered_at: 등록 시각.
         updated_at: 최종 갱신 시각.
@@ -59,6 +78,8 @@ class PolicyCompanySource:
     version: int = 1
     file_checksum: str | None = None
     is_active: bool = True
+    import_status: str = IMPORT_COMPLETED
+    completed_at: datetime | None = None
     policy_company_source_id: int | None = None
     registered_at: datetime | None = None
     updated_at: datetime | None = None
