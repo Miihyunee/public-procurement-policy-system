@@ -217,6 +217,7 @@ def validate_rows(
     *,
     first_row_number: int = 2,
     columns: Sequence[StandardColumn] = STANDARD_COLUMNS,
+    row_numbers: Sequence[int] | None = None,
 ) -> ValidationReport:
     """행 목록을 검증합니다.
 
@@ -224,6 +225,10 @@ def validate_rows(
         rows: 머리글 → 값 매핑의 목록. 엑셀에서 읽어 온 그대로를 넣습니다.
         first_row_number: 첫 행의 엑셀 행 번호. 머리글이 1행이므로 기본 2입니다.
         columns: 검사 기준이 되는 양식 정의. 기본은 **구매 표준 양식**입니다.
+        row_numbers: 각 행의 **실제 엑셀 행 번호**. 중간에서 빠진 행이 있을
+            때 넣습니다(집계 행을 걸러 낸 뒤 등, STEP 160). ⭐ 이것이 없으면
+            번호를 다시 이어 붙이게 되어, 오류 메시지가 담당자에게 엉뚱한
+            행을 가리킵니다. 생략하면 ``first_row_number`` 부터 이어 셉니다.
 
     Returns:
         :class:`ValidationReport`.
@@ -233,7 +238,9 @@ def validate_rows(
     total = 0
 
     for offset, row in enumerate(rows):
-        row_number = first_row_number + offset
+        row_number = (
+            first_row_number + offset if row_numbers is None else row_numbers[offset]
+        )
         total += 1
         values, row_issues = _validate_row(row, row_number, columns)
         issues.extend(row_issues)

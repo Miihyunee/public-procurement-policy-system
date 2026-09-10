@@ -226,15 +226,47 @@ class TestOneWrongRowRejectsEverything:
         assert _total(client) == 0
         assert _uploaded(client) == []
 
-    def test_c_a_different_year_rejects_the_file(self, client: TestClient, tmp_path: Path) -> None:
-        """8월 선택 · 2025-12-31 한 건 → 전체 거절."""
+    def test_c_a_prior_year_row_is_set_aside_not_a_whole_file_refusal(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """8월 선택 · 2025-12-31 한 건 → 그 한 건만 빠지고 나머지는 저장된다.
+
+        ② 요구사항 변경 (🟢 2026-09-10 PM 확정 · STEP 160 B-1).
+
+        예전에는 **앞선 해**의 결의일자도 파일 전체 거절 사유였다. 그런데
+        12월 말에 결의하고 이듬해 1월에 신고하는 건은 해마다 생기고, 그
+        건은 **그 해의 실적**이다. 파일을 통째로 돌려주면 담당자가 매달
+        원본을 손봐야 한다.
+
+        ⛔ 이 STEP 의 원칙이 뒤집힌 것이 아니다 — 같은 해 안에서 달이
+        어긋나는 것(test_a · test_b · test_d)과 뒤에 오는 해는 **여전히
+        파일 전체를 거절**한다. 그것은 파일을 잘못 고른 경우다.
+        ⛔ 조용히 사라지지도 않는다 — 몇 건이 빠졌는지 결과에 적고,
+        2025년을 대상으로 올리면 그때 들어간다.
+        """
         response = _upload_rows(client, tmp_path, [("2026-08-01", 1_000), ("2025-12-31", 2_000)])
 
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["stored"] is True
+        assert body["prior_year_rows"] == 1
+        assert body["stored_rows"] == 1
+        assert any("앞선 해인 1건" in line for line in body["summary_lines"])
+
+        assert _total(client, 2026) == Decimal(1_000)
+        assert _total(client, 2025) == 0  # ⛔ 다른 해에 몰래 넣지 않는다
+
+    def test_c2_a_later_year_still_rejects_the_file(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """⛔ **뒤에 오는** 해는 그대로 전체 거절이다 — 파일을 잘못 고른 것."""
+        response = _upload_rows(client, tmp_path, [("2026-08-01", 1_000), ("2027-01-05", 2_000)])
+
         assert response.status_code == 409
-        assert response.json()["detail"]["found_periods"] == [{"period": "2025-12", "count": 1}]
+        assert response.json()["detail"]["found_periods"] == [{"period": "2027-01", "count": 1}]
 
         assert _total(client, 2026) == 0
-        assert _total(client, 2025) == 0
+        assert _uploaded(client) == []
 
     def test_d_several_wrong_months_are_all_reported(
         self, client: TestClient, tmp_path: Path

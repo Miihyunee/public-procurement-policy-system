@@ -54,7 +54,13 @@ class UploadResponseModel(BaseModel):
         ok: 파일·행 모두 정상인지 여부.
         stored: 실제로 저장했는지 여부.
         storage_note: 저장 여부에 대한 설명(저장하지 않았다면 그 이유).
-        total_rows: 읽은 데이터 행 수.
+        total_rows: 검증한 **거래** 행 수. 집계 행은 들어 있지 않습니다.
+        source_rows: 원본 엑셀의 자료 행 수 = 거래 행 + 집계 행. 담당자가
+            엑셀에서 세는 숫자와 맞춰 두기 위한 값입니다.
+        aggregate_rows: 소계·합계로 보아 거래자료에서 뺀 행 수(STEP 160 A-1).
+            ⛔ 오류가 아닙니다.
+        prior_year_rows: 결의일자가 앞선 해여서 이번 등록에서 뺀 행 수
+            (STEP 160 B-1). ⛔ 사라진 것이 아니라 그 해 실적입니다.
         valid_rows: 오류 없이 통과한 행 수.
         error_rows: 오류가 있는 행 수.
         stored_rows: 실제로 DB 에 저장된 행 수. 저장하지 않았으면 0.
@@ -79,6 +85,9 @@ class UploadResponseModel(BaseModel):
     stored: bool
     storage_note: str
     total_rows: int
+    source_rows: int = 0
+    aggregate_rows: int = 0
+    prior_year_rows: int = 0
     valid_rows: int
     error_rows: int
     stored_rows: int
@@ -110,6 +119,20 @@ def build_upload_response(result: UploadResult) -> UploadResponseModel:
     shown = all_issues[:MAX_ISSUES]
 
     summary = report.summary_lines() if report is not None else ("파일을 읽을 수 없습니다.",)
+    # ⭐ 「오류라서 안 들어간 것」과 「거래자료가 아니라서 안 들어간 것」을
+    #    담당자가 가를 수 있어야 합니다(STEP 160 §3). ⛔ 건수를 적어 두지
+    #    않고 계산된 값을 씁니다.
+    if result.aggregate_rows:
+        summary = (
+            *summary,
+            f"집계 행 {result.aggregate_rows:,}건을 거래자료에서 제외했습니다.",
+        )
+    if result.prior_year_rows:
+        summary = (
+            *summary,
+            f"결의일자가 앞선 해인 {result.prior_year_rows:,}건은 그 해 실적으로 "
+            "귀속되어 이번 등록에서 제외했습니다.",
+        )
 
     return UploadResponseModel(
         file_name=result.file_name,
@@ -118,6 +141,9 @@ def build_upload_response(result: UploadResult) -> UploadResponseModel:
         stored=result.stored,
         storage_note=result.storage_note,
         total_rows=result.total_rows,
+        source_rows=result.source_rows,
+        aggregate_rows=result.aggregate_rows,
+        prior_year_rows=result.prior_year_rows,
         valid_rows=result.valid_rows,
         error_rows=result.error_rows,
         stored_rows=result.stored_rows,

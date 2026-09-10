@@ -41,16 +41,22 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 
 from procurement.importers.batch_import_service import BatchImportResult, BatchImportService
 from procurement.models.import_batch import ImportBatch
+from procurement.uploads.aggregate_rows import split_aggregate_rows
 from procurement.uploads.excel_adapter import ExcelReadError, WorkbookRead, read_standard_workbook
 from procurement.uploads.mapping import to_import_rows
 from procurement.uploads.purchase_header_aliases import PURCHASE_HEADER_ALIASES
-from procurement.uploads.validation import ValidationReport, validate_headers, validate_rows
+from procurement.uploads.validation import (
+    ValidatedRow,
+    ValidationReport,
+    validate_headers,
+    validate_rows,
+)
 
 #: 검증만 수행했을 때의 설명. 화면·API 응답에 그대로 노출한다.
 VALIDATION_ONLY_NOTE: str = "검증만 수행했습니다. 저장하지 않았습니다."
@@ -73,6 +79,12 @@ class UploadResult:
         stored: 실제로 저장했는지 여부.
         storage_note: 저장 여부에 대한 설명.
         batch: 저장에 성공했을 때의 배치 적재 결과. 저장하지 않았으면 ``None``.
+        aggregate_row_numbers: **집계 행**(소계·합계)으로 보아 검증에서 뺀
+            행의 엑셀 행 번호(STEP 160 A-1). ⛔ 오류가 아니며, 조용히
+            버리지도 않습니다 — 몇 행이었는지 화면에 적습니다.
+        prior_year_row_numbers: 결의일자가 **대상 기간보다 앞선 해**여서 이번
+            업로드에서 뺀 행의 엑셀 행 번호(STEP 160 B-1). 그 해의 실적으로
+            귀속되며, ⛔ 사라지는 것이 아니라 그 해로 올릴 때 들어갑니다.
     """
 
     file_name: str
@@ -82,6 +94,8 @@ class UploadResult:
     stored: bool = False
     storage_note: str = VALIDATION_ONLY_NOTE
     batch: BatchImportResult | None = None
+    aggregate_row_numbers: tuple[int, ...] = ()
+    prior_year_row_numbers: tuple[int, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -98,8 +112,26 @@ class UploadResult:
 
     @property
     def total_rows(self) -> int:
-        """읽은 데이터 행 수."""
+        """검증한 **거래** 행 수. 집계 행은 들어 있지 않습니다."""
         return self.report.total_rows if self.report is not None else 0
+
+    @property
+    def aggregate_rows(self) -> int:
+        """집계 행(소계·합계)으로 보아 뺀 행 수 (STEP 160 A-1)."""
+        return len(self.aggregate_row_numbers)
+
+    @property
+    def prior_year_rows(self) -> int:
+        """결의일자가 앞선 해여서 이번 업로드에서 뺀 행 수 (STEP 160 B-1)."""
+        return len(self.prior_year_row_numbers)
+
+    @property
+    def source_rows(self) -> int:
+        """원본 엑셀의 자료 행 수 = 거래 행 + 집계 행.
+
+        ⭐ 담당자가 엑셀에서 세는 숫자와 맞춰 두기 위한 값입니다.
+        """
+        return self.total_rows + self.aggregate_rows
 
     @property
     def valid_rows(self) -> int:
@@ -237,6 +269,16 @@ class UploadService:
             #    교체 여부도 묻지 않는다 — 저장할 수 없는 파일이기 때문이다.
             return _with_note(result, NOT_STORED_NOTE)
 
+        # 🟢 결의일자가 **앞선 해**인 행은 그 해의 실적이므로 이번 기간에서
+        #    빼고 나머지를 올린다(STEP 160 B-1 · PM 확정). 12월 말에 결의하고
+        #    1월에 신고하는 건은 해마다 생긴다.
+        #    ⛔ 연도 귀속 기준은 그대로 **결의일자**다 — 신고기준일로 바꾸지
+        #       않는다. ⛔ 그 행을 지우지 않는다 — 그 해로 올리면 들어간다.
+        #    ⛔ 「기간 밖이면 무엇이든 뺀다」로 넓히지 않는다. 같은 해 안에서
+        #       달이 어긋나는 것은 **다른 달 파일을 잘못 고른 경우**이므로
+        #       아래 STEP 121 규칙대로 파일 전체를 거절해야 한다.
+        result = _without_prior_years(result, period_start)
+
         # 🟢 고른 기간과 결의일자가 다른 행이 하나라도 있으면 **파일 전체를
         #    거절한다**(STEP 121 · 고객 확정). ⛔ 교체 확인보다 **먼저** 본다 —
         #    올릴 수 없는 파일로 기존 데이터를 지울지 물을 이유가 없다.
@@ -301,14 +343,22 @@ class UploadService:
                 sheet_name=workbook.sheet_name,
             )
 
+        # ⭐ 거래가 아닌 **집계 행**(소계·합계)을 먼저 가려냅니다(STEP 160 A-1).
+        #    저장하면 실적이 부풀려지고, 오류로 두면 정상 거래까지 함께
+        #    막힙니다. ⛔ 조용히 버리지 않습니다 — 몇 행을 뺐는지 알립니다.
+        data_rows, aggregate_numbers = split_aggregate_rows(
+            _to_validation_rows(workbook), first_row_number=workbook.first_row_number
+        )
         report = validate_rows(
-            _to_validation_rows(workbook),
+            [row for _, row in data_rows],
             first_row_number=workbook.first_row_number,
+            row_numbers=[number for number, _ in data_rows],
         )
         return UploadResult(
             file_name=file_name,
             report=report,
             sheet_name=workbook.sheet_name,
+            aggregate_row_numbers=aggregate_numbers,
         )
 
 
@@ -441,6 +491,54 @@ class UploadPeriodMismatchError(RuntimeError):
         return sum(self.mismatched.values())
 
 
+def _without_prior_years(result: UploadResult, period_start: date) -> UploadResult:
+    """결의일자가 **대상 기간보다 앞선 해**인 행을 이번 등록에서 뺍니다.
+
+    🟢 2026-09-10 PM 확정(STEP 160 B-1).
+
+    회계에서 12월 말에 결의하고 이듬해 1월에 신고하는 건은 해마다 생깁니다.
+    그 행들은 **결의한 해**의 실적이므로 이번 해에 넣으면 안 되고, 그렇다고
+    파일 전체를 거절하면 담당자가 매달 원본을 손봐야 합니다.
+
+    ⛔ 연도 귀속 기준은 그대로 ``resolution_date`` 입니다 — 신고기준일로
+       바꾸지 않습니다. ⛔ 파일명·오늘 날짜로 연도를 정하지 않습니다.
+    ⛔ **앞선 해만** 뺍니다. 같은 해 안에서 달이 어긋나는 것은 다른 달 파일을
+       잘못 고른 경우이므로, 기존대로 파일 전체를 거절해야 합니다(STEP 121).
+    ⛔ 그 행을 지우지 않습니다 — 그 해를 대상으로 올리면 그대로 들어갑니다.
+
+    Args:
+        result: 검증을 통과한 업로드 결과.
+        period_start: 고른 기간 시작일. 이 날짜의 **연도**만 씁니다.
+
+    Returns:
+        앞선 해의 행을 뺀 결과. 뺄 것이 없으면 받은 결과 그대로.
+    """
+    report = result.report
+    if report is None:
+        return result
+
+    keep: list[ValidatedRow] = []
+    dropped: list[int] = []
+    for row in report.rows:
+        resolution_date = row.values.get("resolution_date")
+        if isinstance(resolution_date, date) and resolution_date.year < period_start.year:
+            dropped.append(row.row_number)
+        else:
+            keep.append(row)
+
+    if not dropped:
+        return result
+
+    # ⛔ 뺀 행의 **경고**까지 지우지는 않는다 — 무엇이 있었는지는 남긴다.
+    trimmed = ValidationReport(
+        rows=keep,
+        issues=report.issues,
+        file_errors=report.file_errors,
+        total_rows=report.total_rows,
+    )
+    return replace(result, report=trimmed, prior_year_row_numbers=tuple(dropped))
+
+
 def _rows_outside_period(
     result: UploadResult, period_start: date, period_end: date
 ) -> dict[str, int]:
@@ -478,15 +576,12 @@ def _rows_outside_period(
 
 
 def _with_note(result: UploadResult, note: str) -> UploadResult:
-    """저장 설명만 바꾼 결과를 만듭니다."""
-    return UploadResult(
-        file_name=result.file_name,
-        file_errors=result.file_errors,
-        report=result.report,
-        sheet_name=result.sheet_name,
-        stored=False,
-        storage_note=note,
-    )
+    """저장 설명만 바꾼 결과를 만듭니다.
+
+    ⭐ ``replace`` 를 씁니다 — 필드를 하나하나 옮겨 적으면 나중에 더한 값
+    (집계 행·전년도 행)을 여기서 빠뜨리게 됩니다.
+    """
+    return replace(result, stored=False, storage_note=note)
 
 
 def _stored(result: UploadResult, batch: BatchImportResult) -> UploadResult:
@@ -500,15 +595,16 @@ def _stored(result: UploadResult, batch: BatchImportResult) -> UploadResult:
         lines.append(
             f"⚠️ 내용이 같은 파일이 배치 #{batch.duplicate_of.batch_id} 로 이미 올라와 있습니다."
         )
-    return UploadResult(
-        file_name=result.file_name,
-        file_errors=result.file_errors,
-        report=result.report,
-        sheet_name=result.sheet_name,
-        stored=True,
-        storage_note=" ".join(lines),
-        batch=batch,
-    )
+    if result.aggregate_rows:
+        lines.append(
+            f"집계 행 {result.aggregate_rows:,}건은 거래자료가 아니어서 넣지 않았습니다."
+        )
+    if result.prior_year_rows:
+        lines.append(
+            f"결의일자가 앞선 해인 {result.prior_year_rows:,}건은 그 해 실적이라 "
+            "이번 등록에서 빠졌습니다."
+        )
+    return replace(result, stored=True, storage_note=" ".join(lines), batch=batch)
 
 
 def _to_validation_rows(workbook: WorkbookRead) -> list[dict[str, object]]:
