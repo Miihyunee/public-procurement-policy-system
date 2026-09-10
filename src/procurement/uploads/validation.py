@@ -183,10 +183,23 @@ def validate_headers(
                 되어 한쪽만 고치는 일이 생깁니다. **규칙은 하나**로 두고 컬럼
                 정의만 갈아 끼웁니다.
 
+    ⭐ **값이 없어도 되는 항목은 칸 자체가 없어도 됩니다** (STEP 158).
+
+    예전에는 양식의 모든 머리글을 요구했습니다. 그런데 ``계약일자`` ·
+    ``지급일`` 은 🟢 2026-09-02 PM 확정으로 **값이 비어 있어도 되는** 항목
+    인데, 칸 이름이 없다는 이유로 **파일 전체를 거절**했습니다. 실제 고객
+    원본에는 그 두 칸이 아예 없어 2,305행이 통째로 막혔습니다(STEP 157-㉠).
+
+    값이 없어도 되는 항목을 칸 유무로 막는 것은 앞뒤가 맞지 않으므로,
+    ``required`` 인 항목의 머리글만 요구합니다.
+
+    ⛔ 필수 항목은 그대로 필수입니다 — 느슨해진 것은 **선택 항목의 칸
+    유무**뿐이고, 행 단위 값 검증 규칙은 하나도 바뀌지 않았습니다.
+
     Returns:
         파일 단위 오류 메시지 목록. 정상이면 빈 목록.
     """
-    required = tuple(column.header for column in columns)
+    required = tuple(column.header for column in columns if column.required)
     present = {str(header).strip() for header in headers if str(header).strip()}
     missing = [header for header in required if header not in present]
 

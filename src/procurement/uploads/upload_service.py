@@ -49,6 +49,7 @@ from procurement.importers.batch_import_service import BatchImportResult, BatchI
 from procurement.models.import_batch import ImportBatch
 from procurement.uploads.excel_adapter import ExcelReadError, WorkbookRead, read_standard_workbook
 from procurement.uploads.mapping import to_import_rows
+from procurement.uploads.purchase_header_aliases import PURCHASE_HEADER_ALIASES
 from procurement.uploads.validation import ValidationReport, validate_headers, validate_rows
 
 #: 검증만 수행했을 때의 설명. 화면·API 응답에 그대로 노출한다.
@@ -285,7 +286,10 @@ class UploadService:
         file_name = Path(source).name
 
         try:
-            workbook = read_standard_workbook(source)
+            # ⭐ 고객 원본 머리글을 표준 이름으로 옮긴 뒤 검증합니다. 담당자가
+            #    매달 원본을 고치지 않아도 되게 하려는 것입니다(STEP 158).
+            #    ⛔ 값은 건드리지 않습니다 — 칸 이름만 옮깁니다.
+            workbook = read_standard_workbook(source, header_aliases=PURCHASE_HEADER_ALIASES)
         except ExcelReadError as exc:
             return UploadResult(file_name=file_name, file_errors=(str(exc),))
 

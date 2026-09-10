@@ -315,7 +315,13 @@ class TestErrorPathStoresNothing:
     def test_missing_header_stores_nothing(
         self, client: TestClient, db_path: Path, tmp_path: Path
     ) -> None:
-        """지급일 컬럼이 빠진 구(舊) 5컬럼 파일은 파일 오류로 거부된다."""
+        """구(舊) 5컬럼 파일은 파일 오류로 거부된다.
+
+        ② 요구사항 변경(STEP 158) — 거부 사유가 **지급일에서 신고기준일로**
+        바뀌었다. 지급일은 🟢 2026-09-02 PM 확정으로 값이 없어도 되는
+        항목이므로, 이제 칸이 없다는 이유만으로는 막지 않는다. 이 파일은
+        음수 상계 판정에 필요한 **신고기준일**이 없어 거부된다.
+        """
         path = tmp_path / "old-form.xlsx"
         workbook = Workbook()
         sheet = workbook.active
@@ -328,16 +334,20 @@ class TestErrorPathStoresNothing:
         body = client.post(IMPORT_URL, json={"file_path": str(path), "year": 2026}).json()
 
         assert body["stored"] is False
-        assert "지급일" in body["file_errors"][0]
+        assert "신고기준일" in body["file_errors"][0]
         assert PurchaseRepository(db_path).count() == 0
 
     def test_old_six_column_file_is_rejected(
         self, client: TestClient, db_path: Path, tmp_path: Path
     ) -> None:
-        """⛔ 신고기준일·적요·예산과목이 없는 구(舊) 6컬럼 파일은 거부된다.
+        """⛔ 신고기준일이 없는 구(舊) 6컬럼 파일은 거부된다.
 
-        2026-08-20 PM 결정 — 세 컬럼은 원본 엑셀에 이미 있고, 신고기준일이
-        음수 상계 판정에 필요하므로 6컬럼 파일을 계속 받지 않습니다.
+        2026-08-20 PM 결정 — 신고기준일이 음수 상계 판정에 필요하므로 6컬럼
+        파일을 계속 받지 않습니다.
+
+        ② 요구사항 변경(STEP 158) — 거부 사유에서 **적요·예산과목이
+        빠졌다.** 두 항목은 값이 비어 있어도 되는 항목이라(음수 세금계산서는
+        예산과목이 대개 공란) 칸 유무로 막지 않는다. 거부 자체는 그대로다.
         """
         path = tmp_path / "six-column.xlsx"
         workbook = Workbook()
@@ -354,8 +364,9 @@ class TestErrorPathStoresNothing:
 
         assert body["stored"] is False
         message = body["file_errors"][0]
-        for header in ("신고기준일", "적요", "예산과목"):
-            assert header in message
+        assert "신고기준일" in message
+        for optional in ("적요", "예산과목"):
+            assert optional not in message, optional
         assert PurchaseRepository(db_path).count() == 0
 
     def test_blank_note_and_budget_account_are_accepted(

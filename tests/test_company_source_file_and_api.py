@@ -164,14 +164,29 @@ class TestFileValidation:
         assert CompanyRepository(db_path).find_by_business_no(NORMALIZED) is not None
 
     def test_missing_header_is_rejected(self, client: TestClient, tmp_path: Path) -> None:
-        """② 필수 컬럼이 없으면 저장하지 않는다."""
-        headers = [header for header in company_header_row() if header != "대표자명"]
+        """② 필수 컬럼이 없으면 저장하지 않는다.
+
+        ② 요구사항 변경(STEP 158) — 빠뜨리는 칸을 **대표자명에서 기업명으로**
+        바꿨다. 대표자명은 🟢 2026-09-05 PM 확정으로 **선택값**이며, 값이
+        없어도 되는 항목을 칸 유무로 막지 않게 되었다(STEP 157-㉠). 칸이
+        없으면 거부한다는 규칙 자체는 **필수 항목에 대해 그대로**다.
+        """
+        headers = [header for header in company_header_row() if header != "기업명"]
         path = _excel(tmp_path / "no-header.xlsx", [], headers=list(headers))
 
         body = client.post(UPLOAD_URL, json={"file_path": str(path)}).json()
 
         assert body["stored"] is False
-        assert any("대표자명" in line for line in body["file_errors"])
+        assert any("기업명" in line for line in body["file_errors"])
+
+    def test_an_optional_column_may_be_absent(self, client: TestClient, tmp_path: Path) -> None:
+        """⭐ 선택 항목(대표자명)은 칸이 없어도 파일을 거부하지 않는다."""
+        headers = [header for header in company_header_row() if header != "대표자명"]
+        path = _excel(tmp_path / "no-representative.xlsx", [], headers=list(headers))
+
+        body = client.post(UPLOAD_URL, json={"file_path": str(path)}).json()
+
+        assert body["file_errors"] == []
 
     def test_missing_business_no_is_rejected(
         self, client: TestClient, db_path: Path, tmp_path: Path

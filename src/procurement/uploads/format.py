@@ -159,13 +159,21 @@ COLUMNS_BY_KEY: Final[MappingProxyType[str, StandardColumn]] = MappingProxyType(
     {column.key: column for column in STANDARD_COLUMNS}
 )
 
-#: 반드시 있어야 하는 **헤더**.
+#: 표준 양식이 **가지고 있는** 헤더 전부(내려받는 양식의 1행 그대로).
 #:
 #: .. note::
 #:     **"헤더가 있어야 한다" 와 "값이 있어야 한다" 는 다른 문제입니다.**
-#:     표준 양식의 컬럼은 **전부** 있어야 하므로 여기에는 모든 헤더가 들어갑니다.
 #:     개별 행의 값이 반드시 채워져야 하는지는 :attr:`StandardColumn.required`
-#:     가 따로 정합니다(적요·예산과목은 공란을 허용).
+#:     가 정합니다(적요·예산과목은 공란을 허용).
+#:
+#: .. warning::
+#:     ⛔ **이것은 «없으면 거절할 헤더» 목록이 아닙니다**(STEP 158).
+#:     올린 파일에 어떤 칸이 반드시 있어야 하는지는
+#:     :func:`procurement.uploads.validation.validate_headers` 가 정하며,
+#:     ``required`` 인 항목의 헤더만 요구합니다. 값이 없어도 되는 항목을 칸
+#:     유무로 막으면 실제 고객 원본이 통째로 거절됩니다(STEP 157-㉠ 실측).
+#:
+#:     여기서는 **양식을 만들고 내려주는 데** 씁니다.
 REQUIRED_HEADERS: Final[tuple[str, ...]] = tuple(column.header for column in STANDARD_COLUMNS)
 
 #: 값이 비어 있으면 오류인 헤더(행 단위 필수값).
