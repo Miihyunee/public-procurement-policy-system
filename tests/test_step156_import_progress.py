@@ -440,9 +440,21 @@ class TestThePageShowsRealNumbers:
         return Path("src/procurement/web/static/index.html").read_text(encoding="utf-8")
 
     def test_it_uses_the_server_numbers(self, page: str) -> None:
-        assert "item.processed_count" in page
-        assert "item.total_count" in page
-        assert "item.progress_percent" in page
+        """⛔ 화면이 숫자를 만들지 않는다 — 서버가 준 것만 읽는다.
+
+        ② 요구사항 변경(STEP 157): 진행 블록이 «지금 도는 등록» 하나를 받도록
+        바뀌었다. 등록 줄 본체(``item``)일 수도 있고, 이미 등록완료인 정책에
+        새로 올리는 중이면 ``item.in_progress`` 일 수도 있다. 그래서 읽는
+        이름이 ``item.*`` 에서 ``run.*`` 이 되었다 — 출처는 그대로 서버다.
+        """
+        body = page[page.index("function crProgress(") :]
+        body = body[: body.index("\n  }")]
+        assert "run.processed_count" in body
+        assert "run.total_count" in body
+        assert "run.progress_percent" in body
+        # 그 하나를 등록 줄에서 넘겨 준다 — 둘 중 어느 쪽이든 서버 값이다.
+        assert "crProgress(item.in_progress || item)" in page
+        assert "crProgress(item.in_progress)" in page
 
     def test_it_does_not_invent_a_percentage(self, page: str) -> None:
         """⛔ 화면이 퍼센트를 다시 계산하지 않는다 — 서버 값을 그대로 쓴다."""

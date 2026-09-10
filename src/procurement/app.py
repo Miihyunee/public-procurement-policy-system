@@ -43,6 +43,7 @@ from procurement.admin import (
     IN_PROGRESS,
     NOT_REGISTERED,
     REGISTERED,
+    ImportProgressModel,
     PolicyAdminService,
     PolicyCompanySourceItemModel,
     PolicyCompanySourceListModel,
@@ -1390,11 +1391,16 @@ def create_app(
             # ⛔ 인증 건수가 0 이라는 이유로 미완료라고 하지 않는다 — 목록을
             #    받았는데 우리 거래처가 하나도 없는 경우가 실제로 있다.
             #    끝났는가만 본다.
-            pending = (
-                company_source_registry.find_in_progress(policy.policy_id)
-                if record is None
-                else None
-            )
+            #
+            # ⭐ 돌고 있는 등록은 **완료본이 있어도** 찾는다(STEP 157).
+            #    예전에는 완료본이 없을 때만 찾아서, 이미 등록된 정책에 새
+            #    파일을 올리면 두 시간 동안 화면에 아무 표시가 없었다.
+            pending = company_source_registry.find_in_progress(policy.policy_id)
+            # ⛔ 예전에 끊긴 등록을 「지금 도는 중」으로 적지 않는다. 그 뒤에
+            #    끝난 등록이 있으면 그 끊긴 자료는 이미 지나간 일이고, 화면에
+            #    영영 「등록 중」이 남으면 담당자는 끝나기를 계속 기다린다.
+            if pending is not None and record is not None and pending.version < record.version:
+                pending = None
             shown = record if record is not None else pending
             if record is not None:
                 status, label = REGISTERED, "등록완료"
@@ -1427,6 +1433,20 @@ def create_app(
                         else 100.0
                         if record is not None
                         else progress_percent_of(shown.processed_count, shown.total_count)
+                    ),
+                    # ⭐ 돌고 있는 등록은 **따로** 알린다. 위 본체는 끝난
+                    #    자료를 그대로 말해야 한다 — 계산이 거기서 나온다.
+                    in_progress=(
+                        None
+                        if pending is None
+                        else ImportProgressModel(
+                            source_label=pending.source_label,
+                            processed_count=pending.processed_count,
+                            total_count=pending.total_count,
+                            progress_percent=progress_percent_of(
+                                pending.processed_count, pending.total_count
+                            ),
+                        )
                     ),
                     updated_at=shown.updated_at if shown is not None else None,
                     available_methods=methods,

@@ -22,6 +22,7 @@ from procurement.admin.policy_company_source_response import (
     IN_PROGRESS,
     NOT_REGISTERED,
     REGISTERED,
+    ImportProgressModel,
     PolicyCompanySourceItemModel,
     PolicyCompanySourceListModel,
     progress_percent_of,
@@ -41,6 +42,7 @@ from procurement.admin.response import (
 __all__ = [
     "PolicyAdminService",
     "IN_PROGRESS",
+    "ImportProgressModel",
     "NOT_REGISTERED",
     "REGISTERED",
     "progress_percent_of",

@@ -3858,18 +3858,21 @@
        적는다. 전체 행 수를 모르면 막대를 그리지 않고 「처리한 건수」만 적는다.
     ⛔ 여기서 퍼센트를 다시 계산하지 않는다 — 서버가 준 값을 그대로 쓴다.
   */
-  function crProgress(item) {
+  function crProgress(run) {
     var box = make("div", "cr-progress");
-    var total = item.total_count || 0;
-    var done = item.processed_count || 0;
+    var total = run.total_count || 0;
+    var done = run.processed_count || 0;
 
+    if (run.source_label) {
+      box.appendChild(make("div", "cr-progress-num", "등록 중 · " + run.source_label));
+    }
     if (total > 0) {
       box.appendChild(make("div", "cr-progress-num",
         numberFormat(done) + " / " + numberFormat(total) + "건"
-        + "  ·  " + (item.progress_percent === null ? "0" : item.progress_percent) + "%"));
+        + "  ·  " + (run.progress_percent === null ? "0" : run.progress_percent) + "%"));
       var bar = make("div", "cr-bar");
       var fill = document.createElement("i");
-      fill.style.width = Math.max(0, Math.min(100, item.progress_percent || 0)) + "%";
+      fill.style.width = Math.max(0, Math.min(100, run.progress_percent || 0)) + "%";
       bar.appendChild(fill);
       box.appendChild(bar);
     } else {
@@ -3899,10 +3902,16 @@
     } else if (item.status === "IN_PROGRESS") {
       // ⛔ 끝나지 않은 등록에 **인증 건수**를 적지 않는다(STEP 154). 적다 만
       //    숫자를 적으면 담당자가 그것을 결과로 읽는다. 대신 진행률을 적는다.
-      if (item.source_label) {
-        td.appendChild(document.createTextNode(" · " + item.source_label));
-      }
-      td.appendChild(crProgress(item));
+      // ⛔ 파일명을 두 번 적지 않는다 — crProgress 가 「등록 중 · 파일명」을 적는다.
+      td.appendChild(crProgress(item.in_progress || item));
+    }
+
+    // ⭐ 이미 등록완료인 정책에 새 파일을 올리는 중일 수 있다(STEP 157).
+    //    그때도 위 줄은 **끝난 자료**를 그대로 말하고 — 계산이 거기서
+    //    나오므로 — 돌고 있는 등록은 아래에 따로 적는다. 예전에는 이
+    //    경우 화면에 아무 표시가 없어 담당자가 멈춘 줄 알았다.
+    if (item.status !== "IN_PROGRESS" && item.in_progress) {
+      td.appendChild(crProgress(item.in_progress));
     }
 
     var actions = make("div", "upload-actions");
@@ -3975,7 +3984,9 @@
 
   function scheduleProgressPoll() {
     if (crPollTimer !== null) { window.clearTimeout(crPollTimer); crPollTimer = null; }
-    var running = crItems.some(function (item) { return item.status === "IN_PROGRESS"; });
+    var running = crItems.some(function (item) {
+      return item.status === "IN_PROGRESS" || !!item.in_progress;
+    });
     if (!running) { return; }
     crPollTimer = window.setTimeout(function () {
       crPollTimer = null;
@@ -4574,9 +4585,22 @@
    *
    * ⛔ 상태를 만들어 내지 않는다. 서버가 준 ``review`` 를 그대로 읽는다.
    */
+  /**
+   * 검토 상태를 담당자가 읽을 말로 (STEP 157).
+   *
+   * ⛔ 서버가 준 값을 **바꾸지 않는다.** 화면에 적을 글자만 고른다.
+   *    모르는 값이 오면 그대로 적는다 — 지어내지 않는다.
+   */
+  function reviewStatusLabel(status) {
+    if (status === "PENDING") { return "검토 전"; }
+    if (status === "CONFIRMED") { return "확정됨"; }
+    if (status === "REOPENED") { return "확정 취소됨"; }
+    return status;
+  }
+
   function reviewStateLine(review) {
     var box = make("div", "rv-state");
-    box.appendChild(reviewField("검토 상태", review.status));
+    box.appendChild(reviewField("검토 상태", reviewStatusLabel(review.status)));
     box.appendChild(reviewField("선택된 구매유형",
       review.status === "CONFIRMED"
         ? (review.final_purchase_type_label || "판단 보류")

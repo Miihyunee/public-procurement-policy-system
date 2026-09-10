@@ -27,6 +27,33 @@ NOT_REGISTERED = "NOT_REGISTERED"
 IN_PROGRESS = "IN_PROGRESS"
 
 
+class ImportProgressModel(BaseModel):
+    """지금 **돌고 있는** 등록 하나 (STEP 157).
+
+    .. warning::
+        ⛔ 이 값으로 계산하지 않습니다. 끝나지 않은 자료입니다.
+
+        ⭐ 이미 «등록완료» 인 정책에 새 파일을 올리는 경우가 있습니다.
+        그때 :class:`PolicyCompanySourceItemModel` 의 본체는 **끝난 자료**를
+        그대로 말해야 하고(계산이 거기서 나오므로), 돌고 있는 등록은 이
+        블록으로 따로 알립니다. 두 가지를 한 칸에 담으면 담당자가 어느
+        쪽 숫자인지 알 수 없습니다.
+
+    Attributes:
+        source_label: 지금 올리고 있는 자료 표시(파일명 등).
+        processed_count: 지금까지 **실제로 처리한** 행 수.
+        total_count: 이번 등록의 전체 행 수. 아직 모르면 ``0``.
+        progress_percent: 진행률(%). 전체 행 수를 모르면 ``0.0``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    source_label: str | None = None
+    processed_count: int = 0
+    total_count: int = 0
+    progress_percent: float = 0.0
+
+
 class PolicyCompanySourceItemModel(BaseModel):
     """정책 하나의 기업정보 등록 현황.
 
@@ -48,6 +75,10 @@ class PolicyCompanySourceItemModel(BaseModel):
         progress_percent: 진행률(%). 소수 첫째 자리까지.
             완료된 등록은 언제나 ``100.0`` 이며, 전체 행 수를 모르면
             ``0.0`` 입니다 — ⛔ 0 으로 나누지 않습니다.
+        in_progress: 지금 **돌고 있는** 등록(STEP 157). 없으면 ``None``.
+            ⭐ 이미 등록완료인 정책에 새 파일을 올리는 중일 때, 위의
+            본체 값은 **끝난 자료**를 그대로 말하고 돌고 있는 쪽은
+            여기로 알립니다. ⛔ 이 값으로 계산하지 않습니다.
         updated_at: 최종 등록 시각. 미등록이면 ``None``.
         available_methods: 이 정책에서 **고를 수 있는** 확보 방법.
             ⛔ 실제 조회가 구현되지 않은 정책에는 ``API`` 를 넣지 않습니다
@@ -69,6 +100,7 @@ class PolicyCompanySourceItemModel(BaseModel):
     processed_count: int | None = None
     total_count: int | None = None
     progress_percent: float | None = None
+    in_progress: ImportProgressModel | None = None
     updated_at: datetime | None = None
     available_methods: list[str] = []
 
