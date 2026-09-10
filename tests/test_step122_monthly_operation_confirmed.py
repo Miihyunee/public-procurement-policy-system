@@ -491,9 +491,21 @@ class TestTheScreenExplainsIt:
         assert 'id="upload-monthly-guide"' in page
 
     def test_18_it_also_explains_the_replacement(self, page: str) -> None:
-        """이미 등록된 월을 다시 올리면 교체된다는 사실도 알린다."""
-        assert "이미 등록된 월을 다시 올리면" in page
-        assert "삭제하고 새 데이터로 교체" in page
+        """다시 올리면 교체된다는 사실도 알린다.
+
+        ② 요구사항 변경 (🟢 2026-09-10 PM 확정 · STEP 161) — 운영 단위가
+        **연 단위**로 정해졌다. 누적 원본을 그 해 배치로 올리고, 같은 해를
+        다시 올리면 그 해 배치를 교체한다.
+
+        ⛔ 월별로 올리는 길을 없애지 않았다 — 안내문에 그대로 남아 있고
+        (:meth:`test_17`), 그 달만 교체된다는 사실도 적혀 있다.
+        ⛔ 「삭제하고」라는 말은 뺐다. 이전 배치는 지워지지 않고 이력으로
+        남기 때문이다(논리 교체 · PM-012).
+        """
+        assert "같은 해를 다시 올리면" in page
+        assert "새 자료로 교체" in page
+        assert "이전 자료는 이력으로 남고" in page
+        assert "그 달만 교체됩니다" in page
 
     def test_19_it_uses_the_existing_notice_style(self, page: str) -> None:
         """⛔ 새 UI 부품을 만들지 않았다 — 기존 안내 스타일을 그대로 쓴다."""
