@@ -107,9 +107,17 @@ def main(source: str) -> int:
             years[text[:4] if len(text) >= 4 else "(읽기 어려움)"] += 1
     print("  결의일자 연도별:", dict(sorted(years.items())))
 
-    if len(years) != 1:
-        print("  ⚠️ 연도가 하나가 아닙니다. 업로드 기간을 어떻게 잡을지 판단이 필요합니다.")
-    year = int(next(iter(years)))
+    # ⭐ 대상 연도는 **가장 많은 결의일자 연도**로 잡습니다. 원본에는 앞선 해
+    #    결의 건과 집계 행이 섞여 있어 연도가 하나가 아닙니다(STEP 159 실측).
+    #    ⛔ 파일명·오늘 날짜로 정하지 않습니다.
+    readable = {label: count for label, count in years.items() if label.isdigit()}
+    if not readable:
+        print("  ⚠️ 읽을 수 있는 결의일자가 없습니다. 여기서 멈춥니다.")
+        return 2
+    year = int(max(readable, key=lambda label: readable[label]))
+    if len(readable) != 1:
+        print(f"  ⚠️ 연도가 하나가 아닙니다. 가장 많은 {year} 년을 대상으로 잡습니다.")
+        print("     앞선 해 결의 건은 그 해 실적이라 이번 등록에서 빠집니다(STEP 160 B-1).")
 
     # ── 3. 임시 DB ─────────────────────────────────────────────────
     rule("3. 임시 DB")
@@ -125,7 +133,10 @@ def main(source: str) -> int:
     response = client.post("/uploads/purchases/validate", json={"file_path": str(path)})
     print("HTTP", response.status_code)
     result = response.json()
-    for key in ("ok", "sheet_name", "total_rows", "valid_rows", "error_rows", "file_errors"):
+    for key in (
+        "ok", "sheet_name", "source_rows", "aggregate_rows", "total_rows",
+        "valid_rows", "error_rows", "file_errors",
+    ):
         print(f"  {key:<12}", result.get(key))
     issues = result.get("issues") or []
     print(f"  issues       {len(issues):,}건")
@@ -152,12 +163,15 @@ def main(source: str) -> int:
     print("HTTP", response.status_code)
     stored = response.json()
     for key in (
-        "ok", "stored", "total_rows", "valid_rows", "error_rows",
+        "ok", "stored", "source_rows", "aggregate_rows", "total_rows",
+        "prior_year_rows", "valid_rows", "error_rows",
         "stored_rows", "rejected_rows", "unexplained_rows", "batch_id",
     ):
         print(f"  {key:<16}", stored.get(key))
     for reason in stored.get("rejection_reasons") or []:
         print("   미적재:", reason)
+    for line in stored.get("summary_lines") or []:
+        print("   요약:", line)
 
     # ── 6. 저장된 내용 ──────────────────────────────────────────────
     rule("6. 저장된 내용 (임시 DB 직접 조회)")
