@@ -134,6 +134,18 @@ def main(source: str) -> int:
     print(f"  0원               {len(zero):,}")
     print(f"  양수(저장 대상)    {len(positive):,}")
     print(f"  양수 합계          {sum(positive):,}")
+    negative_total = sum(negative)
+    net = sum(positive) + negative_total
+    print(f"  음수 합계          {negative_total:,}")
+    print(f"  양수 + 음수(상계)   {net:,}")
+    print()
+    print("  2026년 결의일자만 (연도 섞임 확인용)")
+    only_2026 = [
+        a
+        for (_, r), a in zip(good, amounts, strict=True)
+        if a is not None and a > 0 and as_year(cell(r, "결의일자")) == "2026"
+    ]
+    print(f"    양수 {len(only_2026):,}건 · 합계 {sum(only_2026):,}")
     print()
     print("  기존 기준과 대조")
     print(f"    2,292건 ↔ {len(good):,}건")
@@ -142,7 +154,7 @@ def main(source: str) -> int:
         f"    130건   ↔ {len(negative) + len(zero):,}건 "
         f"(음수 {len(negative):,} · 0원 {len(zero):,})"
     )
-    print(f"    9,582,813,023원 ↔ {sum(positive):,}원")
+    print(f"    9,582,813,023원 ↔ 양수만 {sum(positive):,}원 · 상계 후 {net:,}원")
 
     rule("4. 결의일자 연도 (정상 행만)")
     years: Counter[str] = Counter(as_year(cell(r, "결의일자")) for _, r in good)
