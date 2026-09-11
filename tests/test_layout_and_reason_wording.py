@@ -126,9 +126,19 @@ class TestNoHorizontalOverflow:
         assert "white-space: nowrap" in _rule(styles, ".rv-trace th, .rv-trace td")
 
     def test_layout_widths_were_not_redesigned(self, styles: str) -> None:
-        """지시 §2 — 전체 레이아웃을 다시 설계하지 않는다."""
+        """지시 §2 — 전체 레이아웃을 다시 설계하지 않는다.
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 165) — 검사 범위에서
+        **확인창(.modal-box)** 을 뺐다.
+
+        `100vw` 를 막던 이유는 본문 폭을 화면에 맞춰 다시 설계하지 말라는
+        것이었다. 확인창은 본문이 아니라 그 위에 뜨는 상자이고, 좁은 화면에서
+        상자가 화면 밖으로 밀려나면 [취소]·[교체하고 저장하기]를 누를 수
+        없게 된다. 본문 폭(1240px) 규칙은 그대로다.
+        """
         assert "max-width: 1240px" in _rule(styles, ".wrap")
-        assert "100vw" not in styles
+        layout = styles.replace(_rule(styles, ".modal-box"), "")
+        assert "100vw" not in layout
 
     def test_narrow_screen_fallbacks_exist(self, styles: str) -> None:
         """좁은 화면에서 여러 칸 배치가 한 칸으로 접힌다."""

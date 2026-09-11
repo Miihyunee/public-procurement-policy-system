@@ -182,17 +182,18 @@ class TestRendererUsesBackendOnly:
         for banned in ("-01-01", "-12-31", "setFullYear", "toISOString"):
             assert banned not in source, banned
 
-        # ``new Date`` 는 선택지의 **기본값**을 정할 때 "지금 몇 년/몇 월인가"
-        # 를 묻는 용도로만 쓴다. 그 외 날짜 조립은 없다.
+        # ``new Date`` 는 선택지의 **기본값**을 정할 때 "지금 몇 년인가" 를
+        # 묻는 용도로만 쓴다. 그 외 날짜 조립은 없다.
         #
-        # ⚠️ 규칙 변경(2026-09-05 · STEP 113). 월별 누적을 위해 업로드에 「대상
-        #    월」 선택이 더해지면서 ``getMonth`` 가 등장한다. 막으려던 것은
-        #    **화면이 기간을 만들어 보내는 것**이며, 기본값으로 이번 달을 고르는
-        #    것은 연도 선택지를 채우던 것과 같은 일이다. 그래서 허용 목록에
-        #    ``getMonth()`` 를 더하되 **그 둘만** 남긴다.
+        # ⚠️ 규칙 변경(2026-09-05 · STEP 113)으로 ``getMonth`` 가 잠시 들어와
+        #    있었다. 대상 월 기본값을 이번 달로 고르던 자리다.
+        #
+        # ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 165) — 연 단위 운영이
+        #    확정되어 대상 월 기본값이 **「연 전체」** 가 되면서 그 호출이
+        #    사라졌다. 막으려던 것(**화면이 기간을 만들어 보내는 것**)은 오히려
+        #    더 줄었다.
         assert set(re.findall(r"new Date\([^)]*\)[.\w()]*", source)) == {
             "new Date().getFullYear()",
-            "new Date().getMonth()",
         }
 
         # ③ 기간 값의 출처는 **백엔드가 준 목록**뿐이다.
@@ -247,12 +248,20 @@ class TestRendererUsesBackendOnly:
         assert "storage_note" in source
 
     def test_screen_asks_before_replacing(self) -> None:
-        """⛔ 같은 기간 재업로드 시 **묻고 나서** 교체한다 (PM-005)."""
+        """⛔ 같은 기간 재업로드 시 **묻고 나서** 교체한다 (PM-005).
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 165) — 묻는 방법이
+        브라우저 기본 창에서 **화면 안 대화상자**로 바뀌었다. 문구도
+        「교체하시겠습니까」 한 줄에서, 무엇이 어떻게 바뀌는지 나란히
+        보여 주는 형태가 됐다. 묻는다는 사실 자체는 그대로다.
+        """
         source = _read(INDEX_HTML)
 
         assert "EXISTING_PERIOD" in source
         assert "replace_existing" in source
-        assert "교체하시겠습니까" in source
+        assert 'id="replace-dialog"' in source
+        assert "교체하고 저장하기" in source
+        assert "지금 저장된 자료" in source
 
     def test_screen_does_not_decide_existence_itself(self) -> None:
         """⛔ "기존 데이터가 있는가" 는 **백엔드가** 판단한다.

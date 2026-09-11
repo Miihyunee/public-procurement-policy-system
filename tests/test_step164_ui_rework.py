@@ -198,8 +198,8 @@ class TestButtonsSayWhichOneMatters:
 
     def test_one_main_button_per_screen(self, markup: str) -> None:
         """주 CTA 는 카드마다 하나씩만."""
-        # ⛔ 안내(온보딩) 상자는 업무 화면이 아니므로 세지 않는다.
-        panel = markup[markup.index('id="panel-data"') : markup.index('id="tour"')]
+        # ⛔ 안내(온보딩)·확인창은 업무 화면 위에 뜨는 상자이므로 세지 않는다.
+        panel = markup[markup.index('id="panel-data"') : markup.index('id="replace-dialog"')]
         assert panel.count("control is-primary") == 4  # 목표비율 · 업로드 · 기업정보 · 조회
 
     def test_the_labels_say_what_happens(self, page: str) -> None:
@@ -208,10 +208,22 @@ class TestButtonsSayWhichOneMatters:
             assert label in page, label
 
     def test_a_disabled_button_says_why(self, markup: str, page: str) -> None:
-        """⛔ 이유 없이 흐린 단추를 두지 않는다."""
+        """⛔ 이유 없이 흐린 단추를 두지 않는다.
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 165) — 사유를 직접
+        ``hidden = true`` 로 감추던 한 줄 대신 ``uploadWhy(사유)`` 한 곳을
+        지난다. 단계가 셋(파일 고르기 → 검증 → 저장)으로 늘어 사유도
+        단계마다 달라지기 때문이다. 흐린 단추에 사유를 반드시 적는다는
+        규칙 자체는 그대로이고, 오히려 더 여러 단계에서 지켜진다.
+        """
         assert 'id="upload-why"' in markup
-        assert "파일을 먼저 고르세요." in markup
-        assert 'el("upload-why").hidden = true;' in page
+        assert "파일을 먼저 선택하세요." in markup
+        # 사유를 쓰고 지우는 곳이 한 군데로 모였다.
+        assert "function uploadWhy(reason)" in page
+        assert "node.hidden = !reason;" in page
+        # 단계마다 사유가 실제로 적힌다.
+        assert 'uploadWhy("검증을 먼저 실행하세요.");' in page
+        assert 'uploadWhy(uploadValidated ? "" : "오류를 수정한 파일을 다시 선택하세요.");' in page
 
     def test_the_dangerous_ones_are_marked(self, page: str) -> None:
         assert 'make("button", "control is-danger", "확정 취소 (다시 검토 대상이 됩니다)")' in page

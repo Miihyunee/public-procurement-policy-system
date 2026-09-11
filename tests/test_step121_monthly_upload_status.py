@@ -559,9 +559,21 @@ class TestTheScreenShowsIt:
         assert "미업로드" in page
 
     def test_7_the_replace_prompt_warns_about_the_confirmations(self, page: str) -> None:
-        """교체 팝업이 구매유형 확정이 옮겨지지 않는다는 사실을 알린다."""
-        assert "삭제하고 새로 업로드한 데이터로" in page
-        assert "구매유형은 새 데이터에 자동으로 옮겨지지" in page
+        """교체 확인창이 구매유형 확정이 옮겨지지 않는다는 사실을 알린다.
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 165) — 「삭제하고」라는
+        말을 뺐다. 실제로는 지우지 않고 이력으로 남기는 **논리 교체**이며
+        (PM-012), 그 표현이 담당자에게 자료가 없어진다고 읽혔다.
+
+        ⛔ 경고 자체는 더 강해졌다 — 확인창이 브라우저 기본 창에서 화면 안
+        대화상자로 바뀌면서, 지금 저장된 자료 · 새로 올리는 자료 · 함께
+        교체되는 등록 · 그대로 두는 것을 나란히 보여 준다.
+        """
+        assert "이전 자료는 지워지지 않고 이력에 「대체됨」으로 남습니다." in page
+        assert "구매유형은 새 자료에 자동으로 옮겨지지" in page
+        assert 'id="replace-dialog"' in page
+        # ⛔ 없어진다는 오해를 부르는 말을 확인창에 쓰지 않는다.
+        assert "삭제하고 새로 업로드한 데이터로" not in page
 
     def test_8_no_monthly_achievement_chart_was_added(self, page: str) -> None:
         """⛔ 고객이 요청하지 않은 월별 달성률 추이 그래프를 만들지 않았다."""

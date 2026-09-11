@@ -180,6 +180,50 @@
   .fold-filters[open] > summary::before { content: "⌃ "; }
   .fold-filters > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+  /* 확정 기록은 보조 정보로 (🟢 2026-09-11 PM 결정 · STEP 164 후속).
+     ⛔ 접거나 지우지 않는다 — 핵심 정보와 섞이지 않게 색과 배경만 낮춘다. */
+  .rv-aside {
+    background: var(--chip-bg); border-radius: 8px; padding: 8px 10px;
+    color: var(--muted);
+  }
+  .rv-aside .rv-src { color: var(--muted); }
+
+  /* ---- 업로드 단계 · 교체 확인창 (STEP 165) ---- */
+  .steps { display: flex; gap: 8px; list-style: none; margin: 2px 0 10px; padding: 0; }
+  .step {
+    font: var(--t-sub); color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+  }
+  .step b { font-weight: 700; margin-right: 4px; }
+  .step.is-now { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .step.is-done { color: var(--normal); border-color: var(--normal); }
+
+  .result-badge {
+    display: inline-block; font: var(--t-badge); padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); margin-right: 8px;
+  }
+  .result-ok { color: var(--normal); border-color: var(--normal); }
+  .result-warn { color: var(--warning); border-color: var(--warning); }
+  .result-bad { color: var(--short); border-color: var(--short); }
+
+  .modal { position: fixed; inset: 0; z-index: 70; background: rgba(10, 20, 30, .5); }
+  .modal-box {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto;
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px 22px; box-shadow: 0 10px 34px rgba(16, 32, 48, .25);
+  }
+  .modal-title { margin: 0 0 6px; font: var(--t-section); }
+  .modal-lead { margin: 0 0 12px; font: var(--t-body); color: var(--muted); }
+  .modal-body { font: var(--t-body); }
+  .modal-row {
+    display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line);
+  }
+  .modal-row dt { flex: 0 0 130px; margin: 0; color: var(--muted); font: var(--t-sub); }
+  .modal-row dd { margin: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
+  .modal-warn { margin: 12px 0 0; font: var(--t-error); color: var(--short); }
+  .modal-actions { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+
   /* ---- 화면 사용법 안내 (STEP 164) ---- */
   .tour { position: fixed; inset: 0; z-index: 60; }
   .tour-ring {
@@ -1130,6 +1174,19 @@
         기관에서 한 가지로 정해 쓰십시오.
       </div>
 
+      <!--
+        어디까지 왔는가 — 🟢 2026-09-11 PM 확정(STEP 165).
+
+        ⛔ 새 단계를 만들지 않는다. 지금도 있는 「고른다 → 검증한다 →
+           저장한다」를 글자로 드러낼 뿐이다.
+        ⛔ 색만으로 알리지 않는다 — 현재 단계에 「지금」이라고 적는다.
+      -->
+      <ol class="steps" id="upload-steps">
+        <li id="upload-step-1" class="step is-now"><b>1</b> 파일 고르기</li>
+        <li id="upload-step-2" class="step"><b>2</b> 검증</li>
+        <li id="upload-step-3" class="step"><b>3</b> 저장</li>
+      </ol>
+
       <div class="upload-actions">
         <button id="upload-template" class="control" type="button">표준 양식 다운로드</button>
         <button id="upload-pick" class="control" type="button">파일 선택</button>
@@ -1148,7 +1205,15 @@
         ⛔ 이유 없이 흐린 단추를 두지 않는다(STEP 164). 파일을 고르면 이
            줄은 사라진다 — 화면 코드가 아니라 ``uploadReady()`` 가 지운다.
       -->
-      <p class="why-disabled" id="upload-why">파일을 먼저 고르세요.</p>
+      <p class="why-disabled" id="upload-why">파일을 먼저 선택하세요.</p>
+
+      <!--
+        지금 이 기간에 **무엇이 들어 있는가** — 🟢 STEP 165.
+        올리기 전에 「내 파일이 기존 자료에 어떤 영향을 주는가」를 알아야 한다.
+        ⛔ 화면이 판정하지 않는다. 업로드 이력(/imports/batches)이 준 값을
+           그대로 적는다.
+      -->
+      <div id="upload-existing" class="notice" hidden></div>
 
       <div id="upload-file" class="upload-file">선택된 파일이 없습니다.</div>
       <div id="upload-notice" class="notice" hidden></div>
@@ -1606,6 +1671,31 @@
   ⛔ 한 번 끝내거나 건너뛰면 다시 자동으로 뜨지 않는다.
   ⛔ 외부 라이브러리를 쓰지 않는다 — 폐쇄망이다.
 -->
+<!--
+  교체 확인창 — 🟢 2026-09-11 PM 확정(STEP 165).
+
+  예전에는 브라우저 기본 ``confirm`` 한 덩어리였다. 「삭제하고」라고 적혀
+  있었는데 실제로는 지우지 않고 이력으로 남기는 **논리 교체**이고, 함께
+  교체되는 배치가 있다는 사실도 말하지 못했다.
+
+  ⛔ 화면이 판정하지 않는다. 서버가 409 로 준 값(기존 배치 · 함께 교체될
+     배치)을 그대로 적는다.
+-->
+<div id="replace-dialog" class="modal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="replace-title">
+  <div class="modal-box">
+    <h3 class="modal-title" id="replace-title">이미 등록된 자료가 있습니다</h3>
+    <p class="modal-lead" id="replace-lead"></p>
+    <div id="replace-body" class="modal-body"></div>
+    <p class="modal-warn" id="replace-warn"></p>
+    <div class="modal-actions">
+      <button type="button" class="control" id="replace-cancel">취소</button>
+      <span class="spacer"></span>
+      <button type="button" class="control is-primary" id="replace-go">교체하고 저장하기</button>
+    </div>
+  </div>
+</div>
+
 <div id="tour" class="tour" hidden>
   <div class="tour-ring" id="tour-ring" hidden></div>
   <div class="tour-box" id="tour-box" role="dialog" aria-modal="false"
@@ -2854,6 +2944,8 @@
    *    엑셀 해석·검증·판정은 전부 Python 이 한다.
    */
   var uploadPath = null;
+  var uploadFileName = "";   // 확인창에 적을 파일명(STEP 165)
+  var uploadValidated = false;  // 검증을 통과했는가(STEP 165)
 
   // 대상 기간은 **화면에서 지정**한다. 파일 내용에서 유추하지 않는다.
   // 달을 고르면 그 달이 대상 기간이 되어 **달마다 쌓인다** — 다음 달을 올려도
@@ -2865,14 +2957,21 @@
     whole.value = "";
     whole.textContent = "연 전체";
     select.appendChild(whole);
-    // 이번 달을 기본값으로 고른다. ⛔ 날짜를 조립하는 것이 아니라
-    //    「지금 몇 월인가」만 묻는다 — 기간 환산은 백엔드가 한다.
-    var thisMonth = new Date().getMonth() + 1;
+    /*
+      기본값은 **「연 전체」** 다 (🟢 2026-09-11 PM 확정 · STEP 165).
+
+      구매실적은 연 단위로 운영하기로 정해졌고(§0.63), 매뉴얼도 「대상 월은
+      연 전체로 두십시오」라고 안내한다. 그런데 화면은 이번 달을 미리 골라
+      두어, 담당자가 안내대로 하려면 매번 바꿔야 했다.
+
+      ⛔ 달 선택을 없애지 않았다 — 열두 달이 그대로 있다.
+      ⛔ 날짜를 조립하지 않는다. 기간 환산은 백엔드가 한다.
+    */
+    whole.selected = true;
     for (var month = 1; month <= 12; month += 1) {
       var option = document.createElement("option");
       option.value = String(month);
       option.textContent = month + "월";
-      if (month === thisMonth) { option.selected = true; }
       select.appendChild(option);
     }
   }
@@ -3404,10 +3503,55 @@
     });
   }
 
+  /**
+   * 지금 이 기간에 무엇이 들어 있는가 (🟢 2026-09-11 PM 확정 · STEP 165).
+   *
+   * 올리기 전에 「내 파일이 기존 자료에 어떤 영향을 주는가」를 알아야 한다.
+   *
+   * ⛔ 화면이 판정하지 않는다 — 업로드 이력이 준 ``is_current`` 를 그대로
+   *    읽는다. 겹침·포함 판정은 서버가 한다.
+   * ⛔ 새 API 를 부르지 않는다 — 이미 받아 둔 이력을 쓴다.
+   */
+  function renderExistingBatches(payload) {
+    var node = el("upload-existing");
+    if (!node) { return; }
+    clear(node);
+
+    /*
+      ⛔ 기간을 걸러 본 결과로 이 칸을 채우지 않는다. 거른 목록에 활성
+         배치가 안 보인다고 「등록된 것이 없다」고 적으면 거짓말이 된다.
+         전체 기간을 보고 있을 때만 말한다.
+    */
+    if (el("history-period") && el("history-period").value) {
+      node.hidden = true;
+      return;
+    }
+
+    var live = (payload.items || []).filter(function (item) { return item.is_current; });
+    if (!live.length) {
+      text(node, "지금 등록된 구매실적이 없습니다. 올리시면 새로 저장됩니다.");
+      node.hidden = false;
+      return;
+    }
+
+    node.appendChild(make("div", "rv-key", "지금 등록되어 있는 자료"));
+    live.forEach(function (item) {
+      node.appendChild(make("div", null,
+        item.period_start + " ~ " + item.period_end
+        + " · " + item.file_name
+        + " · 적재 " + numberFormat(item.stored) + "건"));
+    });
+    node.appendChild(make("div", "hint",
+      "같은 기간을 다시 올리면 되묻고, 승인하셔야 바뀝니다. "
+      + "이전 자료는 지워지지 않고 이력으로 남습니다."));
+    node.hidden = false;
+  }
+
   function renderHistory(payload) {
     var box = el("history-table");
     clear(box);
     el("history-detail").hidden = true;
+    renderExistingBatches(payload);
 
     if (!payload.items.length) {
       box.appendChild(make("div", "rv-key", "아직 업로드한 파일이 없습니다."));
@@ -3532,14 +3676,42 @@
       }
     }
 
-    // 왜 저장되었는지/되지 않았는지는 **백엔드가 문장으로** 돌려준다.
-    // 화면은 상태 표시만 덧붙인다 — 같은 문장을 두 번 쓰지 않기 위함이다.
+    /*
+      결과를 한 눈에 (🟢 2026-09-11 PM 확정 · STEP 165).
+
+      ⛔ 색만으로 알리지 않는다 — 배지에 「저장 완료 / 검증 통과 / 확인 필요」
+         글자를 함께 적는다.
+      ⛔ 판정 문장을 화면이 새로 쓰지 않는다. 백엔드가 준 storage_note 를
+         그대로 잇는다.
+    */
+    var badge = result.stored ? "저장 완료" : result.ok ? "검증 통과" : "확인 필요";
+    var tone = result.stored ? "result-ok" : result.ok ? "result-ok" : "result-warn";
+    summary.insertBefore(make("span", "result-badge " + tone, badge), summary.firstChild);
+
     uploadNotice(
       (result.stored ? "✅ "
         : result.ok ? "✅ 검증을 모두 통과했습니다. "
         : "⚠️ ")
       + result.storage_note
+      + (result.ok || result.stored ? ""
+         : " 오류를 고친 파일을 다시 선택해 주세요. 기존 자료는 그대로 있습니다.")
     );
+
+    // 검증을 통과해야 저장으로 넘어간다 — ⛔ 저장을 먼저 누를 수 없다.
+    uploadValidated = !!result.ok;
+    var saveButton = el("upload-save");
+    if (saveButton) {
+      saveButton.disabled = !uploadValidated;
+      uploadWhy(uploadValidated ? "" : "오류를 수정한 파일을 다시 선택하세요.");
+    }
+    if (result.stored) {
+      uploadStep(3);
+      uploadWhy("");
+    } else if (uploadValidated) {
+      uploadStep(3);
+    } else {
+      uploadStep(2);
+    }
 
     renderUploadTrace(result);
     // 새 기간이 생겼을 수 있으므로 목록을 **서버에서 다시 읽는다.**
@@ -3602,13 +3774,65 @@
     var label = (detail && detail.month)
       ? (detail.year + "년 " + detail.month + "월")
       : (year + "년");
-    return window.confirm(
-      head + (rows ? " (" + numberFormat(rows) + "건)" : "") + ".\n\n"
-      + "기존 " + label + " 데이터를 삭제하고 새로 업로드한 데이터로 "
-      + "교체하시겠습니까?\n\n"
-      + "⛔ 그 달에 확정해 두신 구매유형은 새 데이터에 자동으로 옮겨지지 "
-      + "않습니다."
-    );
+    var contained = (detail && detail.contained_batches) || [];
+
+    text(el("replace-lead"), head + ".");
+
+    var body = el("replace-body");
+    clear(body);
+    body.appendChild(modalRow("지금 저장된 자료",
+      (detail && detail.existing_file_name ? detail.existing_file_name : "(파일명 없음)")
+      + (rows ? " · " + numberFormat(rows) + "건" : "")));
+    body.appendChild(modalRow("새로 올리는 자료", uploadFileName || "(파일명 없음)"));
+    body.appendChild(modalRow("대상 기간", label));
+    body.appendChild(modalRow("함께 교체되는 등록",
+      contained.length
+        ? contained.map(function (item) {
+            return "#" + item.batch_id + " " + item.period_start + " ~ " + item.period_end
+              + " · " + item.file_name;
+          }).join("\n")
+        : "없습니다"));
+    body.appendChild(modalRow("그대로 두는 것",
+      "다른 연도의 등록 · 기업 명단 · 목표비율은 바뀌지 않습니다."));
+
+    // ⛔ 「삭제」라고 쓰지 않는다 — 이전 배치는 이력으로 남는 **논리 교체**다.
+    text(el("replace-warn"),
+      "이전 자료는 지워지지 않고 이력에 「대체됨」으로 남습니다. "
+      + "다만 그 기간에 확정해 두신 구매유형은 새 자료에 자동으로 옮겨지지 않습니다.");
+
+    // 확인창은 **약속(Promise)** 으로 답한다 — 브라우저 기본 창과 달리
+    // 화면을 멈추지 않으므로, 누를 때까지 기다렸다가 이어서 보낸다.
+    var dialog = el("replace-dialog");
+    dialog.hidden = false;
+    el("replace-go").focus();
+
+    return new Promise(function (resolve) {
+      function finish(answer) {
+        dialog.hidden = true;
+        el("replace-go").onclick = null;
+        el("replace-cancel").onclick = null;
+        document.removeEventListener("keydown", onKey);
+        resolve(answer);
+      }
+      function onKey(event) {
+        if (event.key === "Escape") { finish(false); }
+      }
+      el("replace-go").onclick = function () { finish(true); };
+      el("replace-cancel").onclick = function () { finish(false); };
+      document.addEventListener("keydown", onKey);
+    });
+  }
+
+  /** 확인창의 한 줄. ⛔ 값을 만들지 않는다 — 받은 것을 적는다. */
+  function modalRow(label, value) {
+    var row = make("div", "modal-row");
+    var term = document.createElement("dt");
+    term.textContent = label;
+    var detail = document.createElement("dd");
+    detail.textContent = value;
+    row.appendChild(term);
+    row.appendChild(detail);
+    return row;
   }
 
   /**
@@ -3672,17 +3896,19 @@
       })
       .then(function (outcome) {
         if (outcome.needsConfirm) {
-          if (!confirmReplace(outcome.detail)) {
-            // [취소] — 아무것도 바꾸지 않는다.
-            uploadNotice("취소했습니다. 기존 데이터를 그대로 두었습니다.");
+          return confirmReplace(outcome.detail).then(function (agreed) {
+            if (!agreed) {
+              // [취소] — 아무것도 바꾸지 않는다.
+              uploadNotice("취소했습니다. 기존 자료를 그대로 두었습니다.");
+              return null;
+            }
+            // [교체] — 사용자의 명시적 확인을 붙여 다시 요청한다.
+            var confirmed = {};
+            Object.keys(payload).forEach(function (key) { confirmed[key] = payload[key]; });
+            confirmed.replace_existing = true;
+            sendUpload(url, confirmed, buttons);
             return null;
-          }
-          // [교체] — 사용자의 명시적 확인을 붙여 다시 요청한다.
-          var confirmed = {};
-          Object.keys(payload).forEach(function (key) { confirmed[key] = payload[key]; });
-          confirmed.replace_existing = true;
-          sendUpload(url, confirmed, buttons);
-          return null;
+          });
         }
         if (outcome.rejected) {
           renderPeriodMismatch(outcome.detail);
@@ -3699,6 +3925,32 @@
       .finally(function () {
         buttons.forEach(function (button) { button.disabled = false; });
       });
+  }
+
+  /**
+   * 지금 어느 단계인가 (🟢 2026-09-11 PM 확정 · STEP 165).
+   *
+   * ⛔ 새 상태를 만들지 않는다. 화면이 이미 아는 것(파일을 골랐는가 ·
+   *    검증을 통과했는가)을 글자로 드러낼 뿐이다.
+   * ⛔ 색만으로 알리지 않는다 — 현재 단계에 「지금」이 붙는다.
+   */
+  function uploadStep(current) {
+    [1, 2, 3].forEach(function (number) {
+      var node = el("upload-step-" + number);
+      if (!node) { return; }
+      node.className = "step"
+        + (number === current ? " is-now" : "")
+        + (number < current ? " is-done" : "");
+      node.setAttribute("aria-current", number === current ? "step" : "false");
+    });
+  }
+
+  /** 비활성 사유를 적는다. 빈 문자열이면 감춘다. ⛔ 이유 없이 흐린 단추를 두지 않는다. */
+  function uploadWhy(reason) {
+    var node = el("upload-why");
+    if (!node) { return; }
+    text(node, reason || "");
+    node.hidden = !reason;
   }
 
   function initUpload() {
@@ -3755,11 +4007,15 @@
       window.procurementApp.selectUploadFile().then(function (res) {
         if (!res.selected) { return; }
         uploadPath = res.path;
+        uploadFileName = res.name;
+        // ⛔ 파일을 새로 고르면 검증 결과는 더 이상 그 파일의 것이 아니다.
+        uploadValidated = false;
         text(el("upload-file"), "선택한 파일: " + res.name);
+        el("upload-file").title = res.path;
         run.disabled = false;
-        save.disabled = false;
-        // 고른 뒤에는 비활성 사유가 남아 있으면 안 된다.
-        el("upload-why").hidden = true;
+        save.disabled = true;
+        uploadStep(2);
+        uploadWhy("검증을 먼저 실행하세요.");
       });
     });
 
@@ -5012,8 +5268,11 @@
     card.appendChild(detail);
 
     if (item.review.status === "CONFIRMED") {
-      var done = make("div", "rv-block");
-      done.appendChild(reviewHeading("담당자 결정"));
+      // 🟢 2026-09-11 PM 결정 — 확정 기록(유형·확정자·시각·메모)은 목록에서
+      //    **계속 보이게** 두되, 핵심 정보와 섞이지 않도록 보조로 구분한다.
+      //    ⛔ 접지 않는다. 지우지도 않는다.
+      var done = make("div", "rv-block rv-aside");
+      done.appendChild(reviewHeading("담당자 결정 (기록)"));
       var line = make("div", "rv-src");
       line.appendChild(reviewField("확정 유형",
         item.review.final_purchase_type_label || "판단 보류"));
