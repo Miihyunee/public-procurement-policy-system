@@ -107,11 +107,25 @@ class TestControlsSizeToTheirOwnContent:
         assert "max-width: 15ch" in fallback
 
     def test_no_field_hides_its_hint_with_an_ellipsis(self, page: str) -> None:
-        """⛔ 안내 글자를 말줄임표로 잘라 「보이는 것처럼」 만들지 않는다."""
+        """⛔ 입력 칸 안내 글자를 말줄임표로 잘라 「보이는 것처럼」 만들지 않는다.
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 164) — 검사 범위를
+        **입력 칸(.control) 규칙**으로 좁혔다.
+
+        검토 목록이 「한 줄에 한 건」이 되면서 적요 한 줄에 말줄임이
+        필요해졌다. 그 글자는 ``title`` 로도, 「자세히 보기」를 펼쳐도 전문이
+        그대로 나오므로 볼 방법이 없어지지 않는다.
+
+        ⛔ 입력 칸과 그 안내 글자에서는 여전히 금지다 — 거기서 잘리면
+        담당자가 무엇을 넣어야 하는지 알 방법이 없다.
+        """
         style = _style_block(page)
+        control_rules = "\n".join(
+            line for line in style.splitlines() if ".control" in line or "control-" in line
+        )
 
         for banned in ("text-overflow: ellipsis", "text-overflow:ellipsis"):
-            assert banned not in style, banned
+            assert banned not in control_rules, banned
 
     def test_the_clipped_hints_are_still_written_in_full(self, page: str) -> None:
         """⛔ 잘렸다고 안내 문구를 줄여 없애지 않았다."""

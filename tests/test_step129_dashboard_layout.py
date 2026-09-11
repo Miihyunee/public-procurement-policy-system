@@ -132,14 +132,24 @@ class TestTheScreenIsSplitByHowOftenItIsUsed:
 # 첫 화면이 PM 이 정한 순서대로인가
 # ======================================================================
 class TestTheFirstScreenReadsInTheAgreedOrder:
-    def test_7_total_then_policies_then_attention_then_links(self, markup: str) -> None:
-        """⭐ 1 전체 실적 → 2 정책별 → 3 확인 필요 → 4 바로가기."""
+    def test_7_total_then_attention_then_policies_then_links(self, markup: str) -> None:
+        """⭐ 1 전체 실적 → 2 지금 하실 일 → 3 정책별 → 4 바로가기.
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 164) — 「지금 하실 일」이
+        표 **위**로 올라왔다.
+
+        예전에는 표 아래였다. 담당자는 «—» 로 가득 찬 표를 먼저 읽고
+        「0%인가?」 오해한 뒤에야 그 아래에서 이유를 만났다. 계산하지 못한
+        사유는 표를 읽기 **전에** 보여야 한다.
+
+        ⛔ 넷이 모두 있어야 한다는 것은 그대로다. 순서만 바뀌었다.
+        """
         first = _panel(markup, "panel-perf")
 
         order = [
             first.index('id="hl-total"'),
-            first.index('id="ach-body"'),
             first.index('id="attention"'),
+            first.index('id="ach-body"'),
             first.index('class="jump"'),
         ]
 
@@ -309,8 +319,16 @@ class TestTheImportantThingsLookImportant:
         assert '"n ach-rate"' in page
 
     def test_26_the_shortcuts_are_a_side_area(self, page: str, markup: str) -> None:
-        """⛔ 바로가기가 실적보다 눈에 띄면 안 된다(§6)."""
-        assert '<p class="jump-label">관련 업무</p>' in markup
+        """⛔ 바로가기가 실적보다 눈에 띄면 안 된다(§6).
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 164) — 여섯 개가 같은
+        굵기로 늘 펼쳐져 있으면 다음 행동이 여섯 갈래로 흩어진다. **접어**
+        두고, 지금 할 일은 위의 주 CTA 하나로 말한다.
+
+        ⛔ 기능을 없애지 않았다 — :meth:`test_27` 이 여섯 개가 그대로 있음을
+        계속 지킨다. 눈에 띄지 않아야 한다는 요구는 오히려 강해졌다.
+        """
+        assert '<summary class="jump-label">다른 작업 보기</summary>' in markup
         assert "font-size: 11.5px" in page[page.index("  .jump button {") :][:400]
 
     def test_27_nothing_was_removed_from_the_shortcuts(self, markup: str) -> None:

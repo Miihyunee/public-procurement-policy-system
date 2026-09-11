@@ -100,11 +100,18 @@ class TestCoreInformationIsAlwaysShown:
         assert body.index("analysisFold(") < body.index("pastFold(")
 
     def test_confirm_controls_come_before_the_folds(self, page: str) -> None:
-        """확정 조작이 참고 정보보다 위에 있어야 스크롤이 짧아진다."""
+        """확정 조작이 참고 정보보다 위에 있어야 스크롤이 짧아진다.
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 164) — 확정 취소는
+        되돌리기 어려운 작업이라 **위험 단추**로 분리했고, 문구도 무슨 일이
+        일어나는지 말하도록 바꿨다. ⛔ 자리는 그대로다 — 여전히 참고 정보
+        위에 있다.
+        """
         body = _function_body(page, "reviewCard")
 
         assert body.index("reviewPicker(item)") < body.index("analysisFold(")
-        assert body.index('make("button", "control", "확정 취소")') < body.index("analysisFold(")
+        undo = 'make("button", "control is-danger", "확정 취소 (다시 검토 대상이 됩니다)")'
+        assert body.index(undo) < body.index("analysisFold(")
 
     def test_both_states_get_the_folds(self, page: str) -> None:
         """확정된 카드에서도 참고 정보가 사라지지 않는다."""

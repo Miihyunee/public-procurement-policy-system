@@ -359,11 +359,24 @@ class TestRejectionTableColumnWidths:
         assert "max-width" in rule
 
     def test_nothing_is_cut_off(self, styles: str) -> None:
-        """⛔ 줄을 바꿔 전부 보여준다 — 말줄임표로 감추지 않는다."""
+        """⛔ 미적재 표는 줄을 바꿔 전부 보여준다 — 말줄임표로 감추지 않는다.
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 164) — 검사 범위를
+        **이 표의 칸**으로 좁혔다.
+
+        예전에는 화면 전체에 ``ellipsis`` 가 하나도 없어야 했다. 그런데 검토
+        목록이 「한 줄에 한 건」이 되면서 적요 한 줄에 말줄임이 필요해졌다.
+        미적재 표에서 금지하던 이유(**잘린 글자를 볼 방법이 없다**)는 그쪽에
+        해당하지 않는다 — 요약 줄의 적요는 ``title`` 로도, 「자세히 보기」를
+        펼쳐도 전문이 그대로 나온다.
+
+        ⛔ 이 표에서는 여전히 금지다. 여기는 담당자가 원본을 고치려고 읽는
+        자리이므로 한 글자도 감추면 안 된다.
+        """
         rule = _rule(styles, ".rv-trace td.rv-text")
 
         assert "text-overflow" not in rule
-        assert "ellipsis" not in styles
+        assert "ellipsis" not in rule
 
     def test_numbers_still_do_not_wrap(self, styles: str) -> None:
         """``-113,400,000`` 이 줄바꿈되면 읽다가 오해하기 쉽다."""
