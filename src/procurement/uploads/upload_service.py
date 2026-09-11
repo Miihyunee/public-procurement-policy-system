@@ -291,23 +291,34 @@ class UploadService:
                 period_end=period_end,
             )
 
-        # ⛔ 기간이 **겹치기만 하는** 기존 데이터가 있으면 적재하지 않는다.
-        #    교체하면 다른 달까지 사라지고, 두면 그 달이 이중 집계된다(STEP 119).
+        # 기간이 겹치는 기존 데이터를 **품는 것과 아닌 것**으로 가른다
+        # (🟢 2026-09-11 PM 확정 · STEP 162 안 ①).
         overlapping = self._batch_import_service.find_overlapping_batches(period_start, period_end)
-        if overlapping:
+        contained = [
+            batch for batch in overlapping if _contains(period_start, period_end, batch)
+        ]
+        partial = [batch for batch in overlapping if batch not in contained]
+
+        # ⛔ 품지 못하는 겹침은 그대로 거절한다 — 교체하면 다른 달까지
+        #    사라지고, 두면 그 달이 이중 집계된다(STEP 119).
+        if partial:
             raise OverlappingPeriodBatchError(
-                existing=overlapping,
+                existing=partial,
                 period_start=period_start,
                 period_end=period_end,
             )
 
         existing = self._batch_import_service.find_active_batch(period_start, period_end)
-        if existing is not None and not replace_existing:
-            # ⛔ 묻지 않고 교체하지 않는다. 여기서 멈추므로 DB 는 그대로다.
+
+        # ⛔ 묻지 않고 교체하지 않는다(PM-005). 품는 경우도 마찬가지다 —
+        #    담당자는 그 달 자료가 이 파일로 바뀐다는 사실을 알아야 한다.
+        #    여기서 멈추므로 DB 는 그대로다.
+        if not replace_existing and (existing is not None or contained):
             raise ExistingPeriodBatchError(
-                existing=existing,
+                existing=existing if existing is not None else contained[0],
                 period_start=period_start,
                 period_end=period_end,
+                contained=tuple(contained),
             )
 
         assert result.report is not None  # storable 이 보장
@@ -317,6 +328,7 @@ class UploadService:
             period_start=period_start,
             period_end=period_end,
             file_hash=_file_hash(source),
+            contained_batches=contained,
         )
         return _stored(result, batch)
 
@@ -374,7 +386,12 @@ class ExistingPeriodBatchError(RuntimeError):
     호출하면 됩니다.
 
     Attributes:
-        existing: 이미 등록되어 있는 ACTIVE 배치.
+        existing: 이미 등록되어 있는 ACTIVE 배치. 같은 기간의 배치가 있으면
+            그것이고, 없으면 ``contained`` 의 첫 배치입니다.
+        contained: 새 기간이 **완전히 품고 있는** ACTIVE 배치들
+            (🟢 2026-09-11 PM 확정 · STEP 162). 그 해 전체를 올릴 때 그 해
+            3월 배치가 여기 들어갑니다. 승인하면 함께 대체됩니다.
+            ⛔ 지워지지 않고 이력으로 남습니다.
         period_start: 대상 기간 시작일.
         period_end: 대상 기간 종료일.
     """
@@ -385,14 +402,24 @@ class ExistingPeriodBatchError(RuntimeError):
         existing: ImportBatch,
         period_start: date,
         period_end: date,
+        contained: tuple[ImportBatch, ...] = (),
     ) -> None:
         """오류를 만듭니다."""
         self.existing = existing
+        self.contained = contained
         self.period_start = period_start
         self.period_end = period_end
-        super().__init__(
-            f"{period_start.year}년 데이터가 이미 등록되어 있습니다(배치 #{existing.batch_id})."
-        )
+        if contained and existing is contained[0]:
+            # 같은 기간의 배치는 없고, 품는 배치만 있는 경우.
+            super().__init__(
+                f"{period_start.year}년 기간 안에 이미 등록된 데이터가 "
+                f"{len(contained)}건 있습니다."
+            )
+        else:
+            super().__init__(
+                f"{period_start.year}년 데이터가 이미 등록되어 있습니다"
+                f"(배치 #{existing.batch_id})."
+            )
 
 
 class OverlappingPeriodBatchError(RuntimeError):
@@ -489,6 +516,35 @@ class UploadPeriodMismatchError(RuntimeError):
     def mismatch_count(self) -> int:
         """어긋난 행 수."""
         return sum(self.mismatched.values())
+
+
+def _contains(period_start: date, period_end: date, batch: ImportBatch) -> bool:
+    """새 대상 기간이 기존 배치의 기간을 **완전히 품는가**.
+
+    🟢 2026-09-11 PM 확정(STEP 162 안 ①).
+
+    ⭐ 「겹친다」와 「품는다」는 다릅니다. 품을 때만 기존 배치를 대체해도
+    안전합니다 — 품는 쪽이 그 기간의 거래를 모두 담고 있으므로 빠지는
+    거래도, 두 번 세는 거래도 없습니다.
+
+    ::
+
+        2026-01-01 ~ 12-31  ⊇  2026-03-01 ~ 03-31   → True  (함께 대체)
+        2026-01-01 ~ 07-31  ⊉  2026-01-01 ~ 12-31   → False (거절)
+        2026-03-01 ~ 07-31  ⊉  2026-01-01 ~ 06-30   → False (거절, 일부만 겹침)
+
+    ⛔ 날짜 구간만 봅니다. 신고기준일·파일명·오늘 날짜를 보지 않습니다.
+    ⛔ 기간을 보정하지 않습니다.
+
+    Args:
+        period_start: 새 대상 기간 시작일.
+        period_end: 새 대상 기간 종료일.
+        batch: 비교할 기존 배치.
+
+    Returns:
+        완전히 품으면 ``True``.
+    """
+    return period_start <= batch.period_start and batch.period_end <= period_end
 
 
 def _without_prior_years(result: UploadResult, period_start: date) -> UploadResult:
@@ -590,6 +646,11 @@ def _stored(result: UploadResult, batch: BatchImportResult) -> UploadResult:
     if batch.replaced and batch.superseded_batch is not None:
         lines.append(
             f"같은 기간의 이전 배치 #{batch.superseded_batch.batch_id} 는 계산에서 제외됩니다."
+        )
+    if batch.contained_superseded:
+        lines.append(
+            f"고른 기간 안에 있던 이전 등록 {len(batch.contained_superseded):,}건도 "
+            "계산에서 제외됩니다(이력으로 남습니다)."
         )
     if batch.duplicate_of is not None:
         lines.append(

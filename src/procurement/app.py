@@ -1686,14 +1686,33 @@ def create_app(
                 replace_existing=payload.replace_existing,
             )
         except ExistingPeriodBatchError as exc:
+            # ⭐ 새 기간이 **품고 있는** 배치도 함께 바뀐다는 사실을 알린다
+            #    (STEP 162). 담당자가 승인 전에 무엇이 바뀌는지 알아야 한다.
+            contained = [
+                {
+                    "batch_id": batch.batch_id,
+                    "file_name": batch.file_name,
+                    "period_start": batch.period_start.isoformat(),
+                    "period_end": batch.period_end.isoformat(),
+                    "row_count": batch.row_count,
+                }
+                for batch in exc.contained
+            ]
+            message = f"{label} 데이터가 이미 등록되어 있습니다."
+            if contained:
+                message += (
+                    f" 고르신 기간 안에 있는 등록 {len(contained)}건도 함께 "
+                    "교체됩니다(이전 자료는 이력으로 남습니다)."
+                )
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": "EXISTING_PERIOD",
-                    "message": f"{label} 데이터가 이미 등록되어 있습니다.",
+                    "message": message,
                     "existing_batch_id": exc.existing.batch_id,
                     "existing_file_name": exc.existing.file_name,
                     "existing_row_count": exc.existing.row_count,
+                    "contained_batches": contained,
                     "year": payload.year,
                     "month": payload.month,
                 },

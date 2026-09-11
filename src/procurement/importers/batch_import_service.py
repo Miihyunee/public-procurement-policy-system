@@ -32,7 +32,7 @@ procurement.importers.batch_import_service
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -54,7 +54,11 @@ class BatchImportResult:
     Attributes:
         batch: 이번에 만들어진 배치(적재 결과가 반영된 상태).
         report: 행별 적재 결과.
-        superseded_batch: 이번 업로드로 대체된 이전 배치. 없으면 ``None``.
+        superseded_batch: 이번 업로드로 대체된 **같은 기간**의 이전 배치.
+            없으면 ``None``.
+        contained_superseded: 새 기간이 **완전히 품고 있어** 함께 대체한 배치들
+            (STEP 162). 예: 그 해 전체를 올리면 그 해 3월 배치가 여기 들어갑니다.
+            ⛔ 지워지지 않고 이력으로 남습니다.
         duplicate_of: 내용이 같은 파일(해시 일치)로 이미 적재된 ACTIVE 배치.
             없으면 ``None``. **적재를 막지는 않으며 경고 목적**입니다.
         rejections: 원본에는 있었으나 적재되지 않은 행의 기록.
@@ -64,6 +68,7 @@ class BatchImportResult:
     batch: ImportBatch
     report: ImportReport
     superseded_batch: ImportBatch | None = None
+    contained_superseded: tuple[ImportBatch, ...] = ()
     duplicate_of: ImportBatch | None = None
     rejections: tuple[ImportRejection, ...] = ()
 
@@ -88,7 +93,7 @@ class BatchImportResult:
     @property
     def replaced(self) -> bool:
         """이전 배치를 대체했는지 여부."""
-        return self.superseded_batch is not None
+        return self.superseded_batch is not None or bool(self.contained_superseded)
 
     def format_report(self) -> str:
         """사람이 읽을 수 있는 요약을 만듭니다."""
@@ -150,8 +155,9 @@ class BatchImportService:
         period_start: date,
         period_end: date,
         file_hash: str | None = None,
+        contained_batches: Sequence[ImportBatch] = (),
     ) -> BatchImportResult:
-        """행들을 새 배치로 적재하고, 같은 기간의 이전 배치를 대체합니다.
+        """행들을 새 배치로 적재하고, 대체할 이전 배치를 대체합니다.
 
         Args:
             rows: 컬럼 매핑이 끝난 행 목록.
@@ -160,6 +166,10 @@ class BatchImportService:
             period_end: 대상 기간 종료일. **호출자가 지정합니다**.
             file_hash: 원본 파일 내용 해시(선택). 같은 파일 재업로드 감지에
                 사용하며, 감지되어도 **적재를 막지 않고 경고만** 남깁니다.
+            contained_batches: 새 기간이 **완전히 품고 있는** ACTIVE 배치들
+                (STEP 162). 적재가 끝난 뒤 함께 ``SUPERSEDED`` 로 넘깁니다.
+                ⛔ 어느 배치가 여기 들어갈지는 **호출자가 판정합니다** — 이
+                메서드는 겹침을 스스로 해석하지 않습니다.
 
         Returns:
             :class:`BatchImportResult`.
@@ -207,6 +217,17 @@ class BatchImportService:
             if self._batch_repository.supersede(previous.batch_id, batch.batch_id):
                 superseded = self._batch_repository.find_by_id(previous.batch_id)
 
+        # 새 기간이 품고 있는 배치들도 **적재가 끝난 뒤에** 넘긴다(STEP 162).
+        # ⛔ 먼저 넘기면 적재가 실패했을 때 그 기간이 통째로 비어 버린다.
+        contained: list[ImportBatch] = []
+        for older in contained_batches:
+            if older.batch_id is None or older.batch_id == batch.batch_id:
+                continue
+            if self._batch_repository.supersede(older.batch_id, batch.batch_id):
+                moved = self._batch_repository.find_by_id(older.batch_id)
+                if moved is not None:
+                    contained.append(moved)
+
         saved = self._batch_repository.find_by_id(batch.batch_id)
         assert saved is not None  # 방금 저장했다
 
@@ -214,6 +235,7 @@ class BatchImportService:
             batch=saved,
             report=report,
             superseded_batch=superseded,
+            contained_superseded=tuple(contained),
             duplicate_of=duplicate,
             rejections=rejections,
         )

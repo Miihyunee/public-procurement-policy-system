@@ -653,20 +653,35 @@ class TestOverlappingPeriodsAreRefused:
 
         assert _total(client) == 3_000_000
 
-    def test_o6_a_year_upload_over_month_batches_is_refused_too(
+    def test_o6_a_year_upload_over_month_batches_asks_and_then_replaces(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """반대 방향도 같다 — 달치가 있는데 한 해치를 올리면 거절한다."""
+        """달치가 있는데 한 해치를 올리면 **묻고, 승인하면 함께 바꾼다.**
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 162 안 ①).
+
+        예전에는 이 방향도 거절했는데, 그러면 월 단위로 올리다 연 단위로
+        바꾸는 기관은 **어떤 방법으로도 올릴 수 없었다** — 배치를 지우는
+        기능이 없기 때문이다. 담당자 PC 에서 실제로 막혔다.
+
+        한 해치는 그 달치를 **완전히 품으므로** 대체해도 빠지는 거래도, 두
+        번 세는 거래도 없다. ⛔ 묻지 않고 바꾸지는 않는다.
+        ⛔ 품지 못하는 겹침(:meth:`test_o5` 등)은 그대로 거절한다.
+        """
         assert _upload_month(client, tmp_path, month=1, amount=1_000_000).status_code == 200
 
         path = _purchase_file(
             tmp_path / "year.xlsx", [_purchase_row(day="2026-01-10", amount=9_000_000)]
         )
-        response = _upload(client, path, year=2026)
 
-        assert response.status_code == 409
-        assert response.json()["detail"]["code"] == "OVERLAPPING_PERIOD"
-        assert _total(client) == 1_000_000
+        asked = _upload(client, path, year=2026)
+        assert asked.status_code == 409
+        assert asked.json()["detail"]["code"] == "EXISTING_PERIOD"
+        assert _total(client) == 1_000_000  # ⛔ 아직 바뀌지 않았다
+
+        approved = _upload(client, path, year=2026, replace=True)
+        assert approved.status_code == 200, approved.text
+        assert _total(client) == 9_000_000
 
     def test_o7_another_year_is_never_in_the_way(self, client: TestClient, tmp_path: Path) -> None:
         """⛔ 다른 연도는 겹치지 않는다 — 막지 않는다."""

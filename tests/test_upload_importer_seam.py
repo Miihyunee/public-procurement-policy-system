@@ -205,7 +205,15 @@ class TestExistingStorageIsReusable:
     """저장 엔진을 새로 만들 필요가 없다 — 기존 것을 그대로 쓴다."""
 
     def test_batch_import_service_signature_is_stable(self) -> None:
-        """업로드 API 가 호출할 진입점의 인자 구성을 고정한다."""
+        """업로드 API 가 호출할 진입점의 인자 구성을 고정한다.
+
+        ② 요구사항 변경 (🟢 2026-09-11 PM 확정 · STEP 162) — 새 기간이
+        **품고 있는** 배치를 함께 대체하게 되면서 ``contained_batches`` 가
+        더해졌다. 기본값이 있어 기존 호출부는 그대로 돈다.
+
+        ⛔ 어느 배치를 함께 넘길지는 **호출자가 판정한다.** 이 메서드가
+        겹침을 스스로 해석하지 않는다는 뜻이며, 그래서 인자로 받는다.
+        """
         signature = inspect.signature(BatchImportService.import_batch)
         assert list(signature.parameters) == [
             "self",
@@ -214,7 +222,9 @@ class TestExistingStorageIsReusable:
             "period_start",
             "period_end",
             "file_hash",
+            "contained_batches",
         ]
+        assert signature.parameters["contained_batches"].default == ()
 
     def test_period_is_supplied_by_the_caller(self) -> None:
         """⛔ 대상 기간은 **호출자가 지정**한다. 파일에서 유추하지 않는다.
