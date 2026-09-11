@@ -18,7 +18,11 @@ from procurement.api import DashboardApiService
 from procurement.app import build_dashboard_api, create_app
 from procurement.database.certification_repository import CertificationRepository
 from procurement.database.company_repository import CompanyRepository
+from procurement.database.policy_company_source_repository import (
+    PolicyCompanySourceRepository,
+)
 from procurement.database.policy_repository import PolicyRepository
+from procurement.database.policy_target_repository import PolicyTargetRepository
 from procurement.database.purchase_repository import PurchaseRepository
 from procurement.models import Certification, Company, Policy, Purchase
 
@@ -30,6 +34,14 @@ def db_path(tmp_path: Path) -> Path:
     PolicyRepository(path).create_table()
     CertificationRepository(path).create_table()
     PurchaseRepository(path).create_table()
+    # ⚠️ STEP 93 — 목표비율 테이블(DECISIONS §0.20). 이 fixture 는 init_db 를
+    #    쓰지 않고 테이블을 직접 만들므로 새 테이블도 여기에 더한다.
+    #    ⛔ 저장소가 테이블 없음을 조용히 넘기게 만들지 않았다 — 초기화되지
+    #    않은 DB 는 크게 실패하는 편이 낫다.
+    PolicyTargetRepository(path).create_table()
+    # ⚠️ STEP 96 — 정책별 기업정보 등록 기록(§8). 이 fixture 는 init_db 를
+    #    쓰지 않고 테이블을 직접 만들므로 새 테이블도 여기에 더한다.
+    PolicyCompanySourceRepository(path).create_table()
     return path
 
 
@@ -51,6 +63,18 @@ def _seed(db_path: Path, target_rate: Decimal | None) -> None:
         Policy(policy_code="SMALL_BUSINESS", policy_name="중소기업", target_rate=target_rate)
     )
     assert policy.policy_id is not None
+    # ⚠️ STEP 93 — 목표비율의 정본은 **연도별** 값이다(DECISIONS §0.20). 위
+    #    Policy.target_rate 는 하위호환으로 남아 있을 뿐 계산에 쓰이지 않으므로,
+    #    이 시험들이 조회하는 연도(2026)에 같은 값을 등록한다.
+    #    ⛔ 기대값은 바뀌지 않았다 — 값을 **어디에 두는지**만 바뀌었다.
+    if target_rate is not None:
+        PolicyTargetRepository(db_path).upsert(2026, policy.policy_id, target_rate)
+    # ⚠️ STEP 96 — 기업정보를 받지 못한 정책은 조회불가다(§8). 이 시험들은 목표율
+    #    쪽을 보므로, 목록을 받았다는 사실을 기록해 앞단을 열어 둔다.
+    #    ⛔ 기대값은 바뀌지 않았다.
+    PolicyCompanySourceRepository(db_path).record(
+        policy.policy_id, source="FILE", company_count=0, certification_count=0
+    )
     cert_repo.insert(
         Certification(
             company_id=company.company_id,
@@ -83,7 +107,7 @@ def _seed(db_path: Path, target_rate: Decimal | None) -> None:
 
 @pytest.fixture
 def client(db_path: Path) -> TestClient:
-    return TestClient(create_app(db_path))
+    return TestClient(create_app(db_path, period_date_field="payment_date"))
 
 
 class TestCompositionRoot:
@@ -99,7 +123,7 @@ class TestDashboardSummaryEndpoint:
     def test_registered_target_rate(self, client: TestClient, db_path: Path) -> None:
         """등록 목표율 50% 기준으로 요약 JSON 이 반환됩니다."""
         _seed(db_path, target_rate=Decimal("50"))
-        response = client.get("/dashboard/summary")
+        response = client.get("/dashboard/summary?year=2026")
         assert response.status_code == 200
         payload = response.json()
         assert payload["total_purchase_amount"] == "10000000"
@@ -114,16 +138,14 @@ class TestDashboardSummaryEndpoint:
 
     def test_decimal_fields_are_strings(self, client: TestClient, db_path: Path) -> None:
         _seed(db_path, target_rate=Decimal("50"))
-        item = client.get("/dashboard/summary").json()["policies"][0]
+        item = client.get("/dashboard/summary?year=2026").json()["policies"][0]
         for key in ("purchase_amount", "target_rate", "achievement_rate", "shortage_rate"):
             assert isinstance(item[key], str)
 
-    def test_excludes_policy_without_target_rate(
-        self, client: TestClient, db_path: Path
-    ) -> None:
+    def test_excludes_policy_without_target_rate(self, client: TestClient, db_path: Path) -> None:
         """목표율이 없는 정책도 응답에 포함되며 '목표율 미설정'으로 표시됩니다."""
         _seed(db_path, target_rate=None)
-        payload = client.get("/dashboard/summary").json()
+        payload = client.get("/dashboard/summary?year=2026").json()
         assert payload["total_purchase_amount"] == "10000000"
         assert len(payload["policies"]) == 1
 
@@ -137,7 +159,7 @@ class TestDashboardSummaryEndpoint:
 
     def test_empty_database(self, client: TestClient) -> None:
         """데이터가 없으면 전체 구매액 0, 정책 요약은 빈 목록입니다."""
-        payload = client.get("/dashboard/summary").json()
+        payload = client.get("/dashboard/summary?year=2026").json()
         assert payload["total_purchase_amount"] == "0"
         assert payload["policies"] == []
 

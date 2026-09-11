@@ -14,6 +14,21 @@ Dashboard 화면(정적 페이지)과 화면 표시 전용 데이터를 제공�
     새 런타임 의존성을 추가하지 않기 위한 선택입니다.
 """
 
+from procurement.web.achievement_display import (
+    DEFAULT_THRESHOLDS,
+    AchievementDisplayLevel,
+    ThresholdConfigError,
+    parse_thresholds,
+    resolve_level,
+)
+from procurement.web.manual import (
+    MANUAL_FILE_NAME,
+    MANUAL_PDF_PATH,
+    PDF_MEDIA_TYPE,
+    manual_exists,
+    manual_size,
+    read_manual_pdf,
+)
 from procurement.web.page import INDEX_HTML_PATH, read_index_html
 from procurement.web.policy_display import (
     DEFAULT_DISPLAY,
@@ -25,22 +40,37 @@ from procurement.web.policy_display import (
     get_display_info,
 )
 from procurement.web.policy_display_response import (
+    AchievementLevelsResponseModel,
     PolicyDisplayItemResponseModel,
     PolicyDisplayResponseModel,
+    build_achievement_levels_response,
     build_policy_display_response,
 )
 
 __all__ = [
     "DEFAULT_DISPLAY",
+    "DEFAULT_THRESHOLDS",
     "INDEX_HTML_PATH",
+    "MANUAL_FILE_NAME",
+    "MANUAL_PDF_PATH",
     "ON_HOLD",
+    "PDF_MEDIA_TYPE",
     "POLICY_DISPLAY",
     "READY",
     "UNKNOWN",
+    "AchievementDisplayLevel",
+    "AchievementLevelsResponseModel",
     "PolicyDisplayInfo",
     "PolicyDisplayItemResponseModel",
     "PolicyDisplayResponseModel",
+    "ThresholdConfigError",
+    "build_achievement_levels_response",
     "build_policy_display_response",
     "get_display_info",
+    "manual_exists",
+    "manual_size",
+    "parse_thresholds",
+    "resolve_level",
     "read_index_html",
+    "read_manual_pdf",
 ]

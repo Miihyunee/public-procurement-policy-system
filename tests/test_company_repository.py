@@ -162,15 +162,19 @@ class TestRequiredValidation:
                 )
             )
 
-    def test_missing_representative_name(self, repo: CompanyRepository) -> None:
-        with pytest.raises(CompanyValidationError):
-            repo.insert(
-                Company(
-                    business_no="1234509877",
-                    company_name="A",
-                    representative_name="",
-                )
-            )
+    def test_a_missing_representative_name_is_allowed(self, repo: CompanyRepository) -> None:
+        """대표자명은 필수가 아니다 — 빈 값은 ``None`` 으로 남는다.
+
+        분류 A · PM 확정 반영 (2026-09-05): 기업을 식별하는 값은 기업명과
+        사업자등록번호 둘이며, 대표자명은 선택값이다.
+        ⛔ 없는 이름을 "미상" 같은 값으로 채우지 않는다.
+        """
+        stored = repo.insert(
+            Company(business_no="1234509877", company_name="A", representative_name="")
+        )
+        assert stored.company_id is not None
+        assert stored.representative_name is None
+        assert repo.count() == 1
 
     def test_validation_failure_persists_nothing(self, repo: CompanyRepository) -> None:
         with pytest.raises(CompanyValidationError):

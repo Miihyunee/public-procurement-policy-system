@@ -20,16 +20,24 @@ from procurement.dashboard.status_service import DataStatusService
 class DataStatusApiService:
     """데이터 적재 현황을 API 응답 모델로 변환해 제공합니다."""
 
-    def __init__(self, status_service: DataStatusService, data_mode: str) -> None:
+    def __init__(
+        self,
+        status_service: DataStatusService,
+        data_mode: str,
+        period_date_field: str | None = None,
+    ) -> None:
         """서비스를 초기화합니다.
 
         Args:
             status_service: 적재 현황을 집계할 :class:`DataStatusService`.
             data_mode: 현재 데이터 모드(``demo`` / ``operational``). 응답에 그대로
                 실려 화면의 ``DEMO / SAMPLE DATA`` 표시를 결정합니다.
+            period_date_field: 기간 판정에 사용하도록 설정된 날짜 컬럼.
+                ``None`` 이면 기간 조회를 사용할 수 없습니다(D-24 미확정).
         """
         self._status_service = status_service
         self._data_mode = data_mode
+        self._period_date_field = period_date_field
 
     def get_data_status(self, requested_year: int | None = None) -> DataStatusResponseModel:
         """적재 현황 응답을 반환합니다.
@@ -43,5 +51,8 @@ class DataStatusApiService:
         """
         status = self._status_service.build_status()
         return DataStatusResponseModel.from_status(
-            status, data_mode=self._data_mode, requested_year=requested_year
+            status,
+            data_mode=self._data_mode,
+            requested_year=requested_year,
+            period_date_field=self._period_date_field,
         )

@@ -17,6 +17,7 @@ Rule Engine 은 정책별 "이 구매가 해당 정책 실적으로 인정되는
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Protocol, runtime_checkable
@@ -38,10 +39,15 @@ class RuleContext:
         validity_ranges: 해당 기업이 대상 정책에 대해 보유한 인증 유효기간
             ``(valid_from, valid_to)`` 목록. 같은 정책 인증을 여러 건 보유한
             경우 여러 구간이 담깁니다.
+
+            ``valid_to`` 가 ``None`` 이면 **종료일이 없는 인증**, 즉
+            ``valid_from`` 이후로 계속 유효하다는 뜻입니다 (🟢 2026-09-04
+            고객 확정 · 사회적기업·사회적협동조합). ⛔ ``None`` 을 임의의
+            날짜로 바꾸어 해석하지 않습니다.
     """
 
     purchase: Purchase
-    validity_ranges: list[tuple[date, date]]
+    validity_ranges: Sequence[tuple[date, date | None]]
 
 
 @runtime_checkable

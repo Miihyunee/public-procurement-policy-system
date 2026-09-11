@@ -14,12 +14,32 @@ Engine 이 담당하며, 여기서는 "이 정책이 지금 계산 가능한 단
 정책 코드            근거
 ===================  ==========================================================
 ``SMALL_BUSINESS``   해당 없음 — 계산 경로가 구현되어 있음
-``WOMAN``            D-1 (개발 중단, D-2 선행) · D-2/W-6 (공사/용역/물품 구분 미확인)
+``WOMAN``            D-2/W-6 확정 → STEP 103 으로 구매유형별 계산 경로가 생김.
+                     확정된 구매유형만 세므로 확인이 끝나기 전에는 «계산 보류»
 ``DISABLED``         해당 없음 — 계산 경로가 구현되어 있음.
                      단 목표율은 D-7 미확정으로 등록하지 않음
 ``STARTUP``          해당 없음 — 계산 경로가 구현되어 있음
-``GREEN``            D-3 (유지 / **계산 보류** / 공식 기준 재정립 필요)
+``GREEN``            §0.5.1 (**이번 MVP 계산 대상에서 제외**)
+``SOCIAL_ENTERPRISE``
+                     §0.22 확정 — 계산 경로는 일반 규칙(결의일자).
+                     종료일 없는 인증 처리는 확인 요청서 ③ 대기
+``SOCIAL_COOPERATIVE``
+                     위와 같음
+``DISABLED_STANDARD_WORKPLACE``
+                     §0.22 확정 — 해당 없음, 계산 경로가 구현되어 있음
+``SELF_SUPPORT_VILLAGE``
+                     §0.22.3 (**판정 기준 미확정** — 임의로 정하지 않고 보류)
 ===================  ==========================================================
+
+.. note::
+    **2026-08-20 — ``GREEN`` 은 이제 비활성 정책입니다.** 고객 결정(§0.5.1)에
+    따라 ``is_active=False`` 로 seed 되므로 ``find_active()`` 에 잡히지 않고,
+    대시보드 요약에도 나타나지 않습니다. 따라서 아래 ``GREEN`` 표시 정보는
+    사실상 도달하지 않습니다.
+
+    ⛔ **표시 정보를 지우지 않습니다.** 정책 행 자체는 남아 있고(이력 보존),
+    ``GET /policies`` 같은 전체 조회 경로에서는 여전히 노출될 수 있습니다.
+    표시 문구 변경은 화면 변경에 해당하므로 별도 승인 대상입니다.
 
 .. note::
     정책 코드는 D-15 에 따라 ``main`` 의 seed 가 정본입니다. 목록에 없는 코드가
@@ -78,15 +98,47 @@ POLICY_DISPLAY: dict[str, PolicyDisplayInfo] = {
         note="목표율은 D-7(장애인표준사업장 목표율 근거) 확정 전까지 등록하지 않습니다.",
     ),
     "STARTUP": _READY,
+    # ── 2026-09-08 · STEP 151. 여성기업은 더 이상 «개발 보류» 가 아니다.
+    #    STEP 103 으로 구매유형별 계산 경로가 생겼고, ON_HOLD_REASONS 에서도
+    #    그때 빠졌다. 그런데 이 표시 정보만 D-1 시절 문구로 남아 있어서
+    #    화면 배지가 「개발 보류」, 달성률 칸이 언제나 «계산 보류» 로 굳어
+    #    **구매유형 확인을 끝내도 계속 보류처럼 보였다.**
+    #    ⛔ 계산은 건드리지 않는다 — 확인이 덜 끝난 동안의 보류는 그대로다.
+    #       그 보류는 화면에서 「구매유형 확인 중」으로 따로 말한다(§작업 1).
     "WOMAN": PolicyDisplayInfo(
-        development_status=ON_HOLD,
-        development_label="개발 보류",
-        note="D-1 개발 중단 — D-2/W-6(공사·용역·물품 구분) 확인이 선행되어야 합니다.",
+        development_status=READY,
+        development_label="계산 가능",
+        note=(
+            "목표가 공사·용역·물품으로 나뉩니다. 담당자가 확정한 구매유형만 "
+            "세므로 확인이 끝나기 전에는 달성률을 내지 않습니다."
+        ),
     ),
     "GREEN": PolicyDisplayInfo(
         development_status=ON_HOLD,
         development_label="계산 보류",
         note="D-3 확정 — 정책은 유지하되 공식 기준 재정립 전까지 계산을 보류합니다.",
+    ),
+    # ── 2026-09-03 PM 확정(§0.22 · STEP 97) 으로 추가된 4종.
+    #    셋은 일반 규칙(결의일자)이 이미 구현되어 있으므로 계산 가능이고,
+    #    자활용사촌만 **판정 기준 자체가 미확정**이라 보류다(§0.22.3).
+    "SOCIAL_ENTERPRISE": PolicyDisplayInfo(
+        development_status=READY,
+        development_label="계산 가능",
+        note="종료일 없는 인증의 처리 방식은 고객 확인 대기입니다(확인 요청서 ③).",
+    ),
+    "SOCIAL_COOPERATIVE": PolicyDisplayInfo(
+        development_status=READY,
+        development_label="계산 가능",
+        note="종료일 없는 인증의 처리 방식은 고객 확인 대기입니다(확인 요청서 ③).",
+    ),
+    "DISABLED_STANDARD_WORKPLACE": _READY,
+    "SELF_SUPPORT_VILLAGE": PolicyDisplayInfo(
+        development_status=ON_HOLD,
+        development_label="계산 보류",
+        note=(
+            "§0.22.3 — 판정 기준이 결의일자인지 「기간 무관·거래 유무」인지 "
+            "확정되지 않았습니다. 임의로 정하지 않고 확인을 기다립니다."
+        ),
     ),
 }
 

@@ -1,0 +1,425 @@
+"""
+procurement.uploads.validation
+
+표준 업로드 양식의 **행 단위 검증**을 수행합니다.
+
+목적은 "업로드 실패" 라는 한 줄이 아니라, 사용자가 **어느 행 · 어느 항목 · 왜**
+잘못됐는지 알고 엑셀을 고칠 수 있게 하는 것입니다::
+
+    총 1,250건
+    정상 1,230건
+    오류    20건
+
+    12행 | 사업자등록번호 | 값이 없습니다.
+    18행 | 결의일자       | 날짜 형식이 잘못되었습니다.
+
+.. note::
+    사업자등록번호 정규화는 **기존 규칙을 그대로 재사용**합니다
+    (:mod:`procurement.matchers.business_no`). 새 규칙을 만들지 않습니다.
+
+.. warning::
+    **이 모듈은 저장하지 않습니다.** 검증 결과만 돌려주며, ``Purchase`` 모델로
+    옮기는 Mapping 계층은 아직 만들지 않았습니다. 결의일자를 어느 물리 필드에
+    담을지가 확정되지 않았기 때문입니다(PM 결정 대기).
+
+.. warning::
+    **엑셀 파일을 읽지 않습니다.** 이미 행 목록으로 풀어 놓은 값을 검증합니다.
+    엑셀 파싱(``openpyxl``)은 의존성 추가 승인 후 별도 어댑터로 붙입니다.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+
+from procurement.matchers.business_no import normalize_business_no
+from procurement.uploads.format import (
+    STANDARD_COLUMNS,
+    StandardColumn,
+)
+
+#: 허용하는 날짜 문자열 형식.
+#:
+#: 실제 자료에서 관찰된 표기만 받습니다. 그 밖의 표기는 사용자가 의도한 날짜를
+#: 확정할 수 없으므로 오류로 처리합니다(예: ``03/04/2026`` 은 3월 4일인지 4월
+#: 3일인지 알 수 없습니다).
+#:
+#: 🟢 2026-09-06 PM 확정(STEP 133 §2) — ``20241023`` 같은 **여덟 자리**를
+#: 더합니다. 고객 기관 명단이 이 표기를 쓰며, 여덟 자리는 ``YYYYMMDD`` 로만
+#: 읽히므로 모호하지 않습니다.
+#:
+#: ⛔ 날짜를 **읽는 표기**를 넓힌 것일 뿐입니다. 유효기간 판정 규칙은 그대로입니다.
+_DATE_FORMATS: tuple[str, ...] = ("%Y-%m-%d", "%Y/%m/%d")
+
+#: 구분자 없는 여덟 자리 표기.
+#:
+#: ⛔ **정확히 여덟 자리**일 때만 씁니다. ``strptime`` 은 ``2024102`` 같은
+#: 일곱 자리도 받아들여 «2024-10-02» 로 읽어 버립니다. 그것은 사용자가 무엇을
+#: 적으려 했는지 알 수 없는 값이므로 오류로 두어야 합니다.
+_EIGHT_DIGITS = re.compile(r"\d{8}")
+
+#: 금액에서 제거할 문자(천 단위 구분자·공백·원화 기호).
+_AMOUNT_NOISE = re.compile(r"[,\s₩]")
+
+
+@dataclass(frozen=True, kw_only=True)
+class RowIssue:
+    """행 하나에서 발견된 문제.
+
+    Attributes:
+        row_number: 사용자가 보는 엑셀 행 번호(머리글 다음 행이 2).
+        header: 문제가 있는 컬럼의 엑셀 머리글. 행 전체 문제면 ``None``.
+        message: 사용자에게 보여줄 설명.
+        severity: ``"error"`` 는 저장 불가, ``"warning"`` 은 저장 가능하나 확인 필요.
+    """
+
+    row_number: int
+    header: str | None
+    message: str
+    severity: str = "error"
+
+    def format_line(self) -> str:
+        """한 줄 표시 형식으로 변환합니다."""
+        column = self.header or "-"
+        return f"{self.row_number}행 | {column} | {self.message}"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ValidatedRow:
+    """검증을 통과한 행 하나.
+
+    Attributes:
+        row_number: 엑셀 행 번호.
+        values: 정규화된 값. 키는 :class:`~procurement.uploads.format.StandardColumn`
+            의 ``key`` 입니다.
+        warnings: 저장을 막지는 않지만 확인이 필요한 사항.
+    """
+
+    row_number: int
+    values: dict[str, object]
+    warnings: tuple[RowIssue, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class ValidationReport:
+    """업로드 검증 결과.
+
+    Attributes:
+        rows: 검증을 통과한 행 목록.
+        issues: 발견된 모든 문제(오류 + 경고).
+        file_errors: 파일 단위 문제(머리글 누락 등). 있으면 행 검증을 하지 않습니다.
+        total_rows: 검사한 전체 행 수.
+    """
+
+    rows: list[ValidatedRow] = field(default_factory=list)
+    issues: list[RowIssue] = field(default_factory=list)
+    file_errors: list[str] = field(default_factory=list)
+    total_rows: int = 0
+
+    @property
+    def errors(self) -> list[RowIssue]:
+        """저장을 막는 문제만 반환합니다."""
+        return [issue for issue in self.issues if issue.severity == "error"]
+
+    @property
+    def warnings(self) -> list[RowIssue]:
+        """저장 가능하나 확인이 필요한 문제만 반환합니다."""
+        return [issue for issue in self.issues if issue.severity == "warning"]
+
+    @property
+    def error_row_count(self) -> int:
+        """오류가 있는 **행**의 수(한 행에 문제가 여러 개여도 1건)."""
+        return len({issue.row_number for issue in self.errors})
+
+    @property
+    def ok(self) -> bool:
+        """파일 오류도 행 오류도 없으면 ``True``."""
+        return not self.file_errors and not self.errors
+
+    def summary_lines(self) -> tuple[str, ...]:
+        """사용자에게 보여줄 요약을 반환합니다."""
+        if self.file_errors:
+            return ("파일을 읽을 수 없습니다.", *(f"· {text}" for text in self.file_errors))
+
+        lines = [
+            f"총 {self.total_rows:,}건",
+            f"정상 {len(self.rows):,}건",
+            f"오류 {self.error_row_count:,}건",
+        ]
+        if self.warnings:
+            lines.append(f"확인 필요 {len(self.warnings):,}건")
+        return tuple(lines)
+
+    def issue_lines(self, limit: int = 100) -> tuple[str, ...]:
+        """문제 목록을 행 순서대로 반환합니다.
+
+        Args:
+            limit: 최대 표시 건수. 너무 많으면 화면이 무의미해집니다.
+        """
+        ordered = sorted(self.issues, key=lambda issue: (issue.row_number, issue.header or ""))
+        lines = [issue.format_line() for issue in ordered[:limit]]
+        if len(ordered) > limit:
+            lines.append(f"... 외 {len(ordered) - limit:,}건")
+        return tuple(lines)
+
+
+def validate_headers(
+    headers: Sequence[str],
+    *,
+    columns: Sequence[StandardColumn] = STANDARD_COLUMNS,
+) -> list[str]:
+    """머리글 행을 검증합니다.
+
+    Args:
+        headers: 엑셀 1행의 값.
+        columns: 검사 기준이 되는 양식 정의. 기본은 **구매 표준 양식**입니다.
+            기업정보 양식처럼 다른 양식을 검사할 때만 넘깁니다.
+
+            .. note::
+                양식마다 검증기를 따로 만들면 사업자등록번호·날짜 규칙이 두 벌이
+                되어 한쪽만 고치는 일이 생깁니다. **규칙은 하나**로 두고 컬럼
+                정의만 갈아 끼웁니다.
+
+    ⭐ **값이 없어도 되는 항목은 칸 자체가 없어도 됩니다** (STEP 158).
+
+    예전에는 양식의 모든 머리글을 요구했습니다. 그런데 ``계약일자`` ·
+    ``지급일`` 은 🟢 2026-09-02 PM 확정으로 **값이 비어 있어도 되는** 항목
+    인데, 칸 이름이 없다는 이유로 **파일 전체를 거절**했습니다. 실제 고객
+    원본에는 그 두 칸이 아예 없어 2,305행이 통째로 막혔습니다(STEP 157-㉠).
+
+    값이 없어도 되는 항목을 칸 유무로 막는 것은 앞뒤가 맞지 않으므로,
+    ``required`` 인 항목의 머리글만 요구합니다.
+
+    ⛔ 필수 항목은 그대로 필수입니다 — 느슨해진 것은 **선택 항목의 칸
+    유무**뿐이고, 행 단위 값 검증 규칙은 하나도 바뀌지 않았습니다.
+
+    Returns:
+        파일 단위 오류 메시지 목록. 정상이면 빈 목록.
+    """
+    required = tuple(column.header for column in columns if column.required)
+    present = {str(header).strip() for header in headers if str(header).strip()}
+    missing = [header for header in required if header not in present]
+
+    errors: list[str] = []
+    if missing:
+        errors.append(
+            f"필수 항목이 없습니다: {', '.join(missing)}. "
+            "표준 양식을 내려받아 머리글을 그대로 사용하세요."
+        )
+    return errors
+
+
+def validate_rows(
+    rows: Iterable[Mapping[str, object]],
+    *,
+    first_row_number: int = 2,
+    columns: Sequence[StandardColumn] = STANDARD_COLUMNS,
+    row_numbers: Sequence[int] | None = None,
+) -> ValidationReport:
+    """행 목록을 검증합니다.
+
+    Args:
+        rows: 머리글 → 값 매핑의 목록. 엑셀에서 읽어 온 그대로를 넣습니다.
+        first_row_number: 첫 행의 엑셀 행 번호. 머리글이 1행이므로 기본 2입니다.
+        columns: 검사 기준이 되는 양식 정의. 기본은 **구매 표준 양식**입니다.
+        row_numbers: 각 행의 **실제 엑셀 행 번호**. 중간에서 빠진 행이 있을
+            때 넣습니다(집계 행을 걸러 낸 뒤 등, STEP 160). ⭐ 이것이 없으면
+            번호를 다시 이어 붙이게 되어, 오류 메시지가 담당자에게 엉뚱한
+            행을 가리킵니다. 생략하면 ``first_row_number`` 부터 이어 셉니다.
+
+    Returns:
+        :class:`ValidationReport`.
+    """
+    validated: list[ValidatedRow] = []
+    issues: list[RowIssue] = []
+    total = 0
+
+    for offset, row in enumerate(rows):
+        row_number = (
+            first_row_number + offset if row_numbers is None else row_numbers[offset]
+        )
+        total += 1
+        values, row_issues = _validate_row(row, row_number, columns)
+        issues.extend(row_issues)
+        if any(issue.severity == "error" for issue in row_issues):
+            continue
+        validated.append(
+            ValidatedRow(
+                row_number=row_number,
+                values=values,
+                warnings=tuple(issue for issue in row_issues if issue.severity == "warning"),
+            )
+        )
+
+    return ValidationReport(rows=validated, issues=issues, total_rows=total)
+
+
+def _validate_row(
+    row: Mapping[str, object],
+    row_number: int,
+    columns: Sequence[StandardColumn] = STANDARD_COLUMNS,
+) -> tuple[dict[str, object], list[RowIssue]]:
+    """행 하나를 검증하고 정규화합니다."""
+    values: dict[str, object] = {}
+    issues: list[RowIssue] = []
+
+    for column in columns:
+        raw = row.get(column.header)
+        if _is_blank(raw):
+            if column.required:
+                issues.append(
+                    RowIssue(row_number=row_number, header=column.header, message="값이 없습니다.")
+                )
+            continue
+
+        parsed, problem = _parse_value(column, raw, row_number)
+        if problem is not None:
+            issues.append(problem)
+            if problem.severity == "error":
+                continue
+        values[column.key] = parsed
+
+    return values, issues
+
+
+def _parse_value(
+    column: StandardColumn, raw: object, row_number: int
+) -> tuple[object, RowIssue | None]:
+    """컬럼 종류에 맞게 값을 해석합니다."""
+    if column.key in (
+        "resolution_date",
+        "contract_date",
+        "payment_date",
+        "issue_date",
+        # 기업정보 양식의 인증 유효기간 — **같은 날짜 규칙**을 씁니다.
+        "valid_from",
+        "valid_to",
+        # 인증 취소일 — 같은 날짜 규칙을 씁니다(STEP 129).
+        "cancelled_on",
+    ):
+        parsed_date = _parse_date(raw)
+        if parsed_date is None:
+            return None, RowIssue(
+                row_number=row_number,
+                header=column.header,
+                message=f"날짜 형식이 잘못되었습니다: {raw!r} (예: 2026-03-15)",
+            )
+        return parsed_date, None
+
+    if column.key == "business_no":
+        return _parse_business_no(raw, column, row_number)
+
+    if column.key == "amount":
+        return _parse_amount(raw, column, row_number)
+
+    return str(raw).strip(), None
+
+
+def _parse_business_no(
+    raw: object, column: StandardColumn, row_number: int
+) -> tuple[object, RowIssue | None]:
+    """사업자등록번호를 **기존 규칙 그대로** 정규화합니다.
+
+    하이픈 제거 후 10자리, 9자리 자동 보정 금지, 체크섬 오류는 경고(D-002).
+    """
+    normalized = normalize_business_no(raw)
+    if not normalized.is_valid or normalized.value is None:
+        return None, RowIssue(
+            row_number=row_number,
+            header=column.header,
+            message=f"사업자등록번호를 사용할 수 없습니다: {raw!r} (하이픈 제외 10자리)",
+        )
+    if normalized.warnings:
+        return normalized.value, RowIssue(
+            row_number=row_number,
+            header=column.header,
+            message="; ".join(normalized.warnings),
+            severity="warning",
+        )
+    return normalized.value, None
+
+
+def _parse_amount(
+    raw: object, column: StandardColumn, row_number: int
+) -> tuple[object, RowIssue | None]:
+    """금액을 :class:`~decimal.Decimal` 로 해석합니다."""
+    if isinstance(raw, bool):
+        return None, RowIssue(
+            row_number=row_number, header=column.header, message="숫자가 아닙니다."
+        )
+    if isinstance(raw, int | float | Decimal):
+        amount = Decimal(str(raw))
+    else:
+        text = _AMOUNT_NOISE.sub("", str(raw).strip())
+        try:
+            amount = Decimal(text)
+        except (InvalidOperation, ValueError):
+            return None, RowIssue(
+                row_number=row_number,
+                header=column.header,
+                message=f"숫자가 아닙니다: {raw!r}",
+            )
+
+    if amount <= 0:
+        # ⛔ 0 이하 금액의 처리 방식은 **확정되지 않았다.**
+        #
+        # 음수 상계 규칙은 확정됐지만(DECISIONS §0.6.3), 현재 Repository 가
+        # amount <= 0 저장을 거부한다. 여기서 오류로 단정하면 확정되지 않은
+        # 규칙을 만드는 셈이고, 정상으로 넘기면 저장 단계에서 실패한다.
+        # 따라서 **경고로 표시만 하고 판단은 호출자에게 남긴다.**
+        return amount, RowIssue(
+            row_number=row_number,
+            header=column.header,
+            message=(
+                f"0 이하 금액입니다: {amount}. "
+                "현재 시스템은 0 이하 금액을 저장하지 않습니다(처리 방식 확정 대기)."
+            ),
+            severity="warning",
+        )
+    return amount, None
+
+
+def _parse_date(raw: object) -> date | None:
+    """날짜를 해석합니다. 해석할 수 없으면 ``None``.
+
+    .. note::
+        엑셀은 ``20241023`` 을 **숫자**로 넘겨줍니다. 서식에 따라 정수로도,
+        실수(``20241023.0``)로도 올 수 있어 둘 다 같은 여덟 자리로 읽습니다.
+        ⛔ 소수점 아래가 있는 값은 날짜로 보지 않습니다.
+    """
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        text = str(raw)
+    elif isinstance(raw, float):
+        if not raw.is_integer():
+            return None
+        text = str(int(raw))
+    else:
+        text = str(raw).strip()
+
+    for pattern in _DATE_FORMATS:
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+
+    if _EIGHT_DIGITS.fullmatch(text):
+        try:
+            return datetime.strptime(text, "%Y%m%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def _is_blank(value: object) -> bool:
+    """값이 비어 있는지 판단합니다."""
+    return value is None or (isinstance(value, str) and not value.strip())

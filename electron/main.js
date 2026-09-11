@@ -1,0 +1,224 @@
+/**
+ * electron/main.js
+ *
+ * Electron 메인 프로세스. Python 백엔드를 띄우고 그 화면을 창에 표시한다.
+ *
+ *     app 시작
+ *       → 사용자 데이터 디렉터리 확인
+ *       → Python 백엔드 실행 (빈 포트 자동 선택)
+ *       → 준비될 때까지 대기
+ *       → BrowserWindow 로 http://127.0.0.1:<포트>/ 로드
+ *       → 종료 시 백엔드 정리
+ *
+ * 백엔드 생명주기는 `backend.js` 가 담당한다(Electron 없이도 검증 가능하도록 분리).
+ *
+ * .. note::
+ *     화면은 기존 `web/static/index.html` 을 **그대로** 사용한다. 프런트엔드를
+ *     새로 만들지 않는다.
+ */
+
+"use strict";
+
+const path = require("node:path");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+
+const { startBackend } = require("./backend");
+const { saveTemplate, selectExcelFile } = require("./uploads");
+
+/**
+ * 사용자 데이터 폴더 이름을 **못 박는다**.
+ *
+ * ⛔ 이것을 정하지 않으면 Electron 이 스스로 이름을 고른다 — `package.json`
+ *    의 `name` 이거나 `productName` 이며, 개발 모드와 설치본에서 서로 다를
+ *    수 있다. 그러면 데이터가 이런 식으로 갈린다.
+ *
+ *        %APPDATA%\procurement-desktop\database\procurement.db
+ *        %APPDATA%\공공구매정책관리시스템\database\procurement.db
+ *
+ *    고객에게는 **프로그램을 새로 깔았더니 자료가 사라진 것**으로 보인다.
+ *
+ * 백엔드가 혼자 돌 때 쓰는 이름(`settings.py` 의 `_APP_DIR_NAME`)과 같아야
+ * 어느 쪽으로 켜든 같은 자리를 본다. `getPath("userData")` 를 처음 부르기
+ * **전에** 정해야 한다(STEP 127).
+ */
+app.setName("procurement-desktop");
+
+/** 개발 모드 여부. 배포본에서는 번들된 백엔드 실행파일을 사용한다. */
+const isDev = !app.isPackaged;
+
+/** 실행 중인 백엔드 핸들. 종료 시 정리에 사용한다. */
+let backend = null;
+
+/** 메인 창. */
+let mainWindow = null;
+
+/**
+ * 백엔드 실행 설정을 만든다.
+ *
+ * @returns {object} `startBackend` 에 넘길 설정.
+ */
+function backendConfig() {
+  const projectRoot = path.resolve(__dirname, "..");
+
+  // 아직 설치본을 만들기 전에, **묶은 실행파일을 그대로** 띄워 보기 위한
+  // 통로다(STEP 126-2 §9). 설치본에서는 아래 배포 경로가 쓰이므로 이
+  // 값이 배포 동작을 바꾸지 않는다.
+  //
+  // ⛔ 고객에게 나가는 길이 아니다 — 개발자가 손으로 지정할 때만 쓰인다.
+  const override = process.env.PROCUREMENT_BACKEND_EXE;
+  if (override) {
+    return { backendExecutable: override, userDataDir: app.getPath("userData") };
+  }
+
+  if (isDev) {
+    return {
+      // 개발 환경에서는 저장소의 가상환경 Python 을 사용한다.
+      pythonPath: process.env.PROCUREMENT_PYTHON || "python",
+      cwd: projectRoot,
+      userDataDir: app.getPath("userData"),
+      env: { ...process.env, PYTHONPATH: path.join(projectRoot, "src") },
+    };
+  }
+
+  // 배포본: PyInstaller 로 묶은 백엔드 실행파일.
+  //
+  // ⚠️ Windows 에서는 확장자가 있어야 한다. `spawn("...\\backend\\procurement")`
+  //    처럼 확장자 없이 부르면 파일을 찾지 못한다(ENOENT).
+  const executable = process.platform === "win32" ? "procurement.exe" : "procurement";
+  return {
+    backendExecutable: path.join(process.resourcesPath, "backend", executable),
+    userDataDir: app.getPath("userData"),
+  };
+}
+
+/**
+ * 메인 창을 만든다.
+ *
+ * @param {number} port 백엔드가 사용 중인 포트.
+ */
+function createWindow(port) {
+  mainWindow = new BrowserWindow({
+    width: 1440,
+    height: 960,
+    minWidth: 1024,
+    minHeight: 700,
+    title: "우선구매 정책 달성률 관리",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  mainWindow.once("ready-to-show", () => mainWindow.show());
+
+  // 외부 링크는 기본 브라우저로 연다(앱 창이 엉뚱한 페이지로 바뀌지 않도록).
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  mainWindow.loadURL(`http://127.0.0.1:${port}/`);
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+}
+
+/**
+ * 사용자에게 시작 실패를 안내한다.
+ *
+ * stack trace 를 그대로 보여주지 않고, 무엇을 해야 하는지 알려준다.
+ *
+ * @param {Error & {detail?: string}} error
+ */
+function showStartupFailure(error) {
+  const detail = (error.detail || "").trim();
+  dialog.showErrorBox(
+    "프로그램을 시작하지 못했습니다",
+    [
+      error.message,
+      "",
+      "다음을 확인해 주세요.",
+      "  · 프로그램을 다시 실행해 보세요.",
+      "  · 문제가 계속되면 관리자에게 아래 내용을 전달해 주세요.",
+      detail ? `\n[진단 정보]\n${detail.slice(-2000)}` : "",
+    ].join("\n"),
+  );
+}
+
+/**
+ * 업로드 관련 IPC 핸들러를 등록한다.
+ *
+ * 렌더러에는 **파일 대화상자 두 개**만 열어 준다. 엑셀 해석·검증·저장은 전부
+ * Python 백엔드가 하며, 여기서 업무 로직을 구현하지 않는다.
+ *
+ * @param {number} port 백엔드 포트.
+ */
+function registerUploadHandlers(port) {
+  ipcMain.handle("uploads:saveTemplate", () =>
+    saveTemplate({ port, dialog, window: mainWindow }),
+  );
+  ipcMain.handle("uploads:selectFile", () => selectExcelFile({ dialog, window: mainWindow }));
+}
+
+/**
+ * 이번 실행의 관리자 세션 토큰을 화면이 물어볼 수 있게 한다.
+ *
+ * 목표비율 저장은 관리자 토큰이 필요한데(`admin/auth.py`), 고객은 토큰을
+ * 설정할 방법이 없다. 앱이 백엔드를 띄우며 만든 일회용 토큰을 화면에 넘겨
+ * `Authorization: Bearer` 로 보내게 한다.
+ *
+ * ⛔ 토큰을 명령줄 인자(`additionalArguments`)로 넘기지 않는다 — 렌더러
+ *    프로세스의 명령줄은 작업 관리자에서 보인다. IPC 로만 건넨다.
+ * ⛔ 토큰을 로그·오류 메시지에 넣지 않는다.
+ *
+ * @param {string} adminToken `startBackend` 가 만든 이번 실행용 토큰.
+ */
+function registerAdminSessionHandler(adminToken) {
+  ipcMain.handle("admin:sessionToken", () => adminToken);
+}
+
+app.whenReady().then(async () => {
+  try {
+    backend = await startBackend(backendConfig());
+  } catch (error) {
+    showStartupFailure(error);
+    app.quit();
+    return;
+  }
+
+  registerUploadHandlers(backend.port);
+  registerAdminSessionHandler(backend.adminToken);
+  createWindow(backend.port);
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0 && backend) {
+      createWindow(backend.port);
+    }
+  });
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
+});
+
+app.on("before-quit", async (event) => {
+  if (!backend) {
+    return;
+  }
+  event.preventDefault();
+  const handle = backend;
+  backend = null;
+  try {
+    await handle.stop();
+  } finally {
+    // ⛔ 정리에 실패하더라도 **반드시** 앱을 닫는다. 예전에는 `stop()` 이
+    //    실패하면 `app.quit()` 에 닿지 못해, 창이 닫히지 않은 채 백엔드만
+    //    남을 수 있었다(STEP 126-3).
+    app.quit();
+  }
+});

@@ -28,10 +28,52 @@ class Purchase:
     Attributes:
         business_no: 사업자등록번호 (필수). 중복될 수 있습니다.
         company_name: 공급업체명 (필수).
-        contract_date: 계약일 (필수). 창업기업 정책 판정 기준일입니다.
-        payment_date: 대금 지급일(지출완료) (필수). 일반 정책 판정 기준일입니다.
+        contract_date: 계약일. **``None`` 을 허용합니다.** 창업기업 판정에
+            결의일자와 함께 쓰이지만(🟢 §0.6.2), 실적 산정 기준일은 아니며
+            고객 원본에 이 컬럼이 없는 경우가 있습니다.
+
+            .. note::
+                **2026-09-02 PM 확정(STEP 87)** 으로 필수에서 풀렸습니다.
+                *"원본에 존재하지 않는 날짜 때문에 결의일자가 정상적으로
+                존재하는 거래까지 미적재시키지 않는다."*
+
+                ⛔ 값이 없다고 해서 결의일자·신고기준일로 **채우지 않습니다.**
+                없으면 없는 채로 두고, 창업기업 판정은 결의일자만으로 합니다.
+
+        payment_date: 대금 지급일(지출완료). **``None`` 을 허용합니다.**
+
+            .. note::
+                **구매실적 산정 기준일이 아닙니다.** 산정 기준일은
+                ``resolution_date`` (결의일자)입니다. 두 날짜는 업무 의미가
+                다르므로 분리해 둡니다(2026-08-15 PM 결정).
+
+                2026-09-02 PM 확정(STEP 87)으로 필수에서 풀렸습니다 —
+                실적 산정 기준이 아닌 값 때문에 정상 거래가 미적재되지
+                않게 하기 위해서입니다. ⛔ 다른 날짜로 채우지 않습니다.
+
+        resolution_date: **결의일자.** 구매실적의 연도 귀속·산정 기준일입니다
+            (2026-08-14 고객 확정). 표준 업로드 양식의 ``결의일자`` 컬럼이
+            여기로 들어옵니다.
+
+            **기존 데이터 보호를 위해 ``None`` 을 허용합니다.** 이 필드가
+            도입되기 전에 적재된 행은 값이 없습니다.
+        issue_date: **세금계산서 발행일자**(원본 ``신고기준일``). 음수 거래
+            상계에서 (+)/(−) 를 짝지을 때 이 날짜의 차이가 가장 작은 건을
+            매칭합니다(2026-08-20 고객 확정 · `DECISIONS.md` §0.6.3.4).
+
+            **기존 데이터 보호를 위해 ``None`` 을 허용합니다.** 이 필드가
+            도입되기 전에 적재된 행은 값이 없습니다. ⛔ 값이 없다고 해서
+            ``resolution_date`` 등 다른 날짜로 대체하지 않습니다.
+        description: 적요(거래 내용). 상계 후보를 좁힐 때 **참고**합니다.
+            ⛔ 적요가 다르다는 이유만으로 상계에서 제외하지 않습니다.
+        budget_account: 예산과목. **공란일 수 있습니다.**
+            ⛔ 공란이라고 해서 자동으로 삭제·상계하지 않습니다.
+            ⛔ 구매유형 자동 분류에 사용하지 않습니다(DECISIONS §0.5.3).
         amount: 구매금액 (필수). 0 보다 커야 합니다.
         company_id: Company 테이블 참조 ID. 매칭 후 저장되므로 기본값은 ``None`` 입니다.
+        batch_id: 이 행이 들어온 업로드 단위(:class:`ImportBatch`) 참조 ID.
+            배치 없이 적재된 행(배치 도입 이전 데이터 포함)은 ``None`` 이며,
+            **계산에 계속 포함**됩니다.
         purchase_id: 내부 고유 ID (Primary Key). 저장 전에는 ``None`` 입니다.
         created_at: 데이터 생성일시. 저장 시 채워집니다.
         updated_at: 데이터 최종 수정일시. 저장 시 채워집니다.
@@ -39,10 +81,15 @@ class Purchase:
 
     business_no: str
     company_name: str
-    contract_date: date
-    payment_date: date
     amount: Decimal
+    contract_date: date | None = None
+    payment_date: date | None = None
+    resolution_date: date | None = None
+    issue_date: date | None = None
+    description: str | None = None
+    budget_account: str | None = None
     company_id: int | None = None
+    batch_id: int | None = None
     purchase_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
